@@ -35,6 +35,7 @@ Current datasets:
 20. nvidia/Nemotron-Post-Training-Dataset-v2
 21. HuggingFaceH4/no_robots
 22. open-thoughts/OpenThoughts3-1.2M  # Original OT3 dataset; smoltalk2 uses a slightly different version
+23. MichaelR207/rephraser_small_check_0211
 """
 
 import dataclasses
@@ -516,6 +517,14 @@ INSTRUCTION_DATASET_NAME_TO_CONFIG = {
         ],
         name="nvidia/OpenMathReasoning/genselect",
         splits=["genselect"],
+    ),
+    "MichaelR207/rephraser_small_check_0211": InstructionDatasetConfig(
+        hf_dataset_id="MichaelR207/rephraser_small_check_0211",
+        revision="df78040",
+        adapter=multi_turn_adapter(),
+        metadata_columns=["warc_file", "doc_id", "spec_id", "spec"],
+        name="MichaelR207/rephraser_small_check_0211",
+        splits=["train"],
     ),
 }
 
