@@ -33,7 +33,7 @@ from zephyr import Dataset, ZephyrContext, load_jsonl, write_jsonl_file
 from .adapters import TransformAdapter
 
 _RESERVED_TOP_LEVEL_FIELDS = {"id", "source", "messages", "added", "created", "metadata"}
-DEFAULT_TEXT_REPLACEMENTS = {"<think>": "<|start_think|>", "</think>": "<|end_think|>"}
+DEFAULT_TEXT_REPLACEMENTS = {}
 
 logger = logging.getLogger(__name__)
 
