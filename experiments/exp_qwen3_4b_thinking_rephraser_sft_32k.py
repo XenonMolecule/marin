@@ -1,7 +1,7 @@
 # Copyright 2025 The Marin Authors
 # SPDX-License-Identifier: Apache-2.0
 
-"""SFT fine-tuning Qwen3-4B-Thinking-2507 on the rephraser distillation dataset.
+"""SFT fine-tuning Qwen3-4B-Thinking-2507 on the rephraser distillation dataset (32K context).
 
 Dataset: MichaelR207/rephraser_small_check_0213
   - Train: 84,389 rows
@@ -11,10 +11,10 @@ Dataset: MichaelR207/rephraser_small_check_0213
 Model: Qwen/Qwen3-4B-Thinking-2507 (loaded from HuggingFace Hub)
   - Same architecture as Qwen3-4B (head_dim=128 override required)
   - Uses rope_theta=5M (vs 1M for base Qwen3-4B) for 262K context support
-TPU: v5p-64 (32 chips, 95 GB HBM each)
+TPU: v5p-8 (4 chips, 95 GB HBM each)
 
-Memory note: At 131K seq_len, the logits tensor is 1 x 131072 x 151936 x 4B = 80 GB
-per device, consuming 84% of v5p HBM. This is tight but should fit with pdp=1.
+This is the 32K context variant. See exp_qwen3_4b_thinking_rephraser_sft.py for the
+131K version (requires v5p-64).
 """
 
 import dataclasses
@@ -41,7 +41,7 @@ DATASET_ID = "MichaelR207/rephraser_small_check_0213"
 # so we must tokenize with the Thinking-2507 tokenizer (not the shared 0.6B one).
 QWEN3_TOKENIZER = "Qwen/Qwen3-4B-Thinking-2507"
 MODEL_ID = "Qwen/Qwen3-4B-Thinking-2507"
-MAX_SEQ_LEN = 131_072
+MAX_SEQ_LEN = 32_768
 
 NUM_TRAIN_EXAMPLES = 84_389
 TARGET_EPOCHS = 1
@@ -138,8 +138,8 @@ qwen3_model_config = dataclasses.replace(
 # 6. SFT training config
 # ---------------------------------------------------------------------------
 sft_config = SimpleSFTConfig(
-    # Hardware -- v5p-64 (32 chips x 95 GB HBM) needed for 131K context
-    resources=ResourceConfig.with_tpu("v5p-64"),
+    # Hardware -- v5p-8 (4 chips x 95 GB HBM), fits at 32K context
+    resources=ResourceConfig.with_tpu("v5p-8"),
     # Training
     train_batch_size=TRAIN_BATCH_SIZE,
     num_train_steps=NUM_TRAIN_STEPS,
@@ -163,31 +163,24 @@ sft_config = SimpleSFTConfig(
     # Stability: z_loss penalizes large logits; skip_bad_steps skips anomalous batches.
     z_loss_weight=1e-5,
     skip_bad_steps=True,
-    # Fused cross-entropy: process vocab in blocks of 1024 to avoid materializing the
-    # full 1 x 131072 x 151936 logits tensor (74 GB). With block_size=1024, peak logits
-    # memory is ~0.6 GB per device instead.
-    ce_loss_block_size=1024,
+    # Gradient accumulation: microbatch=4 (1 per device x 4 chips), 16 accum steps.
+    # Logits tensor per device: 1 x 32768 x 151936 x 4B = 19 GB, fits in 95 GB v5p HBM.
     per_device_parallelism=1,
-    # Work around dtype mismatch during JAX abstract tracing (filter_make_jaxpr).
-    # Mixed-precision cast_to_compute is a no-op on abstract tracers, leaving norm
-    # weights at float32 while activations may be bfloat16. Under JAX's default strict
-    # promotion, jnp.multiply raises TypeError. Standard promotion auto-promotes instead.
-    jax_config={"jax_numpy_dtype_promotion": "standard"},
 )
 
 # ---------------------------------------------------------------------------
 # 7. Create the training ExecutorStep
 # ---------------------------------------------------------------------------
-qwen3_4b_thinking_rephraser_sft_v6 = default_sft(
-    name="qwen3-4b-thinking-rephraser-sft-v6",
+qwen3_4b_thinking_rephraser_sft_32k_v5 = default_sft(
+    name="qwen3-4b-thinking-rephraser-sft-32k-v5",
     tokenized=data_config,
     model_config=qwen3_model_config,
     sft_config=sft_config,
-    tags=["qwen3", "4b", "thinking", "sft", "rephraser"],
+    tags=["qwen3", "4b", "thinking", "sft", "rephraser", "32k"],
 )
 
 # ---------------------------------------------------------------------------
 # 8. Entry point
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    executor_main(steps=[qwen3_4b_thinking_rephraser_sft_v6])
+    executor_main(steps=[qwen3_4b_thinking_rephraser_sft_32k_v5])

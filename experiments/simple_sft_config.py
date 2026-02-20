@@ -150,11 +150,23 @@ class SimpleSFTConfig:
 
     z_loss_weight: float = 0.0
 
+    skip_bad_steps: bool = False
+    """If True, skips steps where the loss or gradient norm is significantly higher than
+    the historical mean. Prevents crashes from bad data batches."""
+
+    ce_loss_block_size: int | None = None
+    """If set, use fused cross-entropy that processes vocab in blocks to avoid OOM.
+    Critical for long-context training (e.g. 131K seq_len)."""
+
     per_device_parallelism: int = -1
     """How many examples to process in parallel on each device. -1 (default) means
     train_batch_size/num_devices (no gradient accumulation). Set to a positive value
     to enable gradient accumulation. For example, with 8 devices, batch_size=32, and
     per_device_parallelism=1, you get gradient accumulation of 4."""
+
+    jax_config: dict[str, object] | None = None
+    """Extra JAX config flags merged into the trainer's jax_config.
+    Example: {"jax_debug_nans": True} to crash on first NaN for debugging."""
 
     reinit_tokens: list[str] | bool = False
     """

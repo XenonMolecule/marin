@@ -70,4 +70,7 @@ rsync -avP ~/models/qwen3-0.6b-rephraser-sft/ \
 
 # 4. Serve (Qwen tokenizer)
 vllm serve small-rephraser/models/qwen3-0.6b-rephraser-sft-ckpt250/ --reasoning-parser qwen3
+
+# 4. Serve (Marin tokenizer)
+vllm serve small-rephraser/models/qwen3-0.6b-rephraser-sft-ckpt250/ --reasoning-parser marin_think --reasoning-parser-plugin /nlp/scr2/nlp/personal-rm/small-rephraser/small-rephraser/utils/marin_think_parser.py
 ```

@@ -155,19 +155,44 @@ class SkipStepConfig:
             # which is (NOT loss_ok) OR (NOT grad_norm_ok)
             should_skip = jnp.logical_not(jnp.logical_and(loss_ok, grad_norm_ok))
 
-            step_factor = jnp.where(jnp.logical_and(can_skip_based_on_history, should_skip), 0.0, 1.0)
+            # Always skip non-finite steps (NaN/Inf loss or grad norm), even during
+            # the warmup period before we have enough history for threshold-based
+            # skipping. Without this, NaN gradients are applied to model weights
+            # during the first `rolling_interval_length // 2` steps, permanently
+            # corrupting them.
+            is_finite = jnp.isfinite(loss) & jnp.isfinite(global_norm)
+            step_factor = jnp.where(
+                ~is_finite | (can_skip_based_on_history & should_skip),
+                0.0,
+                1.0,
+            )
 
             buffer_size = state.losses.shape[0]
 
-            new_losses = state.losses.at[state.current_idx].set(loss)
-            new_grad_norms = state.grad_norms.at[state.current_idx].set(global_norm)
-            new_valid_mask = state.valid_mask.at[state.current_idx].set(True)
-            new_current_idx = (state.current_idx + 1) % buffer_size
-            new_count = jnp.minimum(state.count + 1, buffer_size)
+            # Only record values from non-skipped, finite steps. Recording NaN
+            # values poisons jnp.mean/jnp.std (NaN propagates), making the
+            # threshold permanently NaN and causing every future step to be
+            # skipped — even when the actual loss is perfectly normal.
+            should_record = (step_factor > 0.0) & is_finite
+
+            # Compute what the buffer would look like if we record this step.
+            updated_losses = state.losses.at[state.current_idx].set(loss)
+            updated_grad_norms = state.grad_norms.at[state.current_idx].set(global_norm)
+            updated_valid_mask = state.valid_mask.at[state.current_idx].set(True)
+            updated_current_idx = (state.current_idx + 1) % buffer_size
+            updated_count = jnp.minimum(state.count + 1, buffer_size)
+
+            # Conditionally apply: keep old buffer state if step was skipped or values are non-finite.
+            new_losses = jnp.where(should_record, updated_losses, state.losses)
+            new_grad_norms = jnp.where(should_record, updated_grad_norms, state.grad_norms)
+            new_valid_mask = jnp.where(should_record, updated_valid_mask, state.valid_mask)
+            new_current_idx = jnp.where(should_record, updated_current_idx, state.current_idx)
+            new_count = jnp.where(should_record, updated_count, state.count)
 
             levanter.tracker.jit_log(
                 {
                     "optim/skipped_step": (step_factor == 0.0).astype(jnp.float32),
+                    "optim/skip_step/nan_skip": (~is_finite).astype(jnp.float32),
                     "optim/skip_step/loss_threshold": loss_threshold,
                     "optim/skip_step/loss": loss,
                     "optim/skip_step/loss_std": loss_std_safe_history,
