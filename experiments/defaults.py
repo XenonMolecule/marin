@@ -27,7 +27,7 @@ from levanter.models.lm_model import LmConfig
 from levanter.optim import AdamConfig
 from levanter.schedule import BatchSchedule
 from levanter.tracker.wandb import WandbConfig
-from levanter.trainer import TrainerConfig
+from levanter.trainer import DEFAULT_JAX_CONFIG, TrainerConfig
 from levanter.utils import fsspec_utils
 from levanter.utils.mesh import MeshConfig
 from marin.download.huggingface.download_hf import DownloadConfig, download_hf
@@ -367,6 +367,11 @@ def default_train(
             profiler_start_step=train_config.profiler_start_step,
             profiler_num_steps=train_config.profiler_num_steps,
             use_explicit_mesh_axes=train_config.explicit_mesh_axes,
+            # When skip_bad_steps is enabled, disable crash_on_nan so the optimizer can
+            # skip NaN batches instead of crashing. SkipStepConfig zeros out the gradient
+            # update when loss is NaN or exceeds the rolling threshold.
+            crash_on_nan=not train_config.skip_bad_steps,
+            jax_config={**DEFAULT_JAX_CONFIG, **(train_config.jax_config or {})},
         ),
         initialize_from_checkpoint_path=(
             checkpoint_path_to_load_from if train_config.reset_data_loader_on_init else None
@@ -374,6 +379,7 @@ def default_train(
         initialize_from_hf=hf_checkpoint_path_to_load_from or False,
         pad_tokenizer_to_match_model=train_config.pad_tokenizer_to_match_model,
         z_loss_weight=train_config.z_loss_weight,
+        ce_loss_block_size=train_config.ce_loss_block_size,
         train_seq_len=train_length,
         model=model_config,
         optimizer=(
@@ -489,10 +495,13 @@ def default_sft(
         train_seq_len=sft_config.max_seq_len,
         data_seed=sft_config.seed,
         z_loss_weight=sft_config.z_loss_weight,
+        skip_bad_steps=sft_config.skip_bad_steps,
+        ce_loss_block_size=sft_config.ce_loss_block_size,
         beta1=sft_config.beta1,
         beta2=sft_config.beta2,
         pad_tokenizer_to_match_model=sft_config.pad_tokenizer_to_match_model,
         per_device_parallelism=sft_config.per_device_parallelism,
+        jax_config=sft_config.jax_config,
     )
 
     if sft_config.reinit_tokens:

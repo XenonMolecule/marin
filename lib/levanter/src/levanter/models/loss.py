@@ -75,11 +75,14 @@ def maybe_fused_next_token_loss(
 
     # Create a mask that excludes the last token
     not_last_mask = hax.logical_not(hax.nn.one_hot(-1, Pos, dtype=jnp.bool_))  # type: ignore
+    # Use the caller-specified dtype (typically float32) for the loss weight mask.
+    # We must NOT override dtype with loss_weight.dtype here, because dtype is passed
+    # to the fused kernel and controls its computation precision.
+    loss_dtype = dtype if dtype is not None else jnp.float32
     if loss_weight is not None:
-        dtype = loss_weight.dtype
-        loss_weight = loss_weight.astype(dtype) * not_last_mask.astype(dtype)
+        loss_weight = loss_weight.astype(loss_dtype) * not_last_mask.astype(loss_dtype)
     else:
-        loss_weight = not_last_mask.astype(jnp.float32)
+        loss_weight = not_last_mask.astype(loss_dtype)
 
     # Compute the loss with optional block-wise processing
     return fused_cross_entropy_loss_and_logsumexp_penalty(

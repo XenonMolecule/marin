@@ -155,11 +155,13 @@ class GrugWrapper(LmHeadModel[Any]):
         logsumexp_weight: float | None = None,
         loss_dtype: jnp.dtype | None = jnp.float32,
         logit_soft_cap: float | None = None,
+        block_size: int | None = None,
     ) -> jnp.ndarray | NamedArray:
         """Override to use grug's blockwise loss (avoids materializing full logits)."""
         # NOTE: this wrapper is intentionally minimal; grug core currently doesn't use PRNGs.
+        # block_size is accepted for API compatibility but ignored -- grug always uses its own blockwise kernel.
         assert logit_soft_cap is None, "logit_soft_cap is not supported by GrugWrapper.compute_next_token_loss"
-        del key
+        del key, block_size
 
         # LmExample-ish protocol: expects `.tokens`, `.loss_weight`, `.attn_mask`.
         tokens = example.tokens

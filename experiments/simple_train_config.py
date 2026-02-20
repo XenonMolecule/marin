@@ -42,6 +42,9 @@ class SimpleTrainConfig:
     skip_bad_steps: bool = False
     """If True, skips steps where the loss or grad is significantly higher than the historical mean."""
 
+    ce_loss_block_size: int | None = None
+    """If set, use fused cross-entropy that processes vocab in blocks to avoid OOM."""
+
     steps_per_eval: int | None = None
     """how often to run validation losses"""
     steps_per_export: int = 10000
@@ -98,3 +101,7 @@ class SimpleTrainConfig:
 
     Required for models that call `jax.sharding.reshard(..., PartitionSpec(...))`.
     """
+
+    jax_config: dict[str, object] | None = None
+    """Extra JAX config flags merged into the trainer's jax_config.
+    Example: {"jax_debug_nans": True} to crash on first NaN for debugging."""

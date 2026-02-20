@@ -22,6 +22,26 @@ from ..wrap import unwrap_namedarrays, wrap_axiswise_call, wrap_reduction_call
 A = TypeVar("A", Scalar, NamedArray, jnp.ndarray)
 
 
+def _match_dtype(param: NamedArray, activation: NamedArray) -> NamedArray:
+    """Cast *param* to match *activation*'s dtype when they differ.
+
+    During normal execution with mixed-precision policies, both operands
+    already share the same dtype (``cast_to_compute`` ensures this). However,
+    during abstract tracing (e.g. ``eqx.filter_eval_shape`` inside
+    ``named_jit``), ``jmp.Policy.cast_to_compute`` is a no-op because JAX
+    tracers fail the ``isinstance(x, jnp.ndarray)`` check. This leaves
+    parameters in their stored dtype (e.g. float32) while activations may be
+    in a different dtype (e.g. bfloat16), causing ``lax.mul`` to fail with a
+    dtype-mismatch error.
+
+    Casting the parameter to the activation dtype resolves the mismatch and is
+    a no-op when dtypes already agree.
+    """
+    if param.dtype != activation.dtype:
+        return param.astype(activation.dtype)
+    return param
+
+
 class LayerNormBase(ModuleWithStateDictSerialization):
     axis: AxisSpec = eqx.field(static=True)
     weight: NamedArray | None
@@ -113,9 +133,9 @@ class LayerNorm(LayerNormBase):
         out = out.astype(dtype)
 
         if self.weight is not None:
-            out = self.weight * out
+            out = _match_dtype(self.weight, out) * out
         if self.bias is not None:
-            out = out + self.bias
+            out = out + _match_dtype(self.bias, out)
         return out
 
 
@@ -133,9 +153,9 @@ class RmsNorm(LayerNormBase):
         out = out.astype(in_dtype)
 
         if self.weight is not None:
-            out = self.weight * out
+            out = _match_dtype(self.weight, out) * out
         if self.bias is not None:
-            out = out + self.bias
+            out = out + _match_dtype(self.bias, out)
         return out
 
 

@@ -265,6 +265,7 @@ class LmHeadModel(eqx.Module, Generic[LmConfigT]):
         logsumexp_weight: Optional[float] = None,
         loss_dtype: Optional[jnp.dtype] = jnp.float32,
         logit_soft_cap: Optional[float] = None,
+        block_size: Optional[int] = None,
     ) -> jnp.ndarray | NamedArray:
         """
         Compute next-token cross-entropy for a language modeling example.
@@ -272,6 +273,9 @@ class LmHeadModel(eqx.Module, Generic[LmConfigT]):
         If `reduction` is not None, the loss is reduced across `reduction_axis` (`None` means all axes).
         If `reduction` is None, the loss is returned unreduced as a `NamedArray` with axes
         (*batch axes, sequence_length).
+
+        If `block_size` is set, uses a fused cross-entropy kernel that processes the vocabulary
+        in blocks, avoiding materializing the full [batch, seq, vocab] logits tensor.
         """
         activations = self.activations(example.tokens, example.attn_mask, key=key)
 
@@ -290,6 +294,7 @@ class LmHeadModel(eqx.Module, Generic[LmConfigT]):
             reduction=reduction,
             reduction_axis=reduction_axis,
             logsumexp_weight=logsumexp_weight,
+            block_size=block_size,
             dtype=loss_dtype,
             logit_soft_cap=logit_soft_cap,
         )

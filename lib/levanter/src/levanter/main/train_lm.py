@@ -55,6 +55,11 @@ class TrainLmConfig:
 
     z_loss_weight: float = 0.0
 
+    ce_loss_block_size: int | None = None
+    """If set, use the fused cross-entropy kernel that processes the vocabulary in blocks
+    of this size, avoiding materializing the full [batch, seq, vocab] logits tensor.
+    Critical for long-context training where logits would otherwise OOM."""
+
     hf_save_path: Optional[str] = None
     hf_upload: Optional[str] = None
     hf_save_steps: int = 10000
@@ -111,7 +116,9 @@ def main(config: TrainLmConfig):
     optimizer = config.optimizer.build(config.trainer.num_train_steps)
 
     def loss_function(model: LmHeadModel, example: LmExample, *, key=None):
-        return model.compute_next_token_loss(example, key=key, logsumexp_weight=config.z_loss_weight)
+        return model.compute_next_token_loss(
+            example, key=key, logsumexp_weight=config.z_loss_weight, block_size=config.ce_loss_block_size
+        )
 
     # Using the trainer as a context manager does 3 things:
     # 1. Sets the device mesh
