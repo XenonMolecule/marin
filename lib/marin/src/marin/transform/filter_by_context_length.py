@@ -153,9 +153,7 @@ def filter_by_context_length(config: FilterByContextLengthConfig):
         f"FILTER COMPLETE: kept {kept} examples "
         f"(seq_len={config.seq_len}, min_completion_tokens={config.min_completion_tokens})"
     )
-    logger.info(
-        f"  With batch_size=64, 1 epoch = {math.ceil(kept / 64)} steps"
-    )
+    logger.info(f"  With batch_size=64, 1 epoch = {math.ceil(kept / 64)} steps")
     logger.info("=" * 70)
 
     # Write a small stats file so downstream steps can read the count if needed.

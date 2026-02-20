@@ -57,7 +57,6 @@ import csv
 import logging
 import os
 
-import jax
 import jax.random as jrandom
 import numpy as np
 from haliax import Axis
@@ -190,15 +189,20 @@ def print_step_summary(step: int, all_stats: list[dict]):
     loss_fractions = [s["fraction_with_loss"] for s in all_stats]
     max_runs = [s["max_repeated_token_run"] for s in all_stats]
 
-    print(f"\n  Tokens with loss:     min={min(tokens_with_loss):>6}  max={max(tokens_with_loss):>6}  "
-          f"mean={np.mean(tokens_with_loss):>8.1f}  median={np.median(tokens_with_loss):>8.1f}")
-    print(f"  Padding tokens:       min={min(padding_counts):>6}  max={max(padding_counts):>6}  "
-          f"mean={np.mean(padding_counts):>8.1f}  median={np.median(padding_counts):>8.1f}")
-    print(f"  Loss fraction:        min={min(loss_fractions):>6.3f}  max={max(loss_fractions):>6.3f}  "
-          f"mean={np.mean(loss_fractions):>8.3f}")
+    print(
+        f"\n  Tokens with loss:     min={min(tokens_with_loss):>6}  max={max(tokens_with_loss):>6}  "
+        f"mean={np.mean(tokens_with_loss):>8.1f}  median={np.median(tokens_with_loss):>8.1f}"
+    )
+    print(
+        f"  Padding tokens:       min={min(padding_counts):>6}  max={max(padding_counts):>6}  "
+        f"mean={np.mean(padding_counts):>8.1f}  median={np.median(padding_counts):>8.1f}"
+    )
+    print(
+        f"  Loss fraction:        min={min(loss_fractions):>6.3f}  max={max(loss_fractions):>6.3f}  "
+        f"mean={np.mean(loss_fractions):>8.3f}"
+    )
     print(f"  Token ID range:       min={min(token_mins):>6}  max={max(token_maxes):>6}")
-    print(f"  Max repeated run:     min={min(max_runs):>6}  max={max(max_runs):>6}  "
-          f"mean={np.mean(max_runs):>8.1f}")
+    print(f"  Max repeated run:     min={min(max_runs):>6}  max={max(max_runs):>6}  " f"mean={np.mean(max_runs):>8.1f}")
 
     # Flag problematic examples
     problems = []
@@ -226,26 +230,30 @@ def print_step_summary(step: int, all_stats: list[dict]):
         for idx, issues in problems:
             print(f"    Example {idx}: {', '.join(issues)}")
     else:
-        print(f"\n  No flagged examples.")
+        print("\n  No flagged examples.")
 
     # Print per-example details for flagged or unusual examples
     # Sort by loss fraction to find outliers
     sorted_stats = sorted(all_stats, key=lambda s: s["fraction_with_loss"])
-    print(f"\n  Bottom 5 by loss fraction (least supervised signal):")
+    print("\n  Bottom 5 by loss fraction (least supervised signal):")
     for s in sorted_stats[:5]:
-        print(f"    Example {s['idx']:>3}: loss_frac={s['fraction_with_loss']:.4f}  "
-              f"tokens_with_loss={s['num_tokens_with_loss']:>5}  "
-              f"padding={s['num_padding_tokens']:>5}  "
-              f"token_range=[{s['token_min']}, {s['token_max']}]  "
-              f"max_repeat={s['max_repeated_token_run']}")
+        print(
+            f"    Example {s['idx']:>3}: loss_frac={s['fraction_with_loss']:.4f}  "
+            f"tokens_with_loss={s['num_tokens_with_loss']:>5}  "
+            f"padding={s['num_padding_tokens']:>5}  "
+            f"token_range=[{s['token_min']}, {s['token_max']}]  "
+            f"max_repeat={s['max_repeated_token_run']}"
+        )
 
-    print(f"\n  Top 5 by loss fraction (most supervised signal):")
+    print("\n  Top 5 by loss fraction (most supervised signal):")
     for s in sorted_stats[-5:]:
-        print(f"    Example {s['idx']:>3}: loss_frac={s['fraction_with_loss']:.4f}  "
-              f"tokens_with_loss={s['num_tokens_with_loss']:>5}  "
-              f"padding={s['num_padding_tokens']:>5}  "
-              f"token_range=[{s['token_min']}, {s['token_max']}]  "
-              f"max_repeat={s['max_repeated_token_run']}")
+        print(
+            f"    Example {s['idx']:>3}: loss_frac={s['fraction_with_loss']:.4f}  "
+            f"tokens_with_loss={s['num_tokens_with_loss']:>5}  "
+            f"padding={s['num_padding_tokens']:>5}  "
+            f"token_range=[{s['token_min']}, {s['token_max']}]  "
+            f"max_repeat={s['max_repeated_token_run']}"
+        )
 
     return problems
 
@@ -399,7 +407,7 @@ def print_detailed_example(example, tokenizer, example_idx: int, step: int):
 
         # Show last 100 tokens
         snippet_start = max(last_real - 100, first_real)
-        snippet_tokens = tokens[snippet_start:last_real + 1].tolist()
+        snippet_tokens = tokens[snippet_start : last_real + 1].tolist()
         decoded = tokenizer.decode(snippet_tokens, skip_special_tokens=False)
         print(f"  Last ~100 tokens (pos {snippet_start}-{last_real}):")
         print(f"    {decoded[:500]!r}")
@@ -409,30 +417,41 @@ def print_detailed_example(example, tokenizer, example_idx: int, step: int):
 
 async def main():
     parser = argparse.ArgumentParser(description="Inspect training batches for NaN debugging")
-    parser.add_argument("--steps", type=int, nargs="+", required=True,
-                        help="Steps to inspect (e.g., 734 735 736 737)")
-    parser.add_argument("--cache_path", type=str, required=True,
-                        help="GCS path to the tokenized cache directory")
-    parser.add_argument("--tokenizer", type=str, required=True,
-                        help="HuggingFace tokenizer name (e.g., Qwen/Qwen3-0.6B)")
-    parser.add_argument("--seq_len", type=int, default=32768,
-                        help="Max sequence length used in training")
-    parser.add_argument("--batch_size", type=int, default=64,
-                        help="Training batch size")
-    parser.add_argument("--seed", type=int, default=42,
-                        help="Data seed (must match experiment config)")
-    parser.add_argument("--vocab_size", type=int, default=None,
-                        help="Model vocab size for OOV checking. If not set, loaded from tokenizer.")
-    parser.add_argument("--thinking", action="store_true", default=False,
-                        help="Use the Qwen3-Thinking chat template instead of the base Qwen3 template")
-    parser.add_argument("--detailed", type=int, nargs="*", default=None,
-                        help="Example indices within the batch to decode in detail (e.g., 0 1 5)")
-    parser.add_argument("--csv", type=str, default=None,
-                        help="Output path for CSV with decoded text (e.g., batch_736.csv)")
+    parser.add_argument("--steps", type=int, nargs="+", required=True, help="Steps to inspect (e.g., 734 735 736 737)")
+    parser.add_argument("--cache_path", type=str, required=True, help="GCS path to the tokenized cache directory")
+    parser.add_argument(
+        "--tokenizer", type=str, required=True, help="HuggingFace tokenizer name (e.g., Qwen/Qwen3-0.6B)"
+    )
+    parser.add_argument("--seq_len", type=int, default=32768, help="Max sequence length used in training")
+    parser.add_argument("--batch_size", type=int, default=64, help="Training batch size")
+    parser.add_argument("--seed", type=int, default=42, help="Data seed (must match experiment config)")
+    parser.add_argument(
+        "--vocab_size",
+        type=int,
+        default=None,
+        help="Model vocab size for OOV checking. If not set, loaded from tokenizer.",
+    )
+    parser.add_argument(
+        "--thinking",
+        action="store_true",
+        default=False,
+        help="Use the Qwen3-Thinking chat template instead of the base Qwen3 template",
+    )
+    parser.add_argument(
+        "--detailed",
+        type=int,
+        nargs="*",
+        default=None,
+        help="Example indices within the batch to decode in detail (e.g., 0 1 5)",
+    )
+    parser.add_argument(
+        "--csv", type=str, default=None, help="Output path for CSV with decoded text (e.g., batch_736.csv)"
+    )
     args = parser.parse_args()
 
     # Load tokenizer for vocab size and optional decoding
     from transformers import AutoTokenizer
+
     tokenizer = AutoTokenizer.from_pretrained(args.tokenizer, trust_remote_code=True)
     vocab_size = args.vocab_size or len(tokenizer)
     logger.info(f"Tokenizer vocab size: {len(tokenizer)}, using vocab_size={vocab_size} for OOV check")
@@ -440,10 +459,12 @@ async def main():
     # Select the correct chat template (must contain {%generation%} markers).
     if args.thinking:
         from experiments.chat_templates.qwen3_thinking_chat_template import QWEN_3_THINKING_CHAT_TEMPLATE
+
         chat_template = QWEN_3_THINKING_CHAT_TEMPLATE
         logger.info("Using Qwen3-Thinking chat template")
     else:
         from experiments.chat_templates.qwen3_chat_template import QWEN_3_CHAT_TEMPLATE
+
         chat_template = QWEN_3_CHAT_TEMPLATE
         logger.info("Using Qwen3 base chat template")
 
@@ -512,19 +533,15 @@ async def main():
     for step in args.steps:
         n_problems = len(all_step_problems.get(step, []))
         examples = step_examples[step]
-        tokens_with_loss = [
-            int(np.sum(np.asarray(ex.loss_weight.array) > 0)) for ex in examples
-        ]
-        padding = [
-            int(np.sum(np.asarray(ex.tokens.array) == 0)) for ex in examples
-        ]
-        token_maxes = [
-            int(np.max(np.asarray(ex.tokens.array))) for ex in examples
-        ]
-        print(f"  Step {step}: {n_problems:>2} flagged | "
-              f"mean_loss_tokens={np.mean(tokens_with_loss):>8.1f} | "
-              f"mean_padding={np.mean(padding):>8.1f} | "
-              f"max_token_id={max(token_maxes):>6}")
+        tokens_with_loss = [int(np.sum(np.asarray(ex.loss_weight.array) > 0)) for ex in examples]
+        padding = [int(np.sum(np.asarray(ex.tokens.array) == 0)) for ex in examples]
+        token_maxes = [int(np.max(np.asarray(ex.tokens.array))) for ex in examples]
+        print(
+            f"  Step {step}: {n_problems:>2} flagged | "
+            f"mean_loss_tokens={np.mean(tokens_with_loss):>8.1f} | "
+            f"mean_padding={np.mean(padding):>8.1f} | "
+            f"max_token_id={max(token_maxes):>6}"
+        )
 
 
 if __name__ == "__main__":
