@@ -1,10 +1,10 @@
 # Copyright 2025 The Marin Authors
 # SPDX-License-Identifier: Apache-2.0
 
-"""SFT fine-tuning Qwen3-4B-Thinking-2507 on the rephraser distillation dataset.
+"""SFT fine-tuning Qwen3-4B-Thinking-2507 on the rephraser distillation dataset (mid).
 
-Dataset: MichaelR207/rephraser_small_check_0213
-  - Train: 84,389 rows
+Dataset: MichaelR207/rephraser_mid_check_0219
+  - Train: 601,502 rows
   - Validation: 100 rows
   - Format: multi-turn chat (system/user/assistant)
 
@@ -36,14 +36,14 @@ from marin.transform.filter_by_context_length import FilterByContextLengthConfig
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-DATASET_ID = "MichaelR207/rephraser_small_check_0213"
+DATASET_ID = "MichaelR207/rephraser_mid_check_0219"
 # The Thinking-2507 models use a different chat template than the base Qwen3 models,
 # so we must tokenize with the Thinking-2507 tokenizer (not the shared 0.6B one).
 QWEN3_TOKENIZER = "Qwen/Qwen3-4B-Thinking-2507"
 MODEL_ID = "Qwen/Qwen3-4B-Thinking-2507"
 MAX_SEQ_LEN = 131_072
 
-NUM_TRAIN_EXAMPLES = 84_389
+NUM_TRAIN_EXAMPLES = 601_502
 TARGET_EPOCHS = 1
 TRAIN_BATCH_SIZE = 64
 NUM_TRAIN_STEPS = math.ceil(TARGET_EPOCHS * NUM_TRAIN_EXAMPLES / TRAIN_BATCH_SIZE)
@@ -54,7 +54,7 @@ NUM_TRAIN_STEPS = math.ceil(TARGET_EPOCHS * NUM_TRAIN_EXAMPLES / TRAIN_BATCH_SIZ
 train_dataset = get_instruction_dataset(DATASET_ID, splits=["train"])
 val_dataset = get_instruction_dataset(DATASET_ID, splits=["validation"])
 
-CHAT_FORMAT = ChatLmDatasetFormat(chat_template=QWEN_3_THINKING_CHAT_TEMPLATE, pack=1)
+CHAT_FORMAT = ChatLmDatasetFormat(chat_template=QWEN_3_THINKING_CHAT_TEMPLATE)
 
 # ---------------------------------------------------------------------------
 # 2. Filter training data to remove examples whose user prompt exceeds the
@@ -63,7 +63,7 @@ CHAT_FORMAT = ChatLmDatasetFormat(chat_template=QWEN_3_THINKING_CHAT_TEMPLATE, p
 #    reuse the same filtered output.
 # ---------------------------------------------------------------------------
 filtered_train = ExecutorStep(
-    name=os.path.join("filtered", f"rephraser_small_check_0213_qwen3_thinking_{MAX_SEQ_LEN // 1024}k"),
+    name=os.path.join("filtered", f"rephraser_mid_check_0219_qwen3_thinking_{MAX_SEQ_LEN // 1024}k"),
     description=f"Filter examples with <64 assistant tokens within {MAX_SEQ_LEN} context.",
     fn=filter_by_context_length,
     config=FilterByContextLengthConfig(
@@ -92,7 +92,7 @@ filtered_train = ExecutorStep(
 #    TPU-only clusters where CPU resources are scarce.
 # ---------------------------------------------------------------------------
 tokenized = ExecutorStep(
-    name=os.path.join("tokenized", f"rephraser_small_check_0213_qwen3_4b_thinking_filtered_{MAX_SEQ_LEN // 1024}k"),
+    name=os.path.join("tokenized", f"rephraser_mid_check_0219_qwen3_4b_thinking_filtered_{MAX_SEQ_LEN // 1024}k"),
     description=f"Tokenize filtered data using the {QWEN3_TOKENIZER} tokenizer.",
     fn=tokenize,
     config=TokenizeConfig(
@@ -178,16 +178,16 @@ sft_config = SimpleSFTConfig(
 # ---------------------------------------------------------------------------
 # 7. Create the training ExecutorStep
 # ---------------------------------------------------------------------------
-qwen3_4b_thinking_rephraser_sft_v6 = default_sft(
-    name="qwen3-4b-thinking-rephraser-sft-v6",
+qwen3_4b_thinking_rephraser_mid_sft_v1 = default_sft(
+    name="qwen3-4b-thinking-rephraser-mid-sft-v1",
     tokenized=data_config,
     model_config=qwen3_model_config,
     sft_config=sft_config,
-    tags=["qwen3", "4b", "thinking", "sft", "rephraser"],
+    tags=["qwen3", "4b", "thinking", "sft", "rephraser", "mid"],
 )
 
 # ---------------------------------------------------------------------------
 # 8. Entry point
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    executor_main(steps=[qwen3_4b_thinking_rephraser_sft_v6])
+    executor_main(steps=[qwen3_4b_thinking_rephraser_mid_sft_v1])

@@ -32,6 +32,7 @@ import sys
 from collections import Counter
 
 import click
+import gcsfs
 import haliax as hax
 import jax.random as jrandom
 
@@ -178,7 +179,7 @@ def _get_step_weights(dataset: MixtureDataset, batch_schedule, step: int) -> dic
     """Get the mixture weights active at a given step."""
     offset = batch_schedule.global_data_offset_by_step(step)
     block_id = offset // dataset.block_size
-    stage_idx = blocking_wait(dataset._get_stage_for_block(block_id))
+    stage_idx = dataset._get_stage_for_block(block_id)
     return dataset.weight_stages[stage_idx][1]
 
 
@@ -561,7 +562,10 @@ def main(
 
     mod = _load_module(experiment)
     executor_step = _find_training_step(mod, var)
-    resolved_config = _resolve_config(executor_step, prefix)
+    executor = Executor(prefix=prefix, executor_info_base_path=os.path.join(prefix, "experiments"))
+    executor.compute_version(executor_step, is_pseudo_dep=False)
+    step_output_path = executor.output_paths[executor_step]
+    resolved_config = executor.configs[executor_step]
     train_config = resolved_config.train_config
     tokenizer = train_config.data.the_tokenizer
 
@@ -589,7 +593,11 @@ def main(
             out.close()
 
     if output:
-        click.echo(f"Wrote {total_examples} examples to {output}")
+        gcs_output = os.path.join(step_output_path, "debug", output)
+        fs = gcsfs.GCSFileSystem()
+        fs.put(output, gcs_output)
+        click.echo(f"Wrote {total_examples} examples to {gcs_output}")
+        click.echo(f"Download with: gsutil cp {gcs_output} .")
 
 
 if __name__ == "__main__":

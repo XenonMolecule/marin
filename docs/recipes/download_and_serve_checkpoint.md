@@ -12,6 +12,10 @@ List the HF-converted checkpoints for your run:
 gcloud storage ls gs://marin-us-central1/checkpoints/<run-name>/hf/
 ```
 
+```bash
+gcloud storage ls gs://marin-us-central1/checkpoints/ | grep "rephraser"
+```
+
 Example:
 
 ```bash
@@ -29,11 +33,29 @@ gcloud storage cp -r \
   ~/models/<model-name>/
 ```
 
+Example:
+```bash
+mkdir -p ~/models/qwen3-0.6b-rephraser-sft
+gcloud storage cp -r \
+  "gs://marin-us-central1/checkpoints/qwen3-0.6b-rephraser-sft-v6-5a8b19/hf/step-1318/" \
+  ~/models/qwen3-0.6b-rephraser-sft/
+```
+
+Example:
+
+
 ## 3. Transfer to the serving machine
 
 ```bash
 rsync -avP ~/models/<model-name>/ \
   <user>@<host>:<remote-path>/<model-name>/
+```
+
+Example:
+
+```bash
+rsync -avP ~/models/qwen3-0.6b-rephraser-sft/ \
+  mryan0@scdt.stanford.edu:/nlp/scr2/nlp/personal-rm/small-rephraser/small-rephraser/models/qwen3-0.6b-rephraser-sft-ckpt250/
 ```
 
 ## 4. Serve with vLLM
