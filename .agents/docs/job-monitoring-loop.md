@@ -41,12 +41,36 @@ Write to a local file (e.g., `monitoring_state.json` in the scratchpad):
 2. CHECK
    uv run scripts/ray/cluster.py --cluster <CLUSTER> job-logs -n 50 -g "loss\|error" <JOB_ID>
 
-3. EVALUATE
-   - If output contains "error" or "Error" or "Traceback" → go to step 4
-   - If output contains "loss" lines → go to step 1
-   - If no output (job dead) → go to step 4
+3. EVALUATE — be conservative, most issues are transient
+   - If output contains "loss" lines → go to step 1 (HEALTHY)
+   - If output contains errors OR no output → go to step 3.1 (VERIFY)
 
-4. RESTART
+   3.1 VERIFY STATUS — before any restart, confirm the job is actually FAILED:
+       list-jobs output is too large for stdout. Write to file and parse with python3:
+
+       uv run scripts/ray/cluster.py --cluster <CLUSTER> list-jobs 2>/dev/null > /tmp/ray_jobs_check.json
+       .venv/bin/python3 -c "
+       import json
+       with open('/tmp/ray_jobs_check.json') as f: data = json.load(f)
+       for j in data:
+           sid = j.get('submission_id','')
+           if '<EXPERIMENT_KEYWORD>' in sid:
+               print(j['status'], sid)
+       "
+
+       - If job status is RUNNING → go to step 1 (WAIT — empty logs can mean flaky
+         dashboard or head node rotation, not a dead job)
+       - If job status is FAILED → go to step 4 (RESTART)
+       - If job is not found in the list → go to step 4 (RESTART)
+
+4. STOP OLD JOB (CRITICAL - always do this before restarting)
+   uv run scripts/ray/cluster.py --cluster <CLUSTER> stop-job <JOB_ID>
+
+5. CHECK FOR DUPLICATES (before submitting a new job)
+   Parse /tmp/ray_jobs_check.json for other RUNNING jobs matching the same experiment.
+   If one exists → update state file to track that job instead, go to step 1.
+
+6. RESTART
    uv run lib/marin/src/marin/run/ray_run.py --no_wait --cluster <CLUSTER> -- python <EXPERIMENT_PATH>
 
    - Capture new job_id from output
@@ -90,3 +114,7 @@ Examples of complex issues (do not auto-fix):
 - Track restart_count to detect flapping jobs
 - State file allows resuming if context resets
 - If the same error occurs after a fix attempt, do not retry - report to user
+- Empty logs ≠ dead job — dashboard tunnels drop, head nodes rotate. Always verify with list-jobs.
+- Duplicates waste compute and can corrupt checkpoints. Always stop old job + check for duplicates before submitting.
+- Infra errors (OOM, node death, GCS errors, PENDING_NODE_ASSIGNMENT) are usually self-healing. Default to waiting.
+- list-jobs output is huge — always redirect to file and parse with python3, never pipe directly.

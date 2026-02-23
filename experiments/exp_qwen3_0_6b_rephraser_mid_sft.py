@@ -1,30 +1,25 @@
 # Copyright 2025 The Marin Authors
 # SPDX-License-Identifier: Apache-2.0
 
-"""SFT fine-tuning Qwen3-4B-Thinking-2507 on the rephraser distillation dataset.
+"""SFT fine-tuning Qwen3-0.6B on the rephraser distillation dataset (mid).
 
-Dataset: MichaelR207/rephraser_small_check_0213
-  - Train: 84,389 rows
+Dataset: MichaelR207/rephraser_mid_check_0219
+  - Train: 601,502 rows
   - Validation: 100 rows
   - Format: multi-turn chat (system/user/assistant)
 
-Model: Qwen/Qwen3-4B-Thinking-2507 (loaded from HuggingFace Hub)
-  - Same architecture as Qwen3-4B (head_dim=128 override required)
-  - Uses rope_theta=5M (vs 1M for base Qwen3-4B) for 262K context support
-TPU: v5p-64 (32 chips, 95 GB HBM each)
-
-Memory note: At 131K seq_len, the logits tensor is 1 x 131072 x 151936 x 4B = 80 GB
-per device, consuming 84% of v5p HBM. This is tight but should fit with pdp=1.
+Model: Qwen/Qwen3-0.6B (loaded from HuggingFace Hub)
+TPU: v5p-8 (4 chips, 95 GB HBM each)
 """
 
 import dataclasses
 import math
 import os
 
-from experiments.chat_templates.qwen3_thinking_chat_template import QWEN_3_THINKING_CHAT_TEMPLATE
+from experiments.chat_templates.qwen3_chat_template import QWEN_3_CHAT_TEMPLATE
 from experiments.defaults import default_sft
 from experiments.posttrain.instruction_datasets import get_instruction_dataset
-from experiments.qwen3 import qwen3_4b_hd128
+from experiments.qwen3 import qwen3_0_6b_hd128
 from experiments.simple_sft_config import SimpleSFTConfig
 from fray.cluster import ResourceConfig
 from levanter.data.text import ChatLmDatasetFormat
@@ -36,14 +31,11 @@ from marin.transform.filter_by_context_length import FilterByContextLengthConfig
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-DATASET_ID = "MichaelR207/rephraser_small_check_0213"
-# The Thinking-2507 models use a different chat template than the base Qwen3 models,
-# so we must tokenize with the Thinking-2507 tokenizer (not the shared 0.6B one).
-QWEN3_TOKENIZER = "Qwen/Qwen3-4B-Thinking-2507"
-MODEL_ID = "Qwen/Qwen3-4B-Thinking-2507"
-MAX_SEQ_LEN = 131_072
+DATASET_ID = "MichaelR207/rephraser_mid_check_0219"
+QWEN3_TOKENIZER = "Qwen/Qwen3-0.6B"
+MAX_SEQ_LEN = 32_768
 
-NUM_TRAIN_EXAMPLES = 84_389
+NUM_TRAIN_EXAMPLES = 601_502
 TARGET_EPOCHS = 1
 TRAIN_BATCH_SIZE = 64
 NUM_TRAIN_STEPS = math.ceil(TARGET_EPOCHS * NUM_TRAIN_EXAMPLES / TRAIN_BATCH_SIZE)
@@ -54,7 +46,7 @@ NUM_TRAIN_STEPS = math.ceil(TARGET_EPOCHS * NUM_TRAIN_EXAMPLES / TRAIN_BATCH_SIZ
 train_dataset = get_instruction_dataset(DATASET_ID, splits=["train"])
 val_dataset = get_instruction_dataset(DATASET_ID, splits=["validation"])
 
-CHAT_FORMAT = ChatLmDatasetFormat(chat_template=QWEN_3_THINKING_CHAT_TEMPLATE, pack=1)
+CHAT_FORMAT = ChatLmDatasetFormat(chat_template=QWEN_3_CHAT_TEMPLATE)
 
 # ---------------------------------------------------------------------------
 # 2. Filter training data to remove examples whose user prompt exceeds the
@@ -63,7 +55,7 @@ CHAT_FORMAT = ChatLmDatasetFormat(chat_template=QWEN_3_THINKING_CHAT_TEMPLATE, p
 #    reuse the same filtered output.
 # ---------------------------------------------------------------------------
 filtered_train = ExecutorStep(
-    name=os.path.join("filtered", f"rephraser_small_check_0213_qwen3_thinking_{MAX_SEQ_LEN // 1024}k"),
+    name=os.path.join("filtered", f"rephraser_mid_check_0219_qwen3_{MAX_SEQ_LEN // 1024}k"),
     description=f"Filter examples with <64 assistant tokens within {MAX_SEQ_LEN} context.",
     fn=filter_by_context_length,
     config=FilterByContextLengthConfig(
@@ -71,7 +63,7 @@ filtered_train = ExecutorStep(
         output_path=this_output_path(),
         tokenizer=QWEN3_TOKENIZER,
         seq_len=MAX_SEQ_LEN,
-        chat_template=QWEN_3_THINKING_CHAT_TEMPLATE,
+        chat_template=QWEN_3_CHAT_TEMPLATE,
         min_completion_tokens=64,
     ),
     resources=ResourceConfig.with_cpu(cpu=8, ram="32g"),
@@ -92,7 +84,7 @@ filtered_train = ExecutorStep(
 #    TPU-only clusters where CPU resources are scarce.
 # ---------------------------------------------------------------------------
 tokenized = ExecutorStep(
-    name=os.path.join("tokenized", f"rephraser_small_check_0213_qwen3_4b_thinking_filtered_{MAX_SEQ_LEN // 1024}k"),
+    name=os.path.join("tokenized", f"rephraser_mid_check_0219_qwen3_filtered_{MAX_SEQ_LEN // 1024}k"),
     description=f"Tokenize filtered data using the {QWEN3_TOKENIZER} tokenizer.",
     fn=tokenize,
     config=TokenizeConfig(
@@ -114,7 +106,9 @@ tokenized = ExecutorStep(
 )
 
 # ---------------------------------------------------------------------------
-# 4. Data config
+# 4. Data config -- the single tokenize step has both train/ and validation/
+#    cache subdirs. Passing the same step as a validation set (weight=0.0)
+#    tells Levanter to use the validation/ subdir for eval loss.
 # ---------------------------------------------------------------------------
 data_config = lm_data_config(
     training_set=tokenized,
@@ -123,14 +117,14 @@ data_config = lm_data_config(
 
 # ---------------------------------------------------------------------------
 # 5. Model config
-#    The base qwen3_4b_hd128 uses Llama3RotaryEmbeddingsConfig (theta=500K)
-#    for from-scratch pretraining. The Thinking-2507 variant uses theta=5M
-#    (higher than the base 4B's theta=1M) to support 262K context.
-#    head_dim=128 is required because 2560/32 = 80, mismatching the HF checkpoint.
+#    head_dim=128 is required because Qwen3-0.6B uses head_dim != hidden_dim/num_heads.
+#    The base qwen3_0_6b_hd128 uses Llama3RotaryEmbeddingsConfig (theta=500K) for
+#    from-scratch pretraining. For SFT from HF weights we need theta=1M to match
+#    the pretrained RoPE.
 # ---------------------------------------------------------------------------
 qwen3_model_config = dataclasses.replace(
-    qwen3_4b_hd128,
-    rope=DefaultRotaryEmbeddingsConfig(theta=5000000.0, factor=1.0),
+    qwen3_0_6b_hd128,
+    rope=DefaultRotaryEmbeddingsConfig(theta=1000000.0, factor=1.0),
     max_seq_len=MAX_SEQ_LEN,
 )
 
@@ -138,21 +132,21 @@ qwen3_model_config = dataclasses.replace(
 # 6. SFT training config
 # ---------------------------------------------------------------------------
 sft_config = SimpleSFTConfig(
-    # Hardware -- v5p-64 (32 chips x 95 GB HBM) needed for 131K context
-    resources=ResourceConfig.with_tpu("v5p-64"),
+    # Hardware -- v5p-8 (4 chips x 95 GB HBM)
+    resources=ResourceConfig.with_tpu("v5p-8"),
     # Training
     train_batch_size=TRAIN_BATCH_SIZE,
     num_train_steps=NUM_TRAIN_STEPS,
-    # Optimizer (slightly lower LR for 4B model)
-    learning_rate=1e-5,
+    # Optimizer
+    learning_rate=2e-5,
     lr_schedule="cosine",
     warmup=0.03,
     decay=0.97,  # fraction of steps for cosine decay (1.0 - warmup)
     weight_decay=0.01,
     max_grad_norm=1.0,
     # Model
-    tokenizer=MODEL_ID,
-    initialize_from_hf=MODEL_ID,
+    tokenizer=QWEN3_TOKENIZER,
+    initialize_from_hf="Qwen/Qwen3-0.6B",
     pad_tokenizer_to_match_model=True,
     max_seq_len=MAX_SEQ_LEN,
     # Checkpointing & eval
@@ -163,31 +157,24 @@ sft_config = SimpleSFTConfig(
     # Stability: z_loss penalizes large logits; skip_bad_steps skips anomalous batches.
     z_loss_weight=1e-5,
     skip_bad_steps=True,
-    # Fused cross-entropy: process vocab in blocks of 1024 to avoid materializing the
-    # full 1 x 131072 x 151936 logits tensor (74 GB). With block_size=1024, peak logits
-    # memory is ~0.6 GB per device instead.
-    # ce_loss_block_size=1024,
-    per_device_parallelism=1,
-    # Work around dtype mismatch during JAX abstract tracing (filter_make_jaxpr).
-    # Mixed-precision cast_to_compute is a no-op on abstract tracers, leaving norm
-    # weights at float32 while activations may be bfloat16. Under JAX's default strict
-    # promotion, jnp.multiply raises TypeError. Standard promotion auto-promotes instead.
-    # jax_config={"jax_numpy_dtype_promotion": "standard"},
+    # Gradient accumulation: microbatch=8 (2 per device x 4 chips), 8 accum steps.
+    # Logits tensor per device: 2 x 32768 x 151936 x 4B = 40 GB, fits in 95 GB v5p HBM.
+    per_device_parallelism=2,
 )
 
 # ---------------------------------------------------------------------------
 # 7. Create the training ExecutorStep
 # ---------------------------------------------------------------------------
-qwen3_4b_thinking_rephraser_sft_v6 = default_sft(
-    name="qwen3-4b-thinking-rephraser-sft-v6",
+qwen3_0_6b_rephraser_mid_sft_v1 = default_sft(
+    name="qwen3-0.6b-rephraser-mid-sft-v1",
     tokenized=data_config,
     model_config=qwen3_model_config,
     sft_config=sft_config,
-    tags=["qwen3", "4b", "thinking", "sft", "rephraser"],
+    tags=["qwen3", "0.6b", "sft", "rephraser", "mid"],
 )
 
 # ---------------------------------------------------------------------------
 # 8. Entry point
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    executor_main(steps=[qwen3_4b_thinking_rephraser_sft_v6])
+    executor_main(steps=[qwen3_0_6b_rephraser_mid_sft_v1])

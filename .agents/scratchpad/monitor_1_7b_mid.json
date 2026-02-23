@@ -1,0 +1,6 @@
+{
+  "job_id": "ray-run-michaelryan-exp_qwen3_1_7b_rephraser_mid_sft-20260223-045650",
+  "cluster": "us-central1",
+  "experiment": "experiments/exp_qwen3_1_7b_rephraser_mid_sft.py",
+  "restart_count": 2
+}

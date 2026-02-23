@@ -37,6 +37,7 @@ Current datasets:
 22. open-thoughts/OpenThoughts3-1.2M  # Original OT3 dataset; smoltalk2 uses a slightly different version
 23. MichaelR207/rephraser_small_check_0211
 24. MichaelR207/rephraser_small_check_0213
+25. MichaelR207/rephraser_mid_check_0219
 """
 
 import dataclasses
@@ -533,6 +534,14 @@ INSTRUCTION_DATASET_NAME_TO_CONFIG = {
         adapter=multi_turn_adapter(),
         metadata_columns=["warc_file", "doc_id", "spec_id", "spec"],
         name="MichaelR207/rephraser_small_check_0213",
+        splits=["train"],
+    ),
+    "MichaelR207/rephraser_mid_check_0219": InstructionDatasetConfig(
+        hf_dataset_id="MichaelR207/rephraser_mid_check_0219",
+        revision="b6136f8",
+        adapter=multi_turn_adapter(),
+        metadata_columns=["warc_file", "doc_id", "spec_id", "spec"],
+        name="MichaelR207/rephraser_mid_check_0219",
         splits=["train"],
     ),
 }
