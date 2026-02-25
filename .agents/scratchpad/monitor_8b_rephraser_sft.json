@@ -1,0 +1,9 @@
+{
+  "job_id": "ray-run-michaelryan-exp_qwen3_8b_rephraser_sft-20260225-053656",
+  "cluster": "us-central1",
+  "experiment": "experiments/exp_qwen3_8b_rephraser_sft.py",
+  "restart_count": 0,
+  "status": "SUCCEEDED",
+  "final_eval_loss": 0.206,
+  "hf_checkpoint": "gs://marin-us-central1/checkpoints/qwen3-8b-rephraser-sft-v4-193d7b/hf/step-1318"
+}

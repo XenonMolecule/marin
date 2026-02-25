@@ -118,3 +118,4 @@ Examples of complex issues (do not auto-fix):
 - Duplicates waste compute and can corrupt checkpoints. Always stop old job + check for duplicates before submitting.
 - Infra errors (OOM, node death, GCS errors, PENDING_NODE_ASSIGNMENT) are usually self-healing. Default to waiting.
 - list-jobs output is huge — always redirect to file and parse with python3, never pipe directly.
+- list-jobs may not return all jobs (API pagination/truncation). "Job not found" does NOT mean the job died — check `job-logs` for recent activity before restarting.

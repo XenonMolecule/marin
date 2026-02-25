@@ -1,0 +1,9 @@
+{
+  "job_id": "ray-run-michaelryan-midtrain_baselines-20260225-214930",
+  "cluster": "us-central1",
+  "experiment": "experiments/rephraser/midtrain_baselines.py",
+  "restart_count": 7,
+  "baseline_eval_job_id": "ray-run-michaelryan-llama_3_2_1b_baseline_eval-20260225-180112",
+  "baseline_eval_status": "SUCCEEDED",
+  "notes": "Restart 7: Reduced DCLM from 20 shards to 3 (only need ~100M tokens). batch_size=64, 381 steps, no grad accum. Rephraser cached steps should be reused."
+}

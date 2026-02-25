@@ -1,0 +1,9 @@
+{
+  "job_id": "ray-run-michaelryan-rephraser_sweep-20260225-051656",
+  "cluster": "us-central1",
+  "experiment": "experiments/rephraser/rephraser_sweep.py",
+  "restart_count": 5,
+  "format": "filetype=jsonl.gz, output_filetype_override=parquet",
+  "flags": "--force_run_failed true",
+  "notes": "Previous run read input as parquet (wrong!) because filetype controls both reader and writer. Fixed: filetype=jsonl.gz for input, output_filetype_override=parquet for output."
+}
