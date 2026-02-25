@@ -1,0 +1,6 @@
+# Common Crawl WARC paths for the rephraser spec sweep.
+# One S3-style path per line. Lines starting with # are comments.
+# Initial smoke test: 2 WARC files from CC-MAIN-2026-04.
+# For production runs, add 1000-5000 WARC paths.
+s3://commoncrawl/crawl-data/CC-MAIN-2026-04/segments/1768220841045.87/warc/CC-MAIN-20260124164026-20260124194026-00726.warc.gz
+s3://commoncrawl/crawl-data/CC-MAIN-2026-04/segments/1768220841045.87/warc/CC-MAIN-20260124164026-20260124194026-00727.warc.gz

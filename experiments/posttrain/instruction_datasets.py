@@ -38,6 +38,7 @@ Current datasets:
 23. MichaelR207/rephraser_small_check_0211
 24. MichaelR207/rephraser_small_check_0213
 25. MichaelR207/rephraser_mid_check_0219
+26. MichaelR207/rephraser_late_check_0225
 """
 
 import dataclasses
@@ -542,6 +543,14 @@ INSTRUCTION_DATASET_NAME_TO_CONFIG = {
         adapter=multi_turn_adapter(),
         metadata_columns=["warc_file", "doc_id", "spec_id", "spec"],
         name="MichaelR207/rephraser_mid_check_0219",
+        splits=["train"],
+    ),
+    "MichaelR207/rephraser_late_check_0225": InstructionDatasetConfig(
+        hf_dataset_id="MichaelR207/rephraser_late_check_0225",
+        revision="2194850",
+        adapter=multi_turn_adapter(),
+        metadata_columns=["warc_file", "doc_id", "spec_id", "spec"],
+        name="MichaelR207/rephraser_late_check_0225",
         splits=["train"],
     ),
 }

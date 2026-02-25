@@ -3,7 +3,6 @@
   "cluster": "us-central1",
   "experiment": "experiments/exp_qwen3_1_7b_rephraser_sweep.py --max_concurrent 12",
   "restart_count": 2,
-  "previous_job_id": "ray-run-michaelryan-exp_qwen3_1_7b_rephraser_sweep-20260222-170859",
-  "previous_termination": "Head node replaced ~16:00 UTC, workers at steps 307-368/1320",
-  "head_node_ip": "136.113.236.229"
+  "head_node_ip": "136.113.236.229",
+  "note": "list-jobs API only returns subset of jobs; always check job-logs directly to verify status"
 }
