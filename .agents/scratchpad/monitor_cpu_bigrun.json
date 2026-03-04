@@ -1,0 +1,12 @@
+{
+  "job_id": "ray-run-michaelryan-rephraser_cooldown_cpu_bigrun-20260304-025313",
+  "cluster": "big-run",
+  "experiment": "experiments/rephraser/rephraser_cooldown_cpu_bigrun.py",
+  "restart_count": 4,
+  "fixes_applied": [
+    "max_concurrency 100->500 in execution.py",
+    "request_timeout 1800->3600 in inference_llamacpp.py",
+    "NUM_INFERENCE_WORKERS 3600->1875"
+  ],
+  "gcs_before_restart": 32493
+}

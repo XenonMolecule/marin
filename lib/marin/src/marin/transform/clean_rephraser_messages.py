@@ -48,9 +48,11 @@ class CleanRephraserMessagesConfig:
     strip_thinking: bool = True
     """Whether to strip <think>...</think> blocks."""
 
-    filter_patterns: list[str] = field(default_factory=lambda: [
-        r"\[NO_USEFUL_CONTENT\]",
-    ])
+    filter_patterns: list[str] = field(
+        default_factory=lambda: [
+            r"\[NO_USEFUL_CONTENT\]",
+        ]
+    )
     """Regex patterns — if any matches the cleaned text, the record is dropped."""
 
     min_output_chars: int = 50

@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright 2025 The Marin Authors
+# SPDX-License-Identifier: Apache-2.0
+
 """Debug script to verify checkpoint state for the rephraser sweep.
 
 Checks the GCS output directory for spec 284df911 to confirm:
@@ -91,7 +94,7 @@ def main():
             except Exception as e:
                 print(f"    Error reading {filepath}: {e}")
 
-        print(f"[4] Records in existing .json files:")
+        print("[4] Records in existing .json files:")
         print(f"    Total records: {total_records}")
         print(f"    Unique IDs: {len(unique_ids)}")
         print()
@@ -101,9 +104,9 @@ def main():
     print("DIAGNOSIS:")
     if len(configured_files) == 0 and len(json_files) > 0:
         print(f"  BUG CONFIRMED: Checkpoint scanner looks for *.{CONFIGURED_FILETYPE}")
-        print(f"  but ray.data.write_json() wrote *.json files.")
+        print("  but ray.data.write_json() wrote *.json files.")
         print(f"  The {len(json_files)} output files from the previous run are")
-        print(f"  invisible to the checkpoint recovery code.")
+        print("  invisible to the checkpoint recovery code.")
         print()
         print("  FIX: In rephraser_sweep.py, change the inference config to use")
         print('  filetype="json" instead of "jsonl.gz", OR set')

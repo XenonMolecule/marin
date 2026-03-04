@@ -1,0 +1,6 @@
+{
+  "job_id": "ray-run-michaelryan-test_v6e_inference_v2-20260226-085027",
+  "cluster": "eu-west4-a",
+  "experiment": "experiments/rephraser/test_v6e_inference_v2.py",
+  "restart_count": 8
+}

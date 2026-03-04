@@ -1,0 +1,9 @@
+{
+  "job_id": "ray-run-michaelryan-rephraser_cooldown-20260228-170246",
+  "cluster": "us-central1",
+  "experiment": "experiments/rephraser/rephraser_cooldown.py",
+  "restart_count": 11,
+  "last_check": "2026-02-28T09:27:00Z",
+  "status": "INFERENCE",
+  "notes": "150-WARC version. Restart 11. Download/filter cached (-231d96). Inference running: 2/150 shards complete, 1 worker (on 10.128.0.136). ~1 shard/min with 1 worker. ~2.5h at current rate."
+}

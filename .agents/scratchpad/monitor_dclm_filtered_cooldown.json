@@ -1,0 +1,13 @@
+{
+  "job_id": "ray-run-michaelryan-dclm_filtered_cooldown-20260303-132146",
+  "cluster": "us-east1",
+  "experiment": "experiments/rephraser/dclm_filtered_cooldown.py",
+  "restart_count": 13,
+  "status": "SUCCEEDED",
+  "notes": "Training complete! HF checkpoint at gs://marin-us-east1/cooldown-dclm-filtered-v1-54cdb7/hf/step-9758. eval/loss=2.811, bpb=0.961, paloma_macro_bpb=1.108, uncheatable_macro_bpb=0.868.",
+  "bugs_found": [
+    "LambdaCallback.on_step() did not pass force=True to wrapped functions (fixed in callbacks/_core.py)",
+    "Trainer.train() did not call wait_until_finished() for async checkpoint saves (fixed in trainer.py)",
+    "lm_eval_harness crashes on multi-host v6e-32 with device_put error (workaround: disabled)"
+  ]
+}

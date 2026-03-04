@@ -1,0 +1,7 @@
+{
+  "job_id": "ray-run-michaelryan-rephraser_cooldown_150warc_train_eu-20260304-012640",
+  "cluster": "eu-west4-a",
+  "experiment": "experiments/rephraser/rephraser_cooldown_150warc_train_eu.py",
+  "restart_count": 0,
+  "description": "150-WARC cooldown on eu-west4-a v6e-32, fresh start"
+}

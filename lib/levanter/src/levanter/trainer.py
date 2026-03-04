@@ -535,6 +535,8 @@ class Trainer:
             )
             info = StepInfo(state, 0.0, 0.0)
             self.run_hooks(info, force=True)
+            if hasattr(self, "_checkpointer"):
+                self._checkpointer.wait_until_finished()
             return info
 
         info: Optional[StepInfo[S]] = None
@@ -549,6 +551,12 @@ class Trainer:
         # force hooks to run at the end
         self.run_hooks(info, force=True)
 
+        # Wait for async checkpoint saves to complete before returning.
+        # Without this, the process can exit before the final checkpoint is persisted,
+        # causing training to restart from an earlier checkpoint on TPU pods.
+        if hasattr(self, "_checkpointer"):
+            self._checkpointer.wait_until_finished()
+
         return info
 
     def _add_default_hooks(self):
@@ -558,6 +566,7 @@ class Trainer:
         self.add_hook(levanter.callbacks.log_step_info(self.config.num_train_steps), every=1)
         # engine.add_hook(callbacks.log_memory_usage(), every=1)
         checkpointer = self.config.checkpointer.create(self.run_id)
+        self._checkpointer = checkpointer
         self.add_hook(checkpointer.on_step, every=1)  # checkpointer manages its own frequency
 
         # Add watch callback if configured

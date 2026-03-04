@@ -1,0 +1,8 @@
+{
+  "job_id": "ray-run-michaelryan-rephraser_sweep_v2_eu-20260226-120133",
+  "cluster": "eu-west4-a",
+  "experiment": "experiments/rephraser/rephraser_sweep_v2_eu.py",
+  "restart_count": 5,
+  "status": "STOPPED_BY_USER",
+  "notes": "User intentionally stopped at 31/46 shards to replace with something else. Had scaled to 16 workers. Added TPU-v6e-8-head resource to EU cluster YAML."
+}

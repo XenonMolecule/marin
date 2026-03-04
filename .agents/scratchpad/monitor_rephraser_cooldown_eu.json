@@ -1,0 +1,6 @@
+{
+  "job_id": "ray-run-michaelryan-rephraser_cooldown_eu-20260226-132918",
+  "cluster": "eu-west4-a",
+  "experiment": "experiments/rephraser/rephraser_cooldown_eu.py",
+  "restart_count": 0
+}

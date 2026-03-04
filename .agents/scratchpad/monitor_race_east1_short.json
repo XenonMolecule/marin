@@ -1,0 +1,7 @@
+{
+  "job_id": "ray-run-michaelryan-rephraser_east1d-20260304-013842",
+  "cluster": "us-east1",
+  "experiment": "experiments/rephraser/short_cooldown/rephraser_east1d.py",
+  "restart_count": 0,
+  "description": "Short rephraser cooldown on east1-d v6e-32, fresh start"
+}

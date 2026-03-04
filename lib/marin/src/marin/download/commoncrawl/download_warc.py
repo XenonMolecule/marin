@@ -14,11 +14,9 @@ Usage as an ExecutorStep (see experiments/rephraser/rephraser_sweep.py) or stand
 """
 
 import io
-import json
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
-import fsspec
 import requests
 import warcio
 
@@ -48,7 +46,7 @@ def _s3_to_https(s3_path: str) -> str:
     s3://commoncrawl/crawl-data/X -> https://data.commoncrawl.org/crawl-data/X
     """
     if s3_path.startswith("s3://commoncrawl/"):
-        return "https://data.commoncrawl.org/" + s3_path[len("s3://commoncrawl/"):]
+        return "https://data.commoncrawl.org/" + s3_path[len("s3://commoncrawl/") :]
     if s3_path.startswith("https://"):
         return s3_path
     return "https://data.commoncrawl.org/" + s3_path
@@ -90,15 +88,17 @@ def _extract_html_from_warc(
         record_id = record.rec_headers.get_header("WARC-Record-ID") or ""
         target_uri = record.rec_headers.get_header("WARC-Target-URI") or ""
 
-        records.append({
-            "id": record_id,
-            "html": html,
-            "url": target_uri,
-            "metadata": {
-                "warc_file": warc_path,
-                "content_length": len(html),
-            },
-        })
+        records.append(
+            {
+                "id": record_id,
+                "html": html,
+                "url": target_uri,
+                "metadata": {
+                    "warc_file": warc_path,
+                    "content_length": len(html),
+                },
+            }
+        )
 
         if max_pages and len(records) >= max_pages:
             break

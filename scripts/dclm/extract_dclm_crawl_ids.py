@@ -1,3 +1,6 @@
+# Copyright 2025 The Marin Authors
+# SPDX-License-Identifier: Apache-2.0
+
 """Extract unique Common Crawl snapshot IDs (isPartOf) from the DCLM baseline dataset.
 
 Scans the `warcinfo` field from all jsonl.zst shards in the raw DCLM baseline on GCS
@@ -31,8 +34,7 @@ logger = logging.getLogger("ray")
 # The raw DCLM baseline lives on us-central2, hardcoded to avoid prefix mismatch
 # if submitted from a different cluster.
 DCLM_RAW_PATH = (
-    "gs://marin-us-central2/raw/dclm/a3b142c/huggingface.co/datasets/"
-    "mlfoundations/dclm-baseline-1.0/resolve/a3b142c"
+    "gs://marin-us-central2/raw/dclm/a3b142c/huggingface.co/datasets/" "mlfoundations/dclm-baseline-1.0/resolve/a3b142c"
 )
 
 ISPARTOF_RE = re.compile(r"isPartOf:\s*(CC-MAIN-\d{4}-\d{2})")
@@ -53,18 +55,14 @@ class ExtractCrawlIdsConfig:
 def _list_shard_files(input_path: str) -> list[str]:
     """List all jsonl.zst blob names under the DCLM input path."""
     if input_path.startswith("gs://"):
-        path = input_path[len("gs://"):]
+        path = input_path[len("gs://") :]
     else:
         path = input_path
     bucket_name, prefix = path.split("/", 1)
 
     client = storage.Client()
     blobs = client.list_blobs(bucket_name, prefix=prefix)
-    return [
-        f"gs://{bucket_name}/{b.name}"
-        for b in blobs
-        if b.name.endswith(".jsonl.zst")
-    ]
+    return [f"gs://{bucket_name}/{b.name}" for b in blobs if b.name.endswith(".jsonl.zst")]
 
 
 def _extract_ids_from_file(filepath: str) -> set[str]:
@@ -119,7 +117,11 @@ def extract_dclm_crawl_ids(config: ExtractCrawlIdsConfig) -> None:
         if new_ids:
             logger.info(
                 "[batch %d/%d] +%d new: %s  (total: %d)",
-                completed, len(batches), len(new_ids), sorted(new_ids), len(all_crawl_ids),
+                completed,
+                len(batches),
+                len(new_ids),
+                sorted(new_ids),
+                len(all_crawl_ids),
             )
         elif completed % 50 == 0:
             logger.info("[batch %d/%d] total: %d", completed, len(batches), len(all_crawl_ids))

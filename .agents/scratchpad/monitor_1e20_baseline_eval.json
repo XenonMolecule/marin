@@ -1,0 +1,6 @@
+{
+  "job_id": "ray-run-michaelryan-scaling_1e20_baseline_eval-20260228-070445",
+  "cluster": "us-central1",
+  "experiment": "experiments/rephraser/scaling_1e20_baseline_eval.py",
+  "restart_count": 3
+}

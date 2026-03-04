@@ -140,6 +140,7 @@ available_node_types:
     resources:
       CPU: 120
       TPU: 4
+      TPU-v6e-4-head: 1
 
   tpu_slice_v6e_8:
     max_workers: 1024
@@ -152,6 +153,7 @@ available_node_types:
     resources:
       CPU: 120
       TPU: 4
+      TPU-v6e-8-head: 1
 
   tpu_slice_v6e_16:
     max_workers: 1024
@@ -164,6 +166,7 @@ available_node_types:
     resources:
       CPU: 120
       TPU: 4
+      TPU-v6e-16-head: 1
 
   tpu_slice_v6e_32:
     max_workers: 1024
@@ -176,6 +179,7 @@ available_node_types:
     resources:
       CPU: 120
       TPU: 4
+      TPU-v6e-32-head: 1
 
   tpu_slice_v6e_64:
     max_workers: 1024
@@ -188,6 +192,7 @@ available_node_types:
     resources:
       CPU: 120
       TPU: 4
+      TPU-v6e-64-head: 1
 
   tpu_slice_v6e_128:
     max_workers: 1024
@@ -200,6 +205,7 @@ available_node_types:
     resources:
       CPU: 120
       TPU: 4
+      TPU-v6e-128-head: 1
 
   tpu_slice_v6e_256:
     max_workers: 1024
@@ -212,3 +218,4 @@ available_node_types:
     resources:
       CPU: 120
       TPU: 4
+      TPU-v6e-256-head: 1

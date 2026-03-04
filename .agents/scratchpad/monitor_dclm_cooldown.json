@@ -1,0 +1,9 @@
+{
+  "job_id": "ray-run-michaelryan-dclm_cooldown-20260227-221443",
+  "cluster": "us-central1",
+  "experiment": "experiments/rephraser/dclm_cooldown.py",
+  "restart_count": 5,
+  "last_check": "2026-02-28T02:30:00Z",
+  "status": "SUCCESS",
+  "notes": "COMPLETE: executor_status=SUCCESS. Final eval at step-9758. eval/loss=2.807, paloma/macro_bpb=1.102, uncheatable/macro_bpb=0.865. Checkpoints: step-7995, step-9650."
+}

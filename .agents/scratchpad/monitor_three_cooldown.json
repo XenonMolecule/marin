@@ -1,0 +1,39 @@
+{
+  "jobs": [
+    {
+      "name": "25-WARC",
+      "job_id": "ray-run-michaelryan-rephraser_cooldown-20260228-002427",
+      "experiment": "experiments/rephraser/rephraser_cooldown.py",
+      "cluster": "us-central1",
+      "restart_count": 8,
+      "status": "SUCCESS - training complete. Final eval at step-9758. eval/loss=2.816."
+    },
+    {
+      "name": "DCLM",
+      "job_id": "ray-run-michaelryan-dclm_cooldown-20260227-221443",
+      "experiment": "experiments/rephraser/dclm_cooldown.py",
+      "cluster": "us-central1",
+      "restart_count": 5,
+      "status": "SUCCESS - training complete. Final eval at step-9758. eval/loss=2.807."
+    },
+    {
+      "name": "150-WARC (us-east1, v6e-8)",
+      "job_id": "ray-run-michaelryan-rephraser_cooldown_150warc_train_east1-20260303-015909",
+      "experiment": "experiments/rephraser/rephraser_cooldown_150warc_train_east1.py",
+      "cluster": "us-east1-d",
+      "restart_count": 4,
+      "status": "ABANDONED - 4 consecutive v6e-8 preemptions, nodes die before first checkpoint.",
+      "notes": "Data is on gs://marin-us-east1/. Checkpoint interval was 3min but still not enough."
+    },
+    {
+      "name": "150-WARC (us-central1, v5p-8)",
+      "job_id": "ray-run-michaelryan-rephraser_cooldown_150warc_train-20260303-024844",
+      "experiment": "experiments/rephraser/rephraser_cooldown_150warc_train.py",
+      "cluster": "us-central1",
+      "restart_count": 1,
+      "status": "RUNNING - autoscaler trying to allocate v5p-8 node. Same cluster where 25-WARC succeeded (8 restarts).",
+      "notes": "Training-only script with hardcoded paths. WandB run: cooldown-rephraser-d7d976d3-150warc-56ba41"
+    }
+  ],
+  "last_check": "2026-03-02T18:59Z"
+}
