@@ -105,6 +105,11 @@ DO NOT:
 - Create tests which validate obvious features: if a type exists, a constant has a value, etc.
 
 
+## GCP / Cloud Storage
+
+- **Avoid cross-region copies** (e.g. `gs://marin-us-central1/...` → `gs://marin-eu-west4/...`) — cross-region egress is expensive. Prefer copying from within the destination region when possible.
+- When copying model checkpoints or large files between buckets, always verify the destination directory structure matches the source (e.g. flat files, not nested duplicate directories).
+
 ## Environment
 
 - Prefer to use `uv` when possible. If you can't (for instance, due to sandbox restrictions) you can use `.venv/bin/python`

@@ -1,9 +1,9 @@
 {
-  "job_id": "ray-run-michaelryan-rephraser_sweep-20260225-051656",
+  "job_id": "ray-run-michaelryan-rephraser_sweep-20260225-222542",
   "cluster": "us-central1",
   "experiment": "experiments/rephraser/rephraser_sweep.py",
-  "restart_count": 5,
+  "restart_count": 6,
   "format": "filetype=jsonl.gz, output_filetype_override=parquet",
   "flags": "--force_run_failed true",
-  "notes": "Previous run read input as parquet (wrong!) because filetype controls both reader and writer. Fixed: filetype=jsonl.gz for input, output_filetype_override=parquet for output."
+  "notes": "Restart 6: Previous run failed on postprocess step. Relaunched with force_run_failed. Training hyperparams already matched baselines."
 }

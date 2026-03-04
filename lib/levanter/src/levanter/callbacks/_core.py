@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import abc
+import inspect
 from abc import ABC
 from dataclasses import dataclass
 from typing import Any, Callable, Generic, TypeVar
@@ -54,9 +55,16 @@ class Callback(ABC, Generic[S]):
 class LambdaCallback(Callback[S]):
     def __init__(self, fn: Callable[[StepInfo[S]], Any]):
         self.fn = fn
+        try:
+            self._accepts_force = "force" in inspect.signature(fn).parameters
+        except (ValueError, TypeError):
+            self._accepts_force = False
 
     def on_step(self, info: StepInfo[S], force: bool = False):
-        self.fn(info)
+        if self._accepts_force:
+            self.fn(info, force=force)
+        else:
+            self.fn(info)
 
 
 class JitCallback(ABC, Generic[S, M, CBInfo]):

@@ -158,6 +158,13 @@ vllm =[
 
 math = ["pylatexenc", "sympy"]
 
+dclm = [
+    "fasttext-wheel",  # language ID + quality classifier (pre-built wheel)
+    "retrie",          # URL ban list regex compilation
+    "nltk",            # n-gram generation for repetition filters
+    "uniseg",          # Unicode word segmentation
+]
+
 [[tool.uv.index]]
 name = "marin-resiliparse"
 url = "https://marin-community.github.io/chatnoir-resiliparse/simple"

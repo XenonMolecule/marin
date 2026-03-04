@@ -1,0 +1,9 @@
+{
+  "job_id": "ray-run-michaelryan-rephraser_cooldown_150warc_train-20260303-054602",
+  "cluster": "us-central1",
+  "experiment": "experiments/rephraser/rephraser_cooldown_150warc_train.py",
+  "status": "ABANDONED - user moved training to eu-west4 due to us-central1 cluster OOM. No training progress after 11+ hours.",
+  "last_check": "2026-03-03T08:18Z",
+  "monitoring_cycles": 12,
+  "notes": "User launched on eu-west4 directly. Monitoring stopped."
+}

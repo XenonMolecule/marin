@@ -1,0 +1,28 @@
+# Common Crawl WARC paths for the rephraser spec sweep.
+# One S3-style path per line. Lines starting with # are comments.
+# First 25 WARC files only (subset of warc_paths.txt).
+s3://commoncrawl/crawl-data/CC-MAIN-2026-04/segments/1768220841045.87/warc/CC-MAIN-20260124164026-20260124194026-00726.warc.gz
+s3://commoncrawl/crawl-data/CC-MAIN-2026-04/segments/1768220841045.87/warc/CC-MAIN-20260124164026-20260124194026-00727.warc.gz
+s3://commoncrawl/crawl-data/CC-MAIN-2026-04/segments/1768220841045.87/warc/CC-MAIN-20260124164026-20260124194026-00728.warc.gz
+s3://commoncrawl/crawl-data/CC-MAIN-2026-04/segments/1768220841045.87/warc/CC-MAIN-20260124164026-20260124194026-00729.warc.gz
+s3://commoncrawl/crawl-data/CC-MAIN-2026-04/segments/1768220841045.87/warc/CC-MAIN-20260124164026-20260124194026-00730.warc.gz
+s3://commoncrawl/crawl-data/CC-MAIN-2026-04/segments/1768220841424.88/warc/CC-MAIN-20260124194506-20260124224506-00477.warc.gz
+s3://commoncrawl/crawl-data/CC-MAIN-2026-04/segments/1768220841424.88/warc/CC-MAIN-20260124194506-20260124224506-00478.warc.gz
+s3://commoncrawl/crawl-data/CC-MAIN-2026-04/segments/1768220841424.88/warc/CC-MAIN-20260124194506-20260124224506-00479.warc.gz
+s3://commoncrawl/crawl-data/CC-MAIN-2026-04/segments/1768220841424.88/warc/CC-MAIN-20260124194506-20260124224506-00480.warc.gz
+s3://commoncrawl/crawl-data/CC-MAIN-2026-04/segments/1768220841424.88/warc/CC-MAIN-20260124194506-20260124224506-00481.warc.gz
+s3://commoncrawl/crawl-data/CC-MAIN-2026-04/segments/1768220841488.93/warc/CC-MAIN-20260124225038-20260125015038-00246.warc.gz
+s3://commoncrawl/crawl-data/CC-MAIN-2026-04/segments/1768220841488.93/warc/CC-MAIN-20260124225038-20260125015038-00247.warc.gz
+s3://commoncrawl/crawl-data/CC-MAIN-2026-04/segments/1768220841488.93/warc/CC-MAIN-20260124225038-20260125015038-00248.warc.gz
+s3://commoncrawl/crawl-data/CC-MAIN-2026-04/segments/1768220841488.93/warc/CC-MAIN-20260124225038-20260125015038-00249.warc.gz
+s3://commoncrawl/crawl-data/CC-MAIN-2026-04/segments/1768220841488.93/warc/CC-MAIN-20260124225038-20260125015038-00250.warc.gz
+s3://commoncrawl/crawl-data/CC-MAIN-2026-04/segments/1768220842257.96/warc/CC-MAIN-20260125015520-20260125045520-00994.warc.gz
+s3://commoncrawl/crawl-data/CC-MAIN-2026-04/segments/1768220842257.96/warc/CC-MAIN-20260125015520-20260125045520-00995.warc.gz
+s3://commoncrawl/crawl-data/CC-MAIN-2026-04/segments/1768220842257.96/warc/CC-MAIN-20260125015520-20260125045520-00996.warc.gz
+s3://commoncrawl/crawl-data/CC-MAIN-2026-04/segments/1768220842257.96/warc/CC-MAIN-20260125015520-20260125045520-00997.warc.gz
+s3://commoncrawl/crawl-data/CC-MAIN-2026-04/segments/1768220842257.96/warc/CC-MAIN-20260125015520-20260125045520-00998.warc.gz
+s3://commoncrawl/crawl-data/CC-MAIN-2026-04/segments/1768220842257.96/warc/CC-MAIN-20260125015520-20260125045520-00999.warc.gz
+s3://commoncrawl/crawl-data/CC-MAIN-2026-04/segments/1768220842826.94/warc/CC-MAIN-20260125110540-20260125140540-00591.warc.gz
+s3://commoncrawl/crawl-data/CC-MAIN-2026-04/segments/1768220842826.94/warc/CC-MAIN-20260125110540-20260125140540-00592.warc.gz
+s3://commoncrawl/crawl-data/CC-MAIN-2026-04/segments/1768220842826.94/warc/CC-MAIN-20260125110540-20260125140540-00593.warc.gz
+s3://commoncrawl/crawl-data/CC-MAIN-2026-04/segments/1768220842826.94/warc/CC-MAIN-20260125110540-20260125140540-00594.warc.gz

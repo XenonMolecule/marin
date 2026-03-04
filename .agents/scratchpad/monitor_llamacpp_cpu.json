@@ -1,0 +1,7 @@
+{
+  "job_id": "ray-run-michaelryan-rephraser_cooldown_cpu-20260302-094807",
+  "cluster": "us-east5-a",
+  "experiment": "experiments/rephraser/rephraser_cooldown_cpu.py",
+  "restart_count": 6,
+  "notes": "v6: Restart after coordinator node (10.202.0.142) died. 296 output files preserved via skip_existing. Same config: 512 workers, 10 records/shard."
+}

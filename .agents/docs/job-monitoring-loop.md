@@ -39,7 +39,11 @@ Write to a local file (e.g., `monitoring_state.json` in the scratchpad):
    sleep 570
 
 2. CHECK
-   uv run scripts/ray/cluster.py --cluster <CLUSTER> job-logs -n 50 -g "loss\|error" <JOB_ID>
+   ./scripts/ray/check_logs.sh <CLUSTER> <SUBMISSION_ID> [lines] [pattern]
+   # Presets: "inference" (zephyr pipeline), "training" (loss/eval/steps),
+   #          "errors", "all" (default), "raw" (unfiltered tail).
+   # Lines: number for last N, or "0"/"all" for unlimited.
+   # Or pass a custom regex as the pattern arg.
 
 3. EVALUATE — be conservative, most issues are transient
    - If output contains "loss" lines → go to step 1 (HEALTHY)

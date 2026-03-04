@@ -157,8 +157,7 @@ def filter_by_token_length(config: FilterByTokenLengthConfig):
 
     logger.info("=" * 70)
     logger.info(
-        f"FILTER COMPLETE: kept {kept} examples "
-        f"(text_column={config.text_column!r}, max_tokens={config.max_tokens})"
+        f"FILTER COMPLETE: kept {kept} examples " f"(text_column={config.text_column!r}, max_tokens={config.max_tokens})"
     )
     logger.info("=" * 70)
 

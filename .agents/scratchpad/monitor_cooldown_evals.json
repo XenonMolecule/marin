@@ -1,0 +1,36 @@
+{
+  "jobs": [
+    {
+      "name": "150warc",
+      "job_id": "ray-run-michaelryan-rephraser_cooldown_150warc_train_central1-20260303-175828",
+      "cluster": "us-central1",
+      "experiment": "experiments/rephraser/rephraser_cooldown_150warc_train_central1.py",
+      "restart_count": 0,
+      "status": "SUCCEEDED"
+    },
+    {
+      "name": "nemotron-only",
+      "job_id": "ray-run-michaelryan-nemotron_only_east5-20260303-203426",
+      "cluster": "us-east5-a",
+      "experiment": "experiments/rephraser/short_cooldown/nemotron_only_east5.py",
+      "restart_count": 0,
+      "note": "moved from us-central1 (cluster at capacity)"
+    },
+    {
+      "name": "rephraser",
+      "job_id": "ray-run-michaelryan-rephraser_east5-20260303-203439",
+      "cluster": "us-east5-a",
+      "experiment": "experiments/rephraser/short_cooldown/rephraser_east5.py",
+      "restart_count": 0,
+      "note": "moved from us-central1 (cluster at capacity)"
+    },
+    {
+      "name": "dclm",
+      "job_id": "ray-run-michaelryan-dclm_east5-20260303-203448",
+      "cluster": "us-east5-a",
+      "experiment": "experiments/rephraser/short_cooldown/dclm_east5.py",
+      "restart_count": 0,
+      "note": "moved from us-central1 (cluster at capacity)"
+    }
+  ]
+}

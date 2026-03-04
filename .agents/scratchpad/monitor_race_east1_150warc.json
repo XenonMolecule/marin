@@ -1,0 +1,7 @@
+{
+  "job_id": "ray-run-michaelryan-rephraser_cooldown_150warc_train_east1d-20260304-013834",
+  "cluster": "us-east1",
+  "experiment": "experiments/rephraser/rephraser_cooldown_150warc_train_east1d.py",
+  "restart_count": 0,
+  "description": "150-WARC cooldown on east1-d v6e-32, resuming from step-4001"
+}

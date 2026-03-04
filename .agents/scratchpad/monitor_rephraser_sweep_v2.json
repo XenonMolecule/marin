@@ -1,0 +1,8 @@
+{
+  "job_id": "ray-run-michaelryan-rephraser_sweep_v2-20260226-122346",
+  "cluster": "us-central1",
+  "experiment": "experiments/rephraser/rephraser_sweep_v2.py",
+  "restart_count": 16,
+  "status": "COMPLETE",
+  "notes": "Full pipeline complete: inference (46/46 shards) → postprocess → tokenize → midtrain (38 steps). Eval macro_bpb ~3.2 (Paloma). Fixed Zephyr pull_task overwrite bug."
+}

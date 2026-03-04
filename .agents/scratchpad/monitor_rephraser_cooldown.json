@@ -1,0 +1,9 @@
+{
+  "job_id": "ray-run-michaelryan-rephraser_cooldown-20260228-002427",
+  "cluster": "us-central1",
+  "experiment": "experiments/rephraser/rephraser_cooldown.py",
+  "restart_count": 8,
+  "last_check": "2026-02-28T02:50:00Z",
+  "status": "SUCCESS",
+  "notes": "25-WARC version. executor_status=SUCCESS. Final eval at step-9758. eval/loss=2.816, paloma/macro_bpb=1.105, uncheatable/macro_bpb=0.866. Checkpoints: step-7357, step-9608."
+}

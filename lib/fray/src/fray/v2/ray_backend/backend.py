@@ -369,7 +369,10 @@ class RayClient:
         handles: list[RayActorHandle] = []
         for i in range(count):
             actor_name = f"{name}-{i}"
-            actor_ref = _RayActorHost.options(name=actor_name, **ray_options).remote(
+            # max_restarts=-1 enables automatic actor reconstruction after node
+            # preemption. Zephyr coordinators handle re-registration of
+            # reconstructed workers via register_worker().
+            actor_ref = _RayActorHost.options(name=actor_name, max_restarts=-1, **ray_options).remote(
                 actor_class, actor_name, i, name, args, kwargs
             )
             handles.append(RayActorHandle(actor_ref))
@@ -388,6 +391,10 @@ def _actor_ray_options(resources: ResourceConfig) -> dict[str, Any]:
 
     preemptible=False pins the actor to the head node via a custom resource.
     max_concurrency>1 enables concurrent method calls (threaded actor).
+
+    For TPU devices, requests the variant-specific ``TPU-{variant}-head``
+    resource so actors get scheduled onto the correct TPU node type.
+    For GPU devices, requests ``num_gpus`` so actors get GPU nodes.
     """
     options: dict[str, Any] = {
         "num_cpus": resources.cpu,
@@ -395,8 +402,19 @@ def _actor_ray_options(resources: ResourceConfig) -> dict[str, Any]:
     }
     if resources.ram:
         options["memory"] = humanfriendly.parse_size(resources.ram, binary=True)
+
+    custom_resources: dict[str, float] = {}
     if not resources.preemptible:
-        options["resources"] = {"head_node": 0.0001}
+        custom_resources["head_node"] = 0.0001
+
+    if isinstance(resources.device, TpuConfig):
+        custom_resources[f"TPU-{resources.device.variant}-head"] = 1
+    elif isinstance(resources.device, GpuConfig):
+        options["num_gpus"] = resources.device.count
+
+    if custom_resources:
+        options["resources"] = custom_resources
+
     if resources.max_concurrency > 1:
         options["max_concurrency"] = resources.max_concurrency
     return options

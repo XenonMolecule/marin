@@ -181,6 +181,26 @@ def main(config: TrainLmConfig):
             state = load_checkpoint(state, config.initialize_from_checkpoint_path)
             # reset to step 0, we're just initializing weights here
             state = dataclasses.replace(state, step=jnp.array(0))
+            # Also reset the optimizer's schedule counters so any new LR schedule
+            # starts from step 0. optax.inject_hyperparams stores two count fields:
+            #   1. opt_state.count — top-level step counter (incremented but not read)
+            #   2. opt_state.hyperparams_states[k].count — drives schedule_fn(count)
+            # Without resetting these, the loaded checkpoint's step (e.g., 35000) would
+            # cause schedule evaluation at the old step, producing the wrong learning rate.
+            # Note: inner_state counts (e.g., ScaleByAdamState.count for bias correction)
+            # and moment buffers (mu, nu) are intentionally preserved.
+            opt_state = state.opt_state
+            if hasattr(opt_state, "count") and hasattr(opt_state, "_replace"):
+                opt_state = opt_state._replace(count=jnp.zeros_like(opt_state.count))
+                if hasattr(opt_state, "hyperparams_states"):
+                    new_hp_states = {
+                        k: v._replace(count=jnp.zeros_like(v.count))
+                        if hasattr(v, "count") and hasattr(v, "_replace")
+                        else v
+                        for k, v in opt_state.hyperparams_states.items()
+                    }
+                    opt_state = opt_state._replace(hyperparams_states=new_hp_states)
+                state = dataclasses.replace(state, opt_state=opt_state)
 
         if int(state.step) == 0:
             # TODO: I don't love that we init the model twice, but it's not a big deal i think?

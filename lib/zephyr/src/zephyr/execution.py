@@ -371,6 +371,20 @@ class ZephyrCoordinator:
             if not self._task_queue:
                 return None
 
+            # If this worker had a previous task in-flight (e.g., actor was
+            # reconstructed after preemption), re-queue the lost task so it
+            # doesn't silently disappear from the coordinator's tracking.
+            old = self._in_flight.pop(worker_id, None)
+            if old is not None:
+                old_task, _old_attempt = old
+                self._task_attempts[old_task.shard_idx] += 1
+                self._task_queue.append(old_task)
+                self._retries += 1
+                logger.warning(
+                    "Worker %s had in-flight task for shard %d; re-queuing before assigning new task",
+                    worker_id, old_task.shard_idx,
+                )
+
             task = self._task_queue.popleft()
             attempt = self._task_attempts[task.shard_idx]
             self._in_flight[worker_id] = (task, attempt)
@@ -449,12 +463,14 @@ class ZephyrCoordinator:
             self._task_attempts = {task.shard_idx: 0 for task in tasks}
             self._fatal_error = None
 
-    def _wait_for_stage(self, no_workers_timeout: float = 60.0) -> None:
+    def _wait_for_stage(self, no_workers_timeout: float = 600.0) -> None:
         """Block until current stage completes or error occurs.
 
         Args:
             no_workers_timeout: Seconds to wait for at least one worker before failing.
                 If no workers are discovered within this time, raises ZephyrWorkerError.
+                Defaults to 600s to handle resource-constrained clusters where actor
+                scheduling can take minutes.
         """
         backoff = ExponentialBackoff(initial=0.05, maximum=1.0)
         last_log_completed = -1
@@ -827,7 +843,7 @@ class ZephyrWorker:
                     "[shard %d] Wrote %d chunks so far (latest: %d items)",
                     task.shard_idx,
                     chunk_idx,
-                    len(stage_output.chunk),
+                    len(chunk),
                 )
 
         logger.info("[shard %d] Complete: %d chunks produced", task.shard_idx, chunk_idx)
@@ -966,7 +982,7 @@ class ZephyrContext:
         # Create coordinator actor with high max_concurrency to allow
         # workers to call pull_task/report_result while run_pipeline blocks
         logger.info("Starting coordinator for %s", self.name)
-        coordinator_resources = ResourceConfig(cpu=1, ram="2g", max_concurrency=100)
+        coordinator_resources = ResourceConfig(cpu=1, ram="2g", max_concurrency=500)
         self._coordinator_group = self.client.create_actor_group(
             ZephyrCoordinator,
             name=f"zephyr-{self.name}-coord",
