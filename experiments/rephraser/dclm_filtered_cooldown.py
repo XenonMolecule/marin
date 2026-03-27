@@ -40,7 +40,7 @@ from levanter.trainer import TrainerConfig
 from levanter.utils.mesh import MeshConfig
 
 from experiments.llama import llama3_tokenizer
-from marin.download.download_url import (
+from marin.datakit.download.download_url import (
     DownloadUrlToGcsConfig,
     download_url_to_gcs,
 )

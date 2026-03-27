@@ -1,5 +1,12 @@
 # Iris Chaos Testing Framework
 
+> **Note:** This is the original design document. The chaos tests have been
+> consolidated into `lib/iris/tests/e2e/` alongside the other E2E tests.
+> See `lib/iris/AGENTS.md` for current test run commands.
+>
+> **All file paths and commands below are historical** — they reference the
+> original `tests/chaos/` layout. For current paths, see `tests/e2e/`.
+
 Multi-stage plan for building a chaos testing system that validates Iris resilience
 against distributed system failure modes.
 
@@ -11,7 +18,7 @@ The chaos framework is two things:
 2. **Inline `chaos()` calls** — sprinkled at key points in production code (zero-cost when inactive)
 
 Tests use `connect_cluster()` + `make_local_config()` + `IrisClient.remote()` — the same
-pattern as `screenshot-dashboard.py`. No E2ECluster.
+pattern as the E2E test fixtures in `tests/e2e/conftest.py`. No E2ECluster.
 
 ## Stage 1: Core chaos module + infrastructure
 
@@ -167,14 +174,13 @@ import time
 import pytest
 from pathlib import Path
 from iris.chaos import reset_chaos
-from iris.cluster.manager import connect_cluster
-from iris.cluster.config import make_local_config, load_config
+from iris.cluster.config import connect_cluster, make_local_config, load_config
 from iris.client.client import IrisClient
 from iris.cluster.types import Entrypoint, ResourceSpec, EnvironmentSpec
 from iris.rpc import cluster_pb2
 
 IRIS_ROOT = Path(__file__).resolve().parents[2]  # lib/iris
-DEFAULT_CONFIG = IRIS_ROOT / "examples" / "demo.yaml"
+DEFAULT_CONFIG = IRIS_ROOT / "examples" / "test.yaml"
 
 TERMINAL_STATES = {
     cluster_pb2.JOB_STATE_SUCCEEDED,

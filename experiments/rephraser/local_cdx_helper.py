@@ -19,7 +19,7 @@ import tempfile
 # Add the project to the path
 sys.path.insert(0, "lib/marin/src")
 
-from marin.download.commoncrawl.cdx_query import (
+from marin.datakit.download.commoncrawl.cdx_query import (
     filter_cdx_records,
     query_single_index,
     _progress_key,

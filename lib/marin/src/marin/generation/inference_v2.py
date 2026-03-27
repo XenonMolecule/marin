@@ -382,7 +382,6 @@ def run_inference_v2(config: InferenceV2Config) -> None:
     """
     from fray.v2 import ResourceConfig, TpuConfig
     from zephyr import Dataset, ZephyrContext, load_file, load_jsonl
-    from zephyr.plan import ExecutionHint
 
     # Pick the right file loader based on input_format
     if config.input_format == "parquet":
@@ -429,13 +428,10 @@ def run_inference_v2(config: InferenceV2Config) -> None:
                 name="inference-v2",
                 num_workers=config.num_workers,
                 resources=ResourceConfig(cpu=8, ram="16g", device=TpuConfig(variant=config.tpu_type)),
+                chunk_size=config.records_per_shard,
             ) as ctx:
                 ctx.put("config", config)
-                # Set chunk_size to records_per_shard so flat_map produces enough
-                # chunks for reshard to distribute evenly. Without this, each input
-                # file becomes one giant chunk, and reshard(N) leaves N-2 shards empty
-                # when there are only 2 input files.
-                output_files = list(ctx.execute(ds, hints=ExecutionHint(chunk_size=config.records_per_shard)))
+                output_files = list(ctx.execute(ds))
             break  # Success — exit retry loop
         except Exception as e:
             if attempt < max_retries:

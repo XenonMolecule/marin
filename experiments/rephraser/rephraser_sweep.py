@@ -35,7 +35,7 @@ from levanter.data.text import TextLmDatasetFormat
 from experiments.defaults import SimpleTrainConfig, default_train
 from experiments.evals.task_configs import CORE_TASKS
 from experiments.llama import llama_3_2_1b
-from marin.download.commoncrawl.download_warc import WarcDownloadConfig, download_and_extract_warcs
+from marin.datakit.download.commoncrawl.download_warc import WarcDownloadConfig, download_and_extract_warcs
 from marin.execution.executor import ExecutorStep, ensure_versioned, executor_main, this_output_path, versioned
 from marin.generation.inference import TextGenerationInferenceConfig, run_inference
 from marin.processing.tokenize import TokenizeConfig, lm_data_config, tokenize

@@ -1,4 +1,4 @@
-# Copyright 2025 The Marin Authors
+# Copyright The Marin Authors
 # SPDX-License-Identifier: Apache-2.0
 
 """
@@ -8,8 +8,8 @@ https://huggingface.co/datasets/allenai/paloma
 """
 
 from experiments.paloma import paloma_tokenized
-from marin.download import HfDownloadConfig
-from marin.download.huggingface.download_hf import download_hf
+from marin.datakit.download.huggingface import DownloadConfig as HfDownloadConfig
+from marin.datakit.download.huggingface import download_hf
 from marin.execution.executor import ExecutorStep, executor_main, this_output_path, versioned
 
 llama3_tokenizer = "meta-llama/Meta-Llama-3.1-8B"
@@ -32,4 +32,4 @@ def speedrun_paloma_tokenized(tokenizer: str = llama3_tokenizer):
 
 
 if __name__ == "__main__":
-    executor_main(steps=[paloma_speedrun, *speedrun_paloma_tokenized])
+    executor_main(steps=[paloma_speedrun, *speedrun_paloma_tokenized().values()])

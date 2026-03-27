@@ -45,9 +45,9 @@ from levanter.models.lm_model import LmConfig
 from levanter.optim import AdamConfig
 from levanter.tracker.wandb import WandbConfig
 from levanter.trainer import TrainerConfig
-from marin.download.commoncrawl.cdx_query import CDXQueryConfig, query_cdx
-from marin.download.commoncrawl.cdx_query_columnar import query_cdx_columnar
-from marin.download.commoncrawl.download_warc_records import WarcRecordDownloadConfig, download_warc_records
+from marin.datakit.download.commoncrawl.cdx_query import CDXQueryConfig, query_cdx
+from marin.datakit.download.commoncrawl.cdx_query_columnar import query_cdx_columnar
+from marin.datakit.download.commoncrawl.download_warc_records import WarcRecordDownloadConfig, download_warc_records
 from marin.evaluation.evaluation_config import EvalTaskConfig
 from marin.execution.executor import (
     ExecutorStep,
