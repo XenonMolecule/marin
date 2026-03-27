@@ -188,8 +188,6 @@ download_warcs = ExecutorStep(
         warc_paths=versioned(tuple(warc_paths)),  # tuple for hashability
         output_path=this_output_path(),
     ),
-    resources=ResourceConfig.with_cpu(cpu=8, ram="64g"),
-    pip_dependency_groups=["cpu"],
 )
 
 # ---------------------------------------------------------------------------
@@ -211,8 +209,6 @@ filter_html = ExecutorStep(
         text_column="html",
         max_tokens=32768 - 4096,  # 28672: matches max_doc_tokens in inference
     ),
-    resources=ResourceConfig.with_cpu(cpu=8, ram="32g"),
-    pip_dependency_groups=["cpu"],
 )
 
 # ---------------------------------------------------------------------------
@@ -281,7 +277,6 @@ for spec_text in SPECS:
             filetype="jsonl.gz",  # Must match input format (filter_html outputs .jsonl.gz)
             output_filetype_override="parquet",  # Write output as parquet for efficient checkpointing
         ),
-        pip_dependency_groups=["vllm"],
     )
 
     # Step 3: Post-process — strip <think> tokens, filter [NO_USEFUL_CONTENT], etc.
@@ -293,8 +288,6 @@ for spec_text in SPECS:
             input_path=inference_step / "*.parquet",
             output_path=this_output_path(),
         ),
-        resources=ResourceConfig.with_cpu(cpu=4, ram="16g"),
-        pip_dependency_groups=["cpu"],
     )
 
     # Step 4: Tokenize — prepare cleaned text for Levanter training
@@ -309,8 +302,6 @@ for spec_text in SPECS:
             tokenizer=ensure_versioned(BASE_MODEL_HF),
             format=TextLmDatasetFormat(),  # Plain text, text_key="text"
         ),
-        resources=ResourceConfig.with_cpu(cpu=8, ram="32g"),
-        pip_dependency_groups=["cpu"],
     )
 
     # Step 5: Midtrain with CORE_TASKS eval

@@ -69,8 +69,6 @@ host_cdx_step = ExecutorStep(
         match_type="host",
         request_delay=1.0,
     ),
-    resources=ResourceConfig.with_cpu(cpu=2, ram="8g"),
-    pip_dependency_groups=["cpu"],
 )
 
 prefix_cdx_step = ExecutorStep(
@@ -84,8 +82,6 @@ prefix_cdx_step = ExecutorStep(
         match_type="prefix",
         request_delay=1.0,
     ),
-    resources=ResourceConfig.with_cpu(cpu=2, ram="8g"),
-    pip_dependency_groups=["cpu"],
 )
 
 # ---- Download steps ----
@@ -99,8 +95,6 @@ host_download_step = ExecutorStep(
         output_path=this_output_path(),
         num_output_shards=versioned(50),
     ),
-    resources=ResourceConfig.with_cpu(cpu=4, ram="16g"),
-    pip_dependency_groups=["cpu"],
 )
 
 prefix_download_step = ExecutorStep(
@@ -112,8 +106,6 @@ prefix_download_step = ExecutorStep(
         output_path=this_output_path(),
         num_output_shards=versioned(50),
     ),
-    resources=ResourceConfig.with_cpu(cpu=4, ram="16g"),
-    pip_dependency_groups=["cpu"],
 )
 
 if __name__ == "__main__":

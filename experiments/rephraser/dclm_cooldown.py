@@ -109,8 +109,6 @@ dclm_tokenize = ExecutorStep(
         tokenizer=ensure_versioned(llama3_tokenizer),
         format=TextLmDatasetFormat(),
     ),
-    resources=ResourceConfig.with_cpu(cpu=8, ram="32g"),
-    pip_dependency_groups=["cpu"],
 )
 
 

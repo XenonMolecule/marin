@@ -644,8 +644,6 @@ deep_dive_step = ExecutorStep(
         resiliparse_path=output_path_of(resiliparse_processed) / "*.jsonl.gz",
         output_path=this_output_path(),
     ),
-    resources=ResourceConfig.with_cpu(cpu=8, ram="32g"),
-    pip_dependency_groups=["cpu"],
 )
 
 if __name__ == "__main__":

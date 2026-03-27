@@ -81,8 +81,6 @@ build_llamacpp_step = ExecutorStep(
     description="Build llama.cpp from source and upload llama-server binary to GCS.",
     fn=build_llamacpp,
     config=BuildLlamaCppConfig(output_path=this_output_path()),
-    resources=ResourceConfig.with_cpu(cpu=8, ram="16g"),
-    pip_dependency_groups=["cpu"],
 )
 
 
@@ -124,7 +122,6 @@ download_gguf_step = ExecutorStep(
         output_path=this_output_path(),
         filename=GGUF_FILENAME,
     ),
-    resources=ResourceConfig.with_cpu(cpu=2, ram="4g"),
 )
 
 # ---------------------------------------------------------------------------
@@ -141,8 +138,6 @@ download_warcs = ExecutorStep(
         warc_paths=versioned(tuple(warc_paths)),
         output_path=this_output_path(),
     ),
-    resources=ResourceConfig.with_cpu(cpu=8, ram="64g"),
-    pip_dependency_groups=["cpu"],
 )
 
 # Step 1b: Pre-filter HTML by token length
@@ -157,8 +152,6 @@ filter_html = ExecutorStep(
         text_column="html",
         max_tokens=CONTEXT_LENGTH - 4096,
     ),
-    resources=ResourceConfig.with_cpu(cpu=8, ram="32g"),
-    pip_dependency_groups=["cpu"],
 )
 
 # ---------------------------------------------------------------------------
@@ -195,8 +188,6 @@ for spec_text in SPECS:
             context_length=CONTEXT_LENGTH,
             records_per_shard=10,
         ),
-        resources=ResourceConfig.with_cpu(cpu=CPU_PER_WORKER, ram=RAM_PER_WORKER),
-        pip_dependency_groups=["cpu"],
     )
 
     # Step 3: Post-process
@@ -208,8 +199,6 @@ for spec_text in SPECS:
             input_path=inference_step / "*.jsonl.gz",
             output_path=this_output_path(),
         ),
-        resources=ResourceConfig.with_cpu(cpu=4, ram="16g"),
-        pip_dependency_groups=["cpu"],
     )
 
     # Step 4: Tokenize with Meta-Llama-3.1-8B (nemotron-compatible)
@@ -224,8 +213,6 @@ for spec_text in SPECS:
             tokenizer=ensure_versioned(llama3_tokenizer),
             format=TextLmDatasetFormat(),
         ),
-        resources=ResourceConfig.with_cpu(cpu=8, ram="32g"),
-        pip_dependency_groups=["cpu"],
     )
 
     all_tokenize_steps.append(tokenize_step)

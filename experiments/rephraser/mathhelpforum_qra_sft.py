@@ -191,8 +191,6 @@ chat_transform_step = ExecutorStep(
         input_path=postprocess_step_qra / "*.jsonl.gz",
         output_path=this_output_path(),
     ),
-    resources=ResourceConfig.with_cpu(cpu=4, ram="16g"),
-    pip_dependency_groups=["cpu"],
 )
 
 # ---------------------------------------------------------------------------

@@ -50,8 +50,6 @@ download_warcs = ExecutorStep(
         warc_paths=versioned(tuple(warc_paths)),
         output_path=this_output_path(),
     ),
-    resources=ResourceConfig.with_cpu(cpu=8, ram="64g"),
-    pip_dependency_groups=["cpu"],
 )
 
 # Step 2: Extract plain text with resiliparse (no quality filtering)
@@ -63,8 +61,6 @@ extract_text = ExecutorStep(
         input_path=download_warcs / "*.jsonl.gz",
         output_path=this_output_path(),
     ),
-    resources=ResourceConfig.with_cpu(cpu=8, ram="32g"),
-    pip_dependency_groups=["cpu"],
 )
 
 # Step 3: Tokenize the extracted text with Llama-3.1
@@ -79,8 +75,6 @@ tokenize_resiliparse = ExecutorStep(
         tokenizer=ensure_versioned(llama3_tokenizer),
         format=TextLmDatasetFormat(),
     ),
-    resources=ResourceConfig.with_cpu(cpu=8, ram="64g"),
-    pip_dependency_groups=["cpu"],
 )
 
 if __name__ == "__main__":

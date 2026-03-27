@@ -39,8 +39,6 @@ build_llamacpp_step = ExecutorStep(
     description="Build llama.cpp from source (cached).",
     fn=build_llamacpp,
     config=BuildLlamaCppConfig(output_path=this_output_path()),
-    resources=ResourceConfig.with_cpu(cpu=8, ram="16g"),
-    pip_dependency_groups=["cpu"],
 )
 
 # GGUF model — download once to GCS as an ExecutorStep, then workers fetch
@@ -64,7 +62,6 @@ download_gguf_step = ExecutorStep(
         output_path=this_output_path(),
         filename=GGUF_FILENAME,
     ),
-    resources=ResourceConfig.with_cpu(cpu=2, ram="4g"),
 )
 
 # ---------------------------------------------------------------------------
@@ -326,7 +323,6 @@ write_test_data_step = ExecutorStep(
     description="Write 8 synthetic HTML documents for smoke testing.",
     fn=write_test_data,
     config={"output_path": this_output_path()},
-    resources=ResourceConfig.with_cpu(cpu=1, ram="2g"),
 )
 
 # ---------------------------------------------------------------------------
@@ -358,8 +354,6 @@ inference_step = ExecutorStep(
         server_startup_timeout=180,
         request_timeout=300,
     ),
-    resources=ResourceConfig.with_cpu(cpu=8, ram="8g"),
-    pip_dependency_groups=["cpu"],
 )
 
 # ---------------------------------------------------------------------------

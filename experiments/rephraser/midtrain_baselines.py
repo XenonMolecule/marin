@@ -98,8 +98,6 @@ dclm_tokenize = ExecutorStep(
         tokenizer=ensure_versioned(BASE_MODEL_HF),
         format=TextLmDatasetFormat(),
     ),
-    resources=ResourceConfig.with_cpu(cpu=8, ram="32g"),
-    pip_dependency_groups=["cpu"],
 )
 
 dclm_data = lm_data_config(training_set=dclm_tokenize)
@@ -139,8 +137,6 @@ rephraser_clean = ExecutorStep(
         input_path=rephraser_download / "data/*.parquet",
         output_path=this_output_path(),
     ),
-    resources=ResourceConfig.with_cpu(cpu=4, ram="16g"),
-    pip_dependency_groups=["cpu"],
 )
 
 rephraser_tokenize = ExecutorStep(
@@ -154,8 +150,6 @@ rephraser_tokenize = ExecutorStep(
         tokenizer=ensure_versioned(BASE_MODEL_HF),
         format=TextLmDatasetFormat(),
     ),
-    resources=ResourceConfig.with_cpu(cpu=8, ram="32g"),
-    pip_dependency_groups=["cpu"],
 )
 
 rephraser_data = lm_data_config(training_set=rephraser_tokenize)

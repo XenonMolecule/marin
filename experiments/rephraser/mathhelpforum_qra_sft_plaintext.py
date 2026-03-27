@@ -182,8 +182,6 @@ plaintext_transform_step = ExecutorStep(
         input_path=postprocess_step_qra / "*.jsonl.gz",
         output_path=this_output_path(),
     ),
-    resources=ResourceConfig.with_cpu(cpu=4, ram="16g"),
-    pip_dependency_groups=["cpu"],
 )
 
 # v2: Fixed multi-line answer extraction (greedy .* with \Z instead of non-greedy .*? with $)
@@ -195,8 +193,6 @@ plaintext_transform_step_v2 = ExecutorStep(
         input_path=postprocess_step_qra / "*.jsonl.gz",
         output_path=this_output_path(),
     ),
-    resources=ResourceConfig.with_cpu(cpu=4, ram="16g"),
-    pip_dependency_groups=["cpu"],
 )
 
 # ---------------------------------------------------------------------------

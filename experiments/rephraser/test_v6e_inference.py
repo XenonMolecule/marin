@@ -98,8 +98,6 @@ create_data = ExecutorStep(
     description="Create tiny test HTML documents for v6e inference test.",
     fn=create_test_data,
     config=CreateTestDataConfig(output_path=this_output_path()),
-    resources=ResourceConfig.with_cpu(cpu=4, ram="8g"),
-    pip_dependency_groups=["cpu"],
 )
 
 inference = ExecutorStep(
@@ -135,7 +133,6 @@ inference = ExecutorStep(
         filetype="jsonl.gz",
         output_filetype_override="parquet",
     ),
-    pip_dependency_groups=["vllm"],
 )
 
 # ---------------------------------------------------------------------------

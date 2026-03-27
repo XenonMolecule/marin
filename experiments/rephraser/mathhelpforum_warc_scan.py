@@ -211,8 +211,6 @@ scan_step = ExecutorStep(
         cdx_manifest_gcs_path=versioned(CDX_MANIFEST_GCS_PATH),
         output_path=this_output_path(),
     ),
-    resources=ResourceConfig.with_cpu(cpu=4, ram="16g"),
-    pip_dependency_groups=["cpu"],
 )
 
 if __name__ == "__main__":
