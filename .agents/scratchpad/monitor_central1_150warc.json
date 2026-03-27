@@ -1,0 +1,8 @@
+{
+  "job_id": "ray-run-michaelryan-rephraser_cooldown_150warc_train_central1-20260304-044757",
+  "cluster": "us-central1",
+  "experiment": "experiments/rephraser/rephraser_cooldown_150warc_train_central1.py",
+  "restart_count": 0,
+  "description": "150-WARC rephraser cooldown on us-central1 v5p-8. Currently at step ~2933/9759. lm-eval enabled and will work on single-host TPU.",
+  "target_steps": 9759
+}

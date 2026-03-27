@@ -1,0 +1,8 @@
+{
+  "job_id": "ray-run-michaelryan-code_extraction_sft-20260312-222341",
+  "cluster": "us-central1",
+  "experiment": "experiments/rephraser/code_extraction_sft.py",
+  "restart_count": 16,
+  "env_vars": "-e WANDB_API_KEY $WANDB_API_KEY -e HF_TOKEN $HF_TOKEN",
+  "notes": "PIPELINE COMPLETE. All 19 steps SUCCESS. Results: Baseline 19.5%, Resiliparse SFT 24.4% (+4.9pp), Extraction SFT 12.2% (-7.3pp). Resiliparse wins. Fixed discover_latest_checkpoint bug in extraction_sft_recipe.py."
+}

@@ -240,7 +240,7 @@ class _LmEvalHarnessWorker:
         self.axis_resources = axis_resources
         self.mp = mp
         self.max_packed_segments = max_packed_segments
-        self._generation_kwargs = generation_kwargs or {"max_gen_toks": 256, "temperature": 0.0, "n": 1, "seed": None}
+        self._generation_kwargs = generation_kwargs or {"max_gen_toks": 1024, "temperature": 0.0, "n": 1, "seed": None}
         self.sample_logging_config = sample_logging_config or SampleLoggingConfig()
         self.profiler_config = profiler_config or ProfilerConfig()
 
@@ -303,7 +303,7 @@ class _LmEvalHarnessWorker:
     @property
     def max_gen_toks(self) -> int:
         """Backward compatibility property for max_gen_toks."""
-        return self._generation_kwargs.get("max_gen_toks", 256)
+        return self._generation_kwargs.get("max_gen_toks", 1024)
 
     def make_harness_lm(self):
         if jax.process_index() == 0:
@@ -777,13 +777,15 @@ class LevanterHarnessLM(TemplateLM):
             # Copy and process generation kwargs
             processed_gen_kwargs = gen_kwargs.copy()
 
-            # Override lm-eval defaults with our generation_kwargs (user config)
-            # This ensures our parameters take precedence over lm-eval's defaults
+            # Fill in generation_kwargs as defaults for keys that lm-eval didn't set.
+            # lm-eval tasks define their own per-task generation params (e.g. gsm8k_cot
+            # sets max_gen_toks=1024 for chain-of-thought). We should respect those and
+            # only fill in our defaults for keys the task left unset (None or missing).
             for key, value in self.generation_kwargs.items():
                 old_value = processed_gen_kwargs.get(key)
-                processed_gen_kwargs[key] = value
-                if old_value != value:
-                    logger.info(f"Overriding lm-eval config {key}={old_value} with {key}={value}")
+                if old_value is None:
+                    processed_gen_kwargs[key] = value
+                    logger.info(f"Setting missing lm-eval config {key}={value} (was {old_value})")
 
             # Standardize kwargs using our _modify_gen_kwargs method
             processed_gen_kwargs = self._modify_gen_kwargs(processed_gen_kwargs)
@@ -827,14 +829,19 @@ class LevanterHarnessLM(TemplateLM):
 
         # [ChiHeem,2025-10-06] TODO: Pass this from marin to allow users to
         # optimize the inference based on hardware and model.
+        # max_prefill_size must be large enough for XLA's flash attention tiling
+        # to handle non-power-of-2 KV head counts (e.g., 14 KV heads → 28
+        # combined). Small prefill sizes (<=4096) trigger tiling failures; 16384
+        # works reliably and allows ~19 prompts per prefill batch.
         engine_cfg = InferenceEngineConfig(
             max_stop_seqs=max_stop_seqs,
             max_stop_tokens=max_stop_tokens,
             max_seq_len=max_length,
-            max_seqs=256,
+            max_seqs=32,
+            max_prefill_size=16384,
             page_size=8,
             compute_dtype=jnp.bfloat16,
-            hbm_utilization=0.5,
+            hbm_utilization=0.3,
         )
         engine = InferenceEngine.from_model_with_config(
             model=self.leader.model, tokenizer=self.tokenizer, config=engine_cfg
@@ -850,8 +857,6 @@ class LevanterHarnessLM(TemplateLM):
             n_generations = gen_kwargs["n"]
             seed = gen_kwargs.get("seed")
             stop_tokens = gen_kwargs.get("stop_tokens")
-            # print(f'{temperature=}')
-            # print(f'{stop_tokens=}')
 
             # Create sequence decoding parameters
             seq_params = SeqDecodingParams(
@@ -880,18 +885,30 @@ class LevanterHarnessLM(TemplateLM):
 
         # Pass the callback to the engine if profiling is enabled
         step_callback = decode_step_callback if self.profiler_config.enabled else None
-        result = engine.generate(
-            gen_requests,
-            step_callback=step_callback,
+
+        # The engine's generate() calls _prefill_batch() only once, so prompts
+        # that don't fit in the prefill buffer (max_prefill_size = max_seq_len by
+        # default) are silently dropped. We batch requests so each batch's total
+        # prompt tokens fits within the buffer.
+        max_prompt_len = max((len(toks) for toks in prompt_token_lists), default=1)
+        prefill_budget = engine_cfg.max_prefill_size or max_length
+        prompts_per_prefill = max(1, prefill_budget // max_prompt_len)
+        batch_size = min(prompts_per_prefill, engine_cfg.max_seqs_in_prefill, engine_cfg.max_seqs)
+        logger.info(
+            f"Batching {len(gen_requests)} requests into groups of {batch_size} "
+            f"(max_prompt_len={max_prompt_len}, prefill_budget={prefill_budget})"
         )
+        all_result_tokens: list[list[int]] = []
+        for batch_start in range(0, len(gen_requests), batch_size):
+            batch = gen_requests[batch_start : batch_start + batch_size]
+            result = engine.generate(batch, step_callback=step_callback)
+            all_result_tokens.extend(result.tokens)
 
         # Decode first generation per request (LM Harness expects one string per request)
         outputs: list[str] = []
-        output_idx = 0
         for i, (toks, gen_kwargs) in enumerate(zip(prompt_token_lists, processed_kwargs_list)):
-            # Consume one sequence output per request
-            if output_idx < len(result.tokens):
-                full_tokens = result.tokens[output_idx]
+            if i < len(all_result_tokens):
+                full_tokens = all_result_tokens[i]
                 # Engine tokens are generated tokens only (prompt not included)
                 text = self.tokenizer.decode(full_tokens, skip_special_tokens=True)
 
@@ -900,7 +917,6 @@ class LevanterHarnessLM(TemplateLM):
                     text, gen_kwargs.get("until"), None  # think_end_token - could be made configurable if needed
                 )
                 outputs.append(text)
-                output_idx += 1  # consume one generation per request
             else:
                 text = ""
                 logger.info(f"Generation {i} - No tokens available, using empty string")
@@ -949,7 +965,7 @@ class LevanterHarnessLM(TemplateLM):
         if "max_gen_toks" in kwargs and kwargs["max_gen_toks"] is not None:
             kwargs["max_gen_toks"] = int(kwargs["max_gen_toks"])
         else:
-            kwargs.setdefault("max_gen_toks", 256)
+            kwargs.setdefault("max_gen_toks", 1024)
 
         # Handle n generations parameter
         if "n" in kwargs and kwargs["n"] is not None:
@@ -1041,24 +1057,30 @@ class LmEvalHarnessConfig:
     confirm_run_unsafe_code: bool = True
     sample_logging: SampleLoggingConfig = dataclasses.field(default_factory=SampleLoggingConfig)
     generation_kwargs: dict = dataclasses.field(
-        default_factory=lambda: {"max_gen_toks": 256, "temperature": 0.0, "n": 1, "seed": None}
+        default_factory=lambda: {"max_gen_toks": 1024, "temperature": 0.0, "n": 1, "seed": None}
     )
     """
-    Default generation parameters for text generation tasks.
+    Fallback generation parameters for text generation tasks.
+
+    These values are only used when a task does not specify its own value for a
+    given key (i.e. the per-task value is None or missing). lm-eval tasks rely
+    on the model wrapper's max_gen_toks property rather than passing it per-request,
+    so this default effectively controls the generation length for all tasks.
+
+    1024 is chosen to support chain-of-thought tasks (e.g. gsm8k_cot) that need
+    long generations. This matches vLLM's common practice for CoT evaluations.
 
     Supported parameters:
-    - max_gen_toks: Maximum number of tokens to generate (default: 256)
+    - max_gen_toks: Maximum number of tokens to generate (default: 1024)
     - temperature: Sampling temperature, 0.0 for deterministic (default: 0.0)
     - n: Number of completions to generate per prompt (default: 1)
     - seed: Random seed for generation, None for random (default: None)
-
-    These can be overridden on a per-request basis by the evaluation harness.
     """
 
     @property
     def max_gen_toks(self) -> int:
         """Backward compatibility property for max_gen_toks."""
-        return self.generation_kwargs.get("max_gen_toks", 256)
+        return self.generation_kwargs.get("max_gen_toks", 1024)
 
     def to_task_spec(self) -> list[str | dict]:
         """

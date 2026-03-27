@@ -1,12 +1,10 @@
 # Copyright 2025 The Marin Authors
 # SPDX-License-Identifier: Apache-2.0
 
-"""Eval-resume experiment for the 150-WARC rephraser cooldown on us-central1 (v5p-8).
+"""Training-only experiment for the 150-WARC rephraser cooldown on us-central1 (v5p-8).
 
-Training completed on us-east1-d (v6e-32) but the eval harness crashed due to a
-multi-host broadcast_shard bug on v6e-32. This script resumes from the orbax
-checkpoint on us-central1 using v5p-8 (single-host) to finish the remaining
-training steps and run lm-eval.
+All tokenized data and the checkpoint already exist on gs://marin-us-central1/.
+This script runs the full training (9,759 steps) on v5p-8 TPUs.
 
 Launch:
     uv run lib/marin/src/marin/run/ray_run.py \
@@ -51,6 +49,7 @@ from experiments.rephraser.rephraser_cooldown import (
     LEARNING_RATE,
     SEQ_LEN,
     _read_token_count,
+    _validate_mixin_fraction,
     cooldown_optimizer,
     scaling_1e20_qwen3,
     spec_hash,
@@ -63,17 +62,12 @@ logger = logging.getLogger(__name__)
 # Paths on us-central1 (copied from us-east1)
 # ---------------------------------------------------------------------------
 
-REPHRASER_TOKENIZED_PATH = (
-    "gs://marin-us-central1/tokenized/rephraser_spec_d7d976d3_cooldown-02c17e"
-)
+REPHRASER_TOKENIZED_PATH = "gs://marin-us-central1/tokenized/rephraser_spec_d7d976d3_cooldown-02c17e"
 
-COOLDOWN_TOKENIZED_PATH = (
-    "gs://marin-us-central1/tokenized/nemotron_cooldown_1e20-666089"
-)
+COOLDOWN_TOKENIZED_PATH = "gs://marin-us-central1/tokenized/nemotron_cooldown_1e20-666089"
 
 CHECKPOINT_PATH = (
-    "gs://marin-us-central1/exp2166-scaling-ladder-nemotron-validation-optimal-1e+20-9563f0"
-    "/checkpoints/step-35000"
+    "gs://marin-us-central1/exp2166-scaling-ladder-nemotron-validation-optimal-1e+20-9563f0" "/checkpoints/step-35000"
 )
 cooldown_module.CHECKPOINT_PATH = CHECKPOINT_PATH
 
@@ -110,8 +104,7 @@ rephraser_component = DatasetComponent(
 # Validation sets
 validation_steps = default_validation_sets(tokenizer=llama3_tokenizer)
 validation_component_configs = {
-    name: step_to_lm_mixture_component(step, include_raw_paths=False)
-    for name, step in validation_steps.items()
+    name: step_to_lm_mixture_component(step, include_raw_paths=False) for name, step in validation_steps.items()
 }
 
 
@@ -122,6 +115,14 @@ def run_cooldown_training_v5p8(config: CooldownTrainingConfig):
     """Cooldown training on v5p-8 TPUs for us-central1 (eval resume)."""
     rephraser_tokens = _read_token_count(config.rephraser_tokenized_path, split="train")
     cooldown_tokens = _read_token_count(config.cooldown_tokenized_path, split="train")
+
+    _validate_mixin_fraction(
+        mixin_name="rephraser",
+        mixin_tokens=rephraser_tokens,
+        cooldown_tokens=cooldown_tokens,
+        num_train_steps=COOLDOWN_STEPS,
+        max_fraction=config.max_mixin_fraction,
+    )
 
     cooldown_weight = float(cooldown_tokens)
     rephraser_weight = float(rephraser_tokens)
@@ -222,8 +223,8 @@ def run_cooldown_training_v5p8(config: CooldownTrainingConfig):
 sid = spec_hash(SPECS[0])  # d7d976d3
 
 train_step = ExecutorStep(
-    name=f"cooldown-rephraser-{sid}-150warc",
-    description=f"150-WARC cooldown eval resume for spec {sid} on v5p-8: NemotronCooldown + rephraser mix.",
+    name=f"cooldown-rephraser-{sid}-150warc-v2",
+    description=f"150-WARC cooldown v2 (token-count fix) for spec {sid} on v5p-8.",
     fn=run_cooldown_training_v5p8,
     config=CooldownTrainingConfig(
         rephraser_tokenized_path=REPHRASER_TOKENIZED_PATH,
@@ -240,5 +241,5 @@ train_step = ExecutorStep(
 if __name__ == "__main__":
     executor_main(
         steps=[train_step],
-        description="150-WARC rephraser cooldown eval resume on us-central1 (v5p-8).",
+        description="150-WARC rephraser cooldown training on us-central1 (v5p-8).",
     )

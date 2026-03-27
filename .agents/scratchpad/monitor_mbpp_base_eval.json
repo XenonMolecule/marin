@@ -1,0 +1,6 @@
+{
+  "job_id": "ray-run-michaelryan-mbpp_base_eval-20260317-003843",
+  "cluster": "us-central1",
+  "experiment": "experiments/rephraser/mbpp_base_eval.py",
+  "restart_count": 1
+}

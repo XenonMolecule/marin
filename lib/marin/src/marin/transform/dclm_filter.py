@@ -34,7 +34,7 @@ import string
 import tempfile
 from collections import Counter
 from dataclasses import dataclass
-from typing import Callable
+from collections.abc import Callable
 from urllib.parse import urlparse
 
 from zephyr import Dataset, ZephyrContext, load_file
@@ -44,6 +44,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class DclmFilterConfig:
@@ -73,6 +74,7 @@ class DclmFilterConfig:
 # Utility functions (ported from DCLM core_utils.py)
 # ---------------------------------------------------------------------------
 
+
 def _split_paragraphs(text: str, paragraph_end: str = "\n", remove_empty: bool = True) -> list[str]:
     """Split text into paragraphs/lines."""
     paragraphs = re.split(paragraph_end, text)
@@ -88,9 +90,11 @@ def _split_words(text: str, model: str = "fasttext", ignore_punctuation: bool = 
     """
     if model == "uniseg":
         from uniseg.wordbreak import words
+
         tokens = words(text)
     elif model == "fasttext":
         import fasttext
+
         tokens = fasttext.FastText.tokenize(text)
     elif model == "split":
         tokens = text.split()
@@ -114,6 +118,7 @@ def _is_space_or_punct(s: str) -> bool:
 # ---------------------------------------------------------------------------
 # URL filters (ported from DCLM metadata_filters.py)
 # ---------------------------------------------------------------------------
+
 
 def _make_url_substring_filter(
     banlist_path: str,
@@ -144,6 +149,7 @@ def _make_url_substring_filter(
             for char in ignore_chars:
                 url = url.replace(char, "")
             return url not in banset
+
     else:
         re_flags = re.IGNORECASE if not case_sensitive else None
         pattern = re.compile(Blacklist(banlist, match_substrings=match_substrings, re_flags=re_flags).compiled)
@@ -162,6 +168,7 @@ def _make_url_substring_filter(
 # URL removal modifier (ported from DCLM modifiers.py)
 # ---------------------------------------------------------------------------
 
+
 def _make_url_removal_modifier(tlds_filepath: str) -> Callable[[dict], dict]:
     """Build a modifier that strips URLs from page text."""
     from retrie.retrie import Blacklist
@@ -172,12 +179,11 @@ def _make_url_removal_modifier(tlds_filepath: str) -> Callable[[dict], dict]:
     tlds_regex = Blacklist(tlds_list, match_substrings=True).compiled
 
     url_regex = re.compile(
-        rf'\s{{0,10}}(?:((https?|ftp)://))?[-a-zA-Z0-9@:%._\+~#=]{{1,256}}'
-        rf'\.({tlds_regex.pattern})\b([-a-zA-Z0-9()@:%_\+.~#?&//=]*)'
+        rf"\s{{0,10}}(?:((https?|ftp)://))?[-a-zA-Z0-9@:%._\+~#=]{{1,256}}"
+        rf"\.({tlds_regex.pattern})\b([-a-zA-Z0-9()@:%_\+.~#?&//=]*)"
     )
     ipv4_regex = re.compile(
-        r'\s{0,10}\b((https?|ftp)://)?(?:[0-2]?[0-9]{1,2}\.){3}[0-2]?[0-9]{1,2}'
-        r'[-a-zA-Z0-9()@:%_\+.~#?&//=]*'
+        r"\s{0,10}\b((https?|ftp)://)?(?:[0-2]?[0-9]{1,2}\.){3}[0-2]?[0-9]{1,2}" r"[-a-zA-Z0-9()@:%_\+.~#?&//=]*"
     )
 
     def modify(page: dict) -> dict:
@@ -207,6 +213,7 @@ def _newline_removal_modifier(page: dict) -> dict:
 # ---------------------------------------------------------------------------
 # Language detection (ported from DCLM language_id_enrichers.py)
 # ---------------------------------------------------------------------------
+
 
 def _fasttext_predict(model, text: str, k: int = 1):
     """Call fasttext predict, working around NumPy 2.x incompatibility.
@@ -256,6 +263,7 @@ def _language_filter(page: dict) -> bool:
 # Content quality filters (ported from DCLM content_filters.py)
 # ---------------------------------------------------------------------------
 
+
 def _page_length_filter(page: dict) -> bool:
     """Keep pages with 50-100,000 words (ignoring punctuation)."""
     word_count = len(_split_words(page["text"], ignore_punctuation=True))
@@ -286,10 +294,7 @@ def _bullet_count_filter(page: dict) -> bool:
     lines = _split_paragraphs(page["text"], paragraph_end="\n")
     if not lines:
         return False
-    bullet_count = sum(
-        any(line.startswith(b) for b in ["\u25cf", "\u2022", "*", "-"])
-        for line in lines
-    )
+    bullet_count = sum(any(line.startswith(b) for b in ["\u25cf", "\u2022", "*", "-"]) for line in lines)
     return bullet_count <= 0.9 * len(lines)
 
 
@@ -298,10 +303,7 @@ def _ellipsis_count_filter(page: dict) -> bool:
     lines = _split_paragraphs(page["text"], paragraph_end="\n")
     if not lines:
         return False
-    ellipsis_count = sum(
-        any(line.endswith(e) for e in ["...", ". . .", "\u2026"])
-        for line in lines
-    )
+    ellipsis_count = sum(any(line.endswith(e) for e in ["...", ". . .", "\u2026"]) for line in lines)
     return ellipsis_count <= 0.3 * len(lines)
 
 
@@ -331,6 +333,7 @@ def _stop_word_filter(page: dict) -> bool:
 # ---------------------------------------------------------------------------
 # Gopher repetition filters (ported from DCLM content_filters.py)
 # ---------------------------------------------------------------------------
+
 
 def _repetition_filter(
     text: str,
@@ -365,9 +368,7 @@ def _repetition_filter(
         segment_counts = cache[granularity + "/count"]
 
         if count_characters:
-            repeated_fraction = (
-                sum(len(seg) * cnt for seg, cnt in segment_counts.items() if cnt > 1) / total_chars
-            )
+            repeated_fraction = sum(len(seg) * cnt for seg, cnt in segment_counts.items() if cnt > 1) / total_chars
         else:
             repeated_fraction = sum(cnt for cnt in segment_counts.values() if cnt > 1) / len(segments)
 
@@ -425,7 +426,17 @@ def _massive_web_repetition_filters(page: dict) -> bool:
         if not _repetition_filter(text, granularity, threshold, count_characters=count_chars, cache=cache):
             return False
 
-    for n, threshold in [(2, 0.2), (3, 0.18), (4, 0.16), (5, 0.15), (6, 0.14), (7, 0.13), (8, 0.12), (9, 0.11), (10, 0.10)]:
+    for n, threshold in [
+        (2, 0.2),
+        (3, 0.18),
+        (4, 0.16),
+        (5, 0.15),
+        (6, 0.14),
+        (7, 0.13),
+        (8, 0.12),
+        (9, 0.11),
+        (10, 0.10),
+    ]:
         if not _repetition_filter(text, n, threshold, cache=cache):
             return False
 
@@ -435,6 +446,7 @@ def _massive_web_repetition_filters(page: dict) -> bool:
 # ---------------------------------------------------------------------------
 # Line-level modifiers (ported from DCLM modifiers.py)
 # ---------------------------------------------------------------------------
+
 
 def _word_counter_enricher(page: dict) -> dict:
     """Record word count before line-level modifiers are applied."""
@@ -545,6 +557,7 @@ def _word_removal_ratio_filter(page: dict) -> bool:
 # FastText quality classifier (ported from DCLM quality_prediction_enrichers)
 # ---------------------------------------------------------------------------
 
+
 def _make_quality_enricher(model_path: str) -> Callable[[dict], dict]:
     """Build an enricher that adds ``fasttext_oh_eli5_vs_rw_v2_prob`` score."""
     import fasttext
@@ -572,6 +585,7 @@ def _quality_filter(page: dict) -> bool:
 # ---------------------------------------------------------------------------
 # Pipeline assembly — one worker-init, one per-record function
 # ---------------------------------------------------------------------------
+
 
 def _download_from_gcs(gcs_path: str, local_dir: str, filename: str) -> str:
     """Download a file from GCS to a local directory. Returns local path."""
@@ -642,13 +656,21 @@ def _init_pipeline(config: DclmFilterConfig, local_dir: str) -> Callable[[dict],
 
     # Build substring line modifiers
     items_in_cart_modifier = _make_substring_line_modifier(
-        "items in cart", max_length=10, remove_substring_only=True,
+        "items in cart",
+        max_length=10,
+        remove_substring_only=True,
     )
     read_more_modifier = _make_substring_line_modifier(
-        "Read more...", location="suffix", max_length=10, remove_substring_only=True,
+        "Read more...",
+        location="suffix",
+        max_length=10,
+        remove_substring_only=True,
     )
     sign_in_modifier = _make_substring_line_modifier(
-        "Sign-in", location="prefix", max_length=10, remove_substring_only=True,
+        "Sign-in",
+        location="prefix",
+        max_length=10,
+        remove_substring_only=True,
     )
 
     # Build quality enricher
@@ -758,6 +780,7 @@ def _apply_dclm_pipeline(record: dict) -> list[dict]:
 # Top-level entry point
 # ---------------------------------------------------------------------------
 
+
 def dclm_filter(config: DclmFilterConfig) -> None:
     """Apply the full DCLM-Baseline filtering pipeline.
 
@@ -789,6 +812,7 @@ def dclm_filter(config: DclmFilterConfig) -> None:
     for fpath in fs.glob(f"{config.output_path}/data-*.jsonl.gz"):
         with fs.open(fpath, "rb") as f:
             import gzip
+
             with gzip.open(f, "rt") as gz:
                 for _line in gz:
                     output_count += 1

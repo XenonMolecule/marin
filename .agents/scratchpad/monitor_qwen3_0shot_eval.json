@@ -1,0 +1,7 @@
+{
+  "job_id": "ray-run-michaelryan-qwen3_mathhelpforum_sft-20260312-164405",
+  "cluster": "us-central1",
+  "experiment": "experiments/rephraser/qwen3_mathhelpforum_sft.py",
+  "restart_count": 5,
+  "note": "Baseline 0-shot eval is the last remaining step. Previous attempt ran 4+ hours - may need 5-6 hours for base model generating max tokens on 8 tasks."
+}

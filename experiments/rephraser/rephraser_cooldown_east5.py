@@ -23,7 +23,7 @@ from levanter.data.text import DatasetComponent, TextLmDatasetFormat, UrlDataset
 
 from experiments.defaults import default_validation_sets
 from experiments.llama import llama3_tokenizer
-from experiments.pretraining_datasets import NEMOTRON_WEIGHTS, tokenize_nemotron
+from experiments.pretraining_datasets import tokenize_nemotron
 from experiments.pretraining_datasets.dclm import dclm_components_llama3
 from marin.download.commoncrawl.download_warc import WarcDownloadConfig, download_and_extract_warcs
 from marin.execution.executor import (
@@ -44,7 +44,6 @@ from marin.transform.postprocess_extraction import PostProcessExtractionConfig, 
 import experiments.rephraser.rephraser_cooldown as cooldown_module
 from experiments.rephraser.rephraser_cooldown import (
     BATCH_SIZE,
-    COOLDOWN_STEPS,
     CooldownTrainingConfig,
     ExtractCooldownConfig,
     NEMOTRON_MIX_WEIGHTS,
@@ -71,8 +70,7 @@ WARC_MANIFEST = os.path.join(os.path.dirname(__file__), "warc_paths.txt")
 # run_cooldown_training reads this as a module-level constant from rephraser_cooldown,
 # so we patch it there before any training function runs.
 CHECKPOINT_PATH = (
-    "gs://marin-us-east5/exp2166-scaling-ladder-nemotron-validation-optimal-1e+20-9563f0"
-    "/checkpoints/step-35000"
+    "gs://marin-us-east5/exp2166-scaling-ladder-nemotron-validation-optimal-1e+20-9563f0" "/checkpoints/step-35000"
 )
 cooldown_module.CHECKPOINT_PATH = CHECKPOINT_PATH
 
@@ -144,8 +142,7 @@ extract_cooldown_step = ExecutorStep(
 # Validation sets (Paloma + Uncheatable Eval)
 validation_steps = default_validation_sets(tokenizer=llama3_tokenizer)
 validation_component_configs = {
-    name: step_to_lm_mixture_component(step, include_raw_paths=False)
-    for name, step in validation_steps.items()
+    name: step_to_lm_mixture_component(step, include_raw_paths=False) for name, step in validation_steps.items()
 }
 
 # Pre-build the cooldown component (shared across specs)

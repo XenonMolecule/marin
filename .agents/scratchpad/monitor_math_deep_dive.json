@@ -1,0 +1,36 @@
+{
+  "job_id": "ray-run-michaelryan-analysis_math_data_deep_dive-20260323-235047",
+  "cluster": "us-central1",
+  "last_check": "2026-03-24T02:00Z",
+  "status": "V2_COMPLETE",
+  "type": "cpu_only",
+  "output_path": "gs://marin-us-central1/analysis/math_deep_dive_v1-e4047e",
+  "v1_key_findings": {
+    "extraction_total_docs": 1429456,
+    "extraction_qa_complete_pct": 41.3,
+    "extraction_qa_missing_answer_pct": 30.0,
+    "extraction_high_quality_pct": 36.6,
+    "resiliparse_total_docs": 3284904,
+    "resiliparse_non_math_pct": 44.0,
+    "resiliparse_high_quality_pct": 8.8
+  },
+  "v2_key_findings": {
+    "extraction_benchmark_relevant_pct": 15,
+    "resiliparse_useful_pct": "5-10",
+    "root_causes": [
+      "Off-topic contamination (physics, software, business, login pages) — ~40-50%",
+      "30% missing answers — trains incomplete reasoning",
+      "5.1% LLM extraction artifacts (<think> tags, meta-commentary)",
+      "Format mismatch (## Q/R/A headers vs Problem/Solution/boxed)",
+      "Mathematical errors in source forums"
+    ],
+    "resiliparse_verdict": "Do not use — strictly worse than extraction pipeline",
+    "recommended_curated_subset": "~150K docs from brainly+jiskha+mathhelpforum+drmath+mathisfunforum"
+  },
+  "v2_report": "experiments/rephraser/MATH_DATA_DEEP_DIVE_V2.md",
+  "v2_assessments": {
+    "extraction": "/tmp/math_regression_analysis/v2_extraction_assessment.md",
+    "resiliparse": "/tmp/math_regression_analysis/v2_resiliparse_assessment.md"
+  },
+  "notes": "V1 + V2 COMPLETE. Report written. Top finding: 37% of tokens come from physicsforums+mathoverflow (near-zero benchmark relevance). 30% of extraction data has missing answers. Resiliparse is unusable. Recommended: curated 150K subset experiment."
+}

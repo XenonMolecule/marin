@@ -1,0 +1,44 @@
+{
+  "job_id": "ray-run-michaelryan-mathhelpforum_extraction_sft_v2_base-20260321-064540",
+  "hp_sweep_job_id": "ray-run-michaelryan-mathhelpforum_extraction_sft_v2_base_hpsweep-20260322-063148",
+  "cluster": "us-central1",
+  "experiment": "experiments/rephraser/mathhelpforum_extraction_sft_v2_base.py",
+  "hp_sweep_experiment": "experiments/rephraser/mathhelpforum_extraction_sft_v2_base_hpsweep.py",
+  "restart_count": 23,
+  "last_check": "2026-03-22T00:12Z",
+  "last_status": "ALL_COMPLETE",
+  "notes": "ALL TRAINING + EVALS COMPLETE. High-reg is best HP (GSM8K=56.5%, prealgebra=20.9%). Low-reg second (55.1%). Both beat default (52.2%). Extraction SFT is best approach overall vs GSM8K SFT (45.6%) and resiliparse (42.1%). Baseline remains 60.5%.",
+  "pipeline_phase": "complete",
+  "extraction_status": "COMPLETE",
+  "extraction_completed_shards": 6362,
+  "extraction_total_shards": 6362,
+  "extraction_total_tokens": 798466685,
+  "training_status": {
+    "default_extraction": "SUCCESS",
+    "lowreg": "SUCCESS",
+    "highreg": "SUCCESS",
+    "gsm8k": "SUCCESS",
+    "resiliparse": "SUCCESS",
+    "baseline_eval": "SUCCESS"
+  },
+  "eval_results_gsm8k_cot_flex": {
+    "baseline": 0.605,
+    "extraction_sft_highreg": 0.5648,
+    "extraction_sft_lowreg": 0.5512,
+    "extraction_sft_default": 0.522,
+    "gsm8k_sft": 0.456,
+    "resiliparse_sft": 0.421
+  },
+  "eval_results_prealgebra": {
+    "extraction_sft_highreg": 0.209,
+    "extraction_sft_lowreg": 0.2032,
+    "baseline": 0.192,
+    "extraction_sft_default": 0.1952,
+    "resiliparse_sft": 0.1722,
+    "gsm8k_sft": 0.1699
+  },
+  "training_jobs": {
+    "default": "ray-run-michaelryan-mathhelpforum_extraction_sft_v2_base-20260321-064540",
+    "lowreg_highreg": "ray-run-michaelryan-mathhelpforum_extraction_sft_v2_base_hpsweep-20260322-063148"
+  }
+}

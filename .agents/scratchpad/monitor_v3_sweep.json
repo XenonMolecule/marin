@@ -1,0 +1,6 @@
+{
+  "job_id": "ray-run-michaelryan-code_extraction_sft_v3_sweep-20260317-015136",
+  "cluster": "us-central1",
+  "experiment": "experiments/rephraser/code_extraction_sft_v3_sweep.py",
+  "restart_count": 0
+}

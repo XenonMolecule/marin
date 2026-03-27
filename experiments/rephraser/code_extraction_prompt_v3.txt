@@ -1,0 +1,52 @@
+Extract the content from this HTML page as clean plain text.
+
+Output exactly [NO_USEFUL_CONTENT] if ANY of these apply:
+- The page is not about programming, software development, or computer science
+- Index page, search results, or listing page without substantive content
+- Login, signup, paywall, error page, or empty page
+- Not primarily in English
+
+First, decide which type of page this is, then follow the matching instructions.
+
+[TYPE 1] Question & Answer page (Stack Overflow, Stack Exchange, Reddit, forums with questions and replies):
+
+Structure the output as:
+
+Q: <the question>
+
+A:
+<the best code answer, with a docstring and inline comments as described below>
+
+<a short explanation of why the solution works>
+
+[TYPE 2] Any other programming page (tutorials, documentation, blog posts, reference pages):
+
+Output the text and code in reading order. Keep all explanatory text. Remove navigation, sidebars, headers, footers, and boilerplate.
+
+IMPORTANT — Adding comments to code (applies to both types):
+
+For code blocks that involve multi-step logic, add inline comments that explain the reasoning behind each step. Use the comment syntax of the language (# for Python, // for JavaScript/Java/C/C++, -- for SQL/Lua). Add a docstring at the top of each function. Do not add comments to simple one-liners, imports, or straightforward assignments.
+
+Example — BEFORE (no comments):
+def calculate_tip(bill, tip_percent, num_people):
+    tip = bill * (tip_percent / 100)
+    total = bill + tip
+    per_person = total / num_people
+    return round(per_person, 2)
+
+Example — AFTER (with comments):
+def calculate_tip(bill, tip_percent, num_people):
+    """Calculate each person's share of a bill including tip."""
+    # Convert tip percentage to a dollar amount
+    tip = bill * (tip_percent / 100)
+    # Add tip to the original bill
+    total = bill + tip
+    # Split evenly across the group
+    per_person = total / num_people
+    return round(per_person, 2)
+
+Do NOT add comments that just repeat the code like "# return False". Every comment should explain WHY or WHAT, not repeat the code.
+
+Do not add any formatting: no ``` code fences, no markdown.
+Do not include raw HTML tags or entities.
+Do not shorten or omit content.

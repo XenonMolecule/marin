@@ -8,9 +8,13 @@ exists on gs://marin-us-east1/. This script runs ONLY the training step on
 us-east1-d using v6e-32 TPUs (v6e-8 OOMs at 36.36 GB vs 32 GB/chip; v6e-32
 brings per-chip usage well under 32 GB).
 
+Note: lm-eval harness is disabled because multi-host v6e-32 cannot coordinate
+the eval harness reliably (HF rate limiting + NoneType errors). Eval should be
+run separately on a single-host TPU (e.g. v5p-8 on us-central1).
+
 Launch:
     uv run lib/marin/src/marin/run/ray_run.py \
-        --cluster us-east1-d --no_wait \
+        --cluster us-east1 --no_wait \
         -e WANDB_API_KEY $WANDB_API_KEY \
         -e HF_TOKEN <your-hf-token> \
         -- python experiments/rephraser/rephraser_cooldown_150warc_train_east1d.py
@@ -26,14 +30,12 @@ from fray.cluster import ResourceConfig
 from haliax.partitioning import ResourceAxis
 from levanter.checkpoint import CheckpointerConfig
 from levanter.data.text import DatasetComponent, LmDataConfig, TextLmDatasetFormat, UrlDatasetSourceConfig
-from levanter.main import train_lm
 from levanter.main.train_lm import TrainLmConfig
 from levanter.tracker.wandb import WandbConfig
 from levanter.trainer import TrainerConfig
 from levanter.utils.mesh import MeshConfig
 
 from experiments.defaults import default_validation_sets
-from experiments.evals.task_configs import CORE_TASKS, convert_to_levanter_task_config
 from experiments.llama import llama3_tokenizer
 from marin.execution.executor import (
     ExecutorStep,
@@ -64,17 +66,12 @@ logger = logging.getLogger(__name__)
 # Paths to already-processed data on us-east1
 # ---------------------------------------------------------------------------
 
-REPHRASER_TOKENIZED_PATH = (
-    "gs://marin-us-east1/tokenized/rephraser_spec_d7d976d3_cooldown-02c17e"
-)
+REPHRASER_TOKENIZED_PATH = "gs://marin-us-east1/tokenized/rephraser_spec_d7d976d3_cooldown-02c17e"
 
-COOLDOWN_TOKENIZED_PATH = (
-    "gs://marin-us-east1/tokenized/nemotron_cooldown_1e20-666089"
-)
+COOLDOWN_TOKENIZED_PATH = "gs://marin-us-east1/tokenized/nemotron_cooldown_1e20-666089"
 
 CHECKPOINT_PATH = (
-    "gs://marin-us-east1/exp2166-scaling-ladder-nemotron-validation-optimal-1e+20-9563f0"
-    "/checkpoints/step-35000"
+    "gs://marin-us-east1/exp2166-scaling-ladder-nemotron-validation-optimal-1e+20-9563f0" "/checkpoints/step-35000"
 )
 cooldown_module.CHECKPOINT_PATH = CHECKPOINT_PATH
 
@@ -111,8 +108,7 @@ rephraser_component = DatasetComponent(
 # Validation sets
 validation_steps = default_validation_sets(tokenizer=llama3_tokenizer)
 validation_component_configs = {
-    name: step_to_lm_mixture_component(step, include_raw_paths=False)
-    for name, step in validation_steps.items()
+    name: step_to_lm_mixture_component(step, include_raw_paths=False) for name, step in validation_steps.items()
 }
 
 
@@ -210,8 +206,6 @@ def run_cooldown_training_v6e32(config: CooldownTrainingConfig):
         model=scaling_1e20_qwen3,
         optimizer=cooldown_optimizer,
         initialize_from_checkpoint_path=CHECKPOINT_PATH,
-        eval_harness=train_lm.LmEvalHarnessConfig(task_spec=convert_to_levanter_task_config(CORE_TASKS)),
-        eval_harness_steps=COOLDOWN_STEPS - 1,
     )
 
     pod_config = TrainLmOnPodConfig(

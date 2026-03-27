@@ -1,6 +1,9 @@
 {
-  "job_id": "ray-run-michaelryan-exp_qwen3_1_7b_rephraser_mid_sft-20260303-145934",
-  "cluster": "us-east5-a",
+  "job_id": "ray-run-michaelryan-exp_qwen3_1_7b_rephraser_mid_sft-20260305-230302",
+  "cluster": "us-central1",
   "experiment": "experiments/exp_qwen3_1_7b_rephraser_mid_sft.py",
-  "restart_count": 1
+  "status": "COMPLETED",
+  "final_step": 9400,
+  "completed_at": "2026-03-06T21:55:35Z",
+  "experiment_info": "gs://marin-us-central1/experiments/exp_qwen3_1_7b_rephraser_mid_sft-4b1bf8.json"
 }

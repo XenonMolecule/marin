@@ -1,0 +1,57 @@
+{
+  "job_id_original": "ray-run-michaelryan-math_domain_mix_sweep-20260324-065430",
+  "job_id_resubmit_7": "ray-run-michaelryan-math_domain_mix_sweep-20260324-125409",
+  "job_id_resubmit_8": "ray-run-michaelryan-math_domain_mix_sweep-20260324-130301",
+  "job_id_resubmit_9": "ray-run-michaelryan-math_domain_mix_sweep-20260324-135335",
+  "job_id_resubmit_10": "ray-run-michaelryan-math_domain_mix_sweep-20260324-152624",
+  "cluster": "us-central1",
+  "last_check": "2026-03-24T21:45Z",
+  "status": "ALL_6_COMPLETE",
+  "hp": {"lr": 5e-7, "bs": 64, "wd": 0.1, "warmup": 0.03},
+  "model": "Qwen/Qwen3-0.6B-Base",
+  "baseline_reference": "HP sweep lr5e-7_bs64: algebra_mv=44.7, prealg_mv=49.3, gsm8k_strict=54.8",
+  "correct_hashes": {
+    "ckpt": {
+      "core_math": "math-mix-core_math-qwen3-0.6b-base-516d9c",
+      "drop_offtopic": "math-mix-drop_offtopic-qwen3-0.6b-base-2d4a6f",
+      "drop_offtopic_mo": "math-mix-drop_offtopic_mo-qwen3-0.6b-base-33e6c0",
+      "drop_worst3": "math-mix-drop_worst3-qwen3-0.6b-base-4000ed",
+      "top3": "math-mix-top3-qwen3-0.6b-base-6b12ed",
+      "top5_plus_small": "math-mix-top5_plus_small-qwen3-0.6b-base-edef05"
+    },
+    "eval": {
+      "core_math": "math-mix-core_math-qwen3-0.6b-base-704201",
+      "drop_offtopic": "math-mix-drop_offtopic-qwen3-0.6b-base-ba6728",
+      "drop_offtopic_mo": "math-mix-drop_offtopic_mo-qwen3-0.6b-base-a42ab9",
+      "drop_worst3": "math-mix-drop_worst3-qwen3-0.6b-base-fa0553",
+      "top3": "math-mix-top3-qwen3-0.6b-base-53e635",
+      "top5_plus_small": "math-mix-top5_plus_small-qwen3-0.6b-base-ec1dd0"
+    },
+    "tokenize": {
+      "drop_worst3": "math_mix_drop_worst3_qwen3-0.6b-base_sft-fe851b",
+      "drop_offtopic": "math_mix_drop_offtopic_qwen3-0.6b-base_sft-62e1a6",
+      "drop_offtopic_mo": "math_mix_drop_offtopic_mo_qwen3-0.6b-base_sft-36a84d",
+      "core_math": "math_mix_core_math_qwen3-0.6b-base_sft-c5829e",
+      "top5_plus_small": "math_mix_top5_plus_small_qwen3-0.6b-base_sft-9473a7",
+      "top3": "math_mix_top3_qwen3-0.6b-base_sft-a70279"
+    },
+    "filter": {
+      "core_math": "math_mix_core_math-8c5692",
+      "drop_offtopic": "math_mix_drop_offtopic-846b83",
+      "drop_offtopic_mo": "math_mix_drop_offtopic_mo-caaad3",
+      "drop_worst3": "math_mix_drop_worst3-c09d72",
+      "top3": "math_mix_top3-51925d",
+      "top5_plus_small": "math_mix_top5_plus_small-2a7755"
+    }
+  },
+  "mixes": {
+    "drop_worst3": {"type": "blocklist", "blocked": ["geogebra.org", "forums.wolfram.com", "brainmass.com"], "records_kept": 1066274, "retention_pct": 89, "status": "EVAL_COMPLETE", "final_step": 2397, "hf_exported": true, "eval_scores": {"algebra_mv": 45.9, "prealg_mv": 50.4, "counting_prob_mv": 22.6, "geometry_mv": 26.3, "intermed_algebra_mv": 12.7, "num_theory_mv": 17.4, "precalc_mv": 14.7, "gsm8k_strict": 54.9, "gsm8k_flex": 59.8}, "tasks_complete": 8, "tasks_total": 8},
+    "drop_offtopic": {"type": "blocklist", "blocked": ["geogebra.org", "forums.wolfram.com", "brainmass.com", "physicsforums.com"], "records_kept": 991797, "retention_pct": 72, "status": "EVAL_COMPLETE", "final_step": 2145, "eval_scores": {"algebra_mv": 46.9, "prealg_mv": 50.7, "counting_prob_mv": 23.0, "geometry_mv": 26.9, "intermed_algebra_mv": 11.8, "num_theory_mv": 18.1, "precalc_mv": 15.8, "gsm8k_strict": 55.3, "gsm8k_flex": 59.1}, "tasks_complete": 8, "tasks_total": 8},
+    "drop_offtopic_mo": {"type": "blocklist", "blocked": ["geogebra.org", "forums.wolfram.com", "brainmass.com", "physicsforums.com", "mathoverflow.net"], "records_kept": 853375, "retention_pct": 62, "status": "EVAL_COMPLETE", "final_step": 1675, "eval_scores": {"algebra_mv": 46.9, "prealg_mv": 51.1, "counting_prob_mv": 23.6, "geometry_mv": 27.1, "intermed_algebra_mv": 11.2, "num_theory_mv": 15.6, "precalc_mv": 16.1, "gsm8k_strict": 55.5, "gsm8k_flex": 59.9}, "tasks_complete": 8, "tasks_total": 8},
+    "core_math": {"type": "allowlist", "description": "top forums + MO + brilliant + small sites", "records_kept": 987107, "retention_pct": 72, "status": "EVAL_COMPLETE", "final_step": 2135, "eval_scores": {"algebra_mv": 47.0, "prealg_mv": 51.0, "counting_prob_mv": 24.1, "geometry_mv": 27.1, "intermed_algebra_mv": 13.3, "num_theory_mv": 19.4, "precalc_mv": 16.1, "gsm8k_strict": 56.7, "gsm8k_flex": 60.5}, "tasks_complete": 8, "tasks_total": 8},
+    "top5_plus_small": {"type": "allowlist", "description": "top 5 forums + small educational (NO MO/brilliant/MSE)", "records_kept": 783413, "retention_pct": 57, "status": "EVAL_COMPLETE_LEADER", "final_step": 1616, "eval_scores": {"algebra_mv": 48.1, "prealg_mv": 53.2, "counting_prob_mv": 25.5, "geometry_mv": 29.4, "intermed_algebra_mv": 13.3, "num_theory_mv": 15.2, "precalc_mv": 15.4, "gsm8k_strict": 55.2, "gsm8k_flex": 59.7}, "tasks_complete": 8, "tasks_total": 8, "notes": "LEADER on 4/8 tasks (alg, prealg, count, geom). GSM8K=55.2 strict, 59.7 flex — slightly below core_math (56.7/60.5) and drop_offtopic_mo (55.5/59.9)."},
+    "top3": {"type": "allowlist", "description": "brainly + jiskha + mathhelpforum only", "records_kept": 514624, "retention_pct": 28, "status": "EVAL_COMPLETE", "final_step": 966, "eval_scores": {"algebra_mv": 50.8, "prealg_mv": 54.1, "counting_prob_mv": 26.8, "geometry_mv": 30.5, "intermed_algebra_mv": 12.5, "num_theory_mv": 21.5, "precalc_mv": 14.3, "gsm8k_strict": 54.7, "gsm8k_flex": 60.2}, "tasks_complete": 8, "tasks_total": 8, "notes": "LEADER on 5/7 MATH subtasks + competitive GSM8K. Uses only 28% of data."}
+  },
+  "evals": ["minerva_math_algebra_4shot", "minerva_math_prealgebra_4shot", "minerva_math_counting_and_prob_4shot", "minerva_math_geometry_4shot", "minerva_math_intermediate_algebra_4shot", "minerva_math_num_theory_4shot", "minerva_math_precalc_4shot", "gsm8k_platinum_cot_8shot"],
+  "notes": "21:45Z: ALL 6 MIXES COMPLETE. top3 GSM8K arrived: strict=54.7, flex=60.2. top3 leads 5/7 MATH subtasks, flat on GSM8K vs baseline. core_math best on GSM8K (56.7). Writing MATH_DOMAIN_MIX_REPORT.md."
+}

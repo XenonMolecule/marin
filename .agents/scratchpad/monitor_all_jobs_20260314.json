@@ -1,0 +1,28 @@
+{
+  "jobs": [
+    {
+      "job_id": "ray-run-michaelryan-code_extraction_sft_v2-20260314-182234",
+      "cluster": "us-central1",
+      "experiment": "experiments/rephraser/code_extraction_sft_v2.py",
+      "status": "SUCCEEDED",
+      "notes": "COMPLETED. All branches done: tokenize SUCCESS, training step-978 SUCCESS, eval SUCCESS. Resiliparse+baseline also SUCCESS."
+    },
+    {
+      "job_id": "ray-run-michaelryan-code_extraction_sft_v2_base-20260314-144853",
+      "cluster": "us-central1",
+      "experiment": "experiments/rephraser/code_extraction_sft_v2_base.py",
+      "status": "SUCCEEDED",
+      "notes": "COMPLETED."
+    },
+    {
+      "job_id": "ray-run-michaelryan-qwen3_mathhelpforum_sft-20260314-144846",
+      "cluster": "us-central1",
+      "experiment": "experiments/rephraser/qwen3_mathhelpforum_sft.py",
+      "status": "SUCCEEDED",
+      "notes": "COMPLETED."
+    }
+  ],
+  "restart_count": 3,
+  "last_check": "2026-03-14T19:31:00Z",
+  "env_vars": "-e WANDB_API_KEY $WANDB_API_KEY -e HF_TOKEN $HF_TOKEN"
+}

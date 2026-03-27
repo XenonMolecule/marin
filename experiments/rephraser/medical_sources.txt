@@ -1,0 +1,198 @@
+# Medical sources for extraction — candidates for Common Crawl CDX validation
+# Probing needed across CC-MAIN-2013-48, CC-MAIN-2016-44, CC-MAIN-2018-47, CC-MAIN-2024-46, CC-MAIN-2025-47
+#
+# Format: domain match_type  # estimated_volume description
+# Record counts = estimated; run probe_domain_sources.py to validate
+#
+# Prioritize forums/Q&A (high extraction value) over reference (resiliparse may suffice)
+
+
+# ==================================================================
+# TIER 1: LARGE MEDICAL Q&A FORUMS
+# ==================================================================
+# These are the high-value targets — structured Q&A with clinical/patient detail.
+
+forums.studentdoctor.net host     # 23M+ posts. Pre-med/med student Q&A forum.
+                                  # Anatomy, pharmacology, Step 1/2 prep. Not blocked by CCBot.
+healthboards.com domain           # 5M+ messages. Patient health forums (condition-specific boards).
+                                  # Diabetes, heart disease, mental health, chronic pain.
+healthunlocked.com domain         # NHS-affiliated patient community. Condition-specific groups.
+                                  # UK-focused but English. Large forum with structured Q&A.
+allnurses.com domain              # 1M+ members. Nursing Q&A, clinical scenarios, NCLEX prep.
+                                  # Medical knowledge from practitioner perspective.
+patient.info domain               # UK health encyclopedia + community forum. Condition guides.
+                                  # Mix of reference articles and patient Q&A.
+medhelp.org domain                # Large patient Q&A forum. Doctor-answered questions.
+                                  # Cardiology, neurology, OB/GYN, pediatrics forums.
+                                  # Check if still accessible in modern crawls.
+
+# ==================================================================
+# TIER 1: LARGE MEDICAL REFERENCE / EDUCATION
+# ==================================================================
+
+mayoclinic.org domain             # Major medical reference. Disease info, symptoms, treatments.
+                                  # High-quality clinical descriptions. Not blocked.
+webmd.com domain                  # Massive medical reference. Conditions, drugs, supplements.
+                                  # Check CCBot status — may have blocked in recent years.
+drugs.com domain                  # Drug database. Interactions, side effects, dosages.
+                                  # Also has patient forums (drugs.com/answers/).
+clevelandclinic.org domain        # Medical reference comparable to Mayo Clinic.
+                                  # Disease info, health articles, patient education.
+ncbi.nlm.nih.gov host            # PubMed / NIH resources. Biomedical literature.
+                                  # May be very large — consider prefix filtering.
+medlineplus.gov domain            # NIH consumer health info. A-Z conditions, drugs, tests.
+                                  # Government site, likely well-crawled.
+merckmanuals.com domain           # Professional/consumer medical reference.
+                                  # Detailed disease descriptions, clinical info.
+
+# ==================================================================
+# TIER 2: MEDICAL EDUCATION & EXAM PREP
+# ==================================================================
+
+radiopaedia.org domain            # Radiology reference. Cases, articles, quizzes.
+                                  # Imaging-focused medical education. Not blocked.
+amboss.com domain                 # Medical education platform. Check if paywalled.
+                                  # Step 1/2/3 prep content.
+kenhub.com domain                 # Anatomy education. Detailed anatomy articles/quizzes.
+osmosis.org domain                # Medical education platform. Video transcripts, summaries.
+teachmeanatomy.info domain        # Free anatomy resource. Detailed articles with diagrams.
+teachmesurgery.com domain         # Surgical education. Procedures, anatomy, pathology.
+teachmephysiology.com domain      # Physiology education. Systems-based approach.
+geekymedics.com domain            # Medical student resources. OSCE guides, clinical skills.
+                                  # UK-focused but relevant clinical content.
+lecturio.com domain               # Medical education. Check paywall status.
+pathologystudent.com domain       # Pathology education blog/reference.
+                                  # Detailed pathology explanations.
+
+# ==================================================================
+# TIER 2: SPECIALTY FORUMS & Q&A
+# ==================================================================
+
+psychforums.com domain            # Mental health Q&A forum. Depression, anxiety, personality disorders.
+                                  # Patient perspective. Check CCBot status.
+crazyboards.org domain            # Mental health peer support. Medications, diagnoses.
+                                  # Very frank patient discussions.
+healingwell.com domain            # Chronic illness support forums. Multiple conditions.
+inspire.com domain                # Patient support communities. Multiple condition-specific groups.
+                                  # Check if behind login/paywall.
+dailystrength.org domain          # Health support groups (may be defunct). Check historical crawls.
+health.stackexchange.com host     # Health Q&A (Stack Exchange). Blocked in modern crawls.
+                                  # Check historical: 2013-48, 2016-44.
+medicalsciences.stackexchange.com host  # Medical Sciences Q&A (Stack Exchange). Likely blocked modern.
+                                        # Check historical crawls.
+biology.stackexchange.com host    # Biology Q&A. Overlap with medical topics (cell bio, genetics).
+                                  # Check historical crawls.
+dentaltown.com domain             # Dental professional forum. Clinical discussions.
+                                  # Check if behind login.
+studentroom.co.uk domain          # UK student forum with medical school sections.
+                                  # Check for medical-specific content volume.
+
+# ==================================================================
+# TIER 2: MEDICAL REFERENCE SITES
+# ==================================================================
+
+rxlist.com domain                 # Drug information reference. Side effects, interactions.
+emedicine.medscape.com host       # Medscape clinical reference articles.
+                                  # Check if behind free login wall.
+medscape.com domain               # Medical news and reference. May require login.
+                                  # Check historical crawl accessibility.
+uptodate.com domain               # Clinical decision support. Almost certainly paywalled.
+                                  # Check historical — may have been open pre-2015.
+epocrates.com domain              # Drug reference. Likely paywalled.
+wikem.org domain                  # Emergency medicine wiki. Open access clinical reference.
+                                  # WikEM = Wiki for Emergency Medicine.
+fpnotebook.com domain             # Family practice reference. Clinical topics A-Z.
+                                  # Free access medical reference.
+openanesthesia.org domain         # Anesthesia education. Open access articles/keywords.
+lifeinthefastlane.com domain      # Emergency medicine / critical care blog.
+                                  # High-quality clinical education content.
+rebelem.com domain                # Evidence-based emergency medicine blog.
+emcrit.org domain                 # Critical care and emergency medicine education.
+theNNT.com domain                 # Number needed to treat — evidence-based summaries.
+
+# ==================================================================
+# TIER 3: SMALLER / NICHE MEDICAL SOURCES
+# ==================================================================
+
+anatomy.tv domain                 # 3D anatomy. Likely limited extractable text.
+innerbody.com domain              # Anatomy reference. Detailed organ/system descriptions.
+getbodysmart.com domain           # Anatomy tutorials and quizzes.
+derm101.com domain                # Dermatology reference. Check if paywalled.
+eyewiki.org domain                # Ophthalmology wiki. Open access from AAO.
+orthobullets.com domain           # Orthopedics reference. Some free, some paid.
+cancerresearchuk.org domain       # Cancer information. UK-based, good reference content.
+breastcancer.org domain           # Breast cancer info + patient forums.
+diabetes.org domain               # ADA diabetes information.
+heart.org domain                  # AHA heart/cardiovascular information.
+cdc.gov domain                    # CDC health information. Very large — may need prefix filter.
+who.int domain                    # WHO health information. International focus.
+nhs.uk domain                     # NHS health A-Z. Large UK health reference.
+                                  # Very well-structured, good for extraction.
+
+# ==================================================================
+# TIER 3: PHARMACOLOGY & NURSING
+# ==================================================================
+
+pharmacytimes.com domain          # Pharmacy news and clinical articles.
+pharmacist.com domain             # APhA resources. Check access status.
+nursingtimes.net domain           # UK nursing publication.
+registerednursern.com domain      # Nursing education videos/articles. NCLEX prep.
+nurseslabs.com domain             # Nursing study guides, care plans, NCLEX practice.
+safemedication.com domain         # ASHP patient medication information.
+
+
+# ==================================================================
+# HISTORICAL CRAWLS ONLY (blocked/defunct in modern crawls)
+# ==================================================================
+# Many health forums blocked CC crawlers between 2017-2020.
+
+health.stackexchange.com host     # Stack Exchange — blocked modern. Check 2013-48, 2016-44.
+medicalsciences.stackexchange.com host  # Stack Exchange — blocked modern.
+biology.stackexchange.com host    # Stack Exchange — blocked modern.
+dailystrength.org domain          # Health support groups. Shut down ~2018. Check historical.
+
+
+# ==================================================================
+# NOT VIABLE (expected)
+# ==================================================================
+
+# uptodate.com domain             # Almost certainly fully paywalled
+# amboss.com domain               # Likely paywalled — verify
+# lecturio.com domain             # Likely paywalled — verify
+# epocrates.com domain            # Likely paywalled — verify
+
+
+# ==================================================================
+# KEY CRAWL INDICES (expected best crawls for medical)
+# ==================================================================
+#
+# Medical forums (like math forums) likely peaked in 2013-2016 crawls
+# before CCBot blocking became widespread.
+#
+# CC-MAIN-2013-48:  Early forum content, Stack Exchange health topics
+# CC-MAIN-2016-44:  Peak forum era, healthboards, medhelp
+# CC-MAIN-2018-47:  Last chance for some forums before blocking
+# CC-MAIN-2024-46:  Modern reference sites (mayo, cleveland clinic)
+# CC-MAIN-2025-47:  Latest crawl for current sites
+#
+# Government/institutional sites (NIH, CDC, NHS) likely available across all crawls.
+
+
+# ==================================================================
+# PROBING NOTES
+# ==================================================================
+#
+# Run: uv run python experiments/rephraser/probe_domain_sources.py \
+#          --source_file experiments/rephraser/medical_sources.txt \
+#          --output experiments/rephraser/medical_sources_probed.json
+#
+# After probing, reorganize tiers based on actual CDX record counts.
+# Some sites may surprise (much larger/smaller than estimated).
+# Paywalled sites may have historical content from before paywall.
+#
+# Key considerations:
+# - Medical forum Q&A has highest extraction value (like mathhelpforum for math)
+# - Reference sites may work well with resiliparse alone — extraction value
+#   comes from stripping navigation, ads, sidebars from dense reference pages
+# - Government sites (CDC, NIH, NHS) are very large — may need prefix filtering
+#   or sampling to keep dataset balanced

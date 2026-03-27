@@ -1,0 +1,13 @@
+{
+  "job_id": "ray-run-michaelryan-mathhelpforum_extraction_sft_base-20260313-042747",
+  "cluster": "us-central1",
+  "experiment": "experiments/rephraser/mathhelpforum_extraction_sft_base.py",
+  "restart_count": 0,
+  "env_vars": "-e WANDB_API_KEY $WANDB_API_KEY -e HF_TOKEN $HF_TOKEN",
+  "notes": "Base model (Qwen3-0.6B-Base) variant of mathhelpforum extraction SFT. Branches: baseline, Q/R/A, general/markdown, resiliparse, GSM8K. Upstream extraction steps shared with instruct model run.",
+  "sibling_job": {
+    "job_id": "ray-run-michaelryan-code_extraction_sft_v2_base-20260313-064338",
+    "experiment": "experiments/rephraser/code_extraction_sft_v2_base.py",
+    "notes": "Code base model (Qwen3-0.6B-Base) variant with plain text extraction prompt. Branches: baseline, plaintext extraction, resiliparse."
+  }
+}

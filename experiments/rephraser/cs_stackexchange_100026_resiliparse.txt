@@ -1,0 +1,110 @@
+1
+$\begingroup$
+
+I'm working on an algorithm that takes a number of unit coins ([1, 2, 5, 10] for example) and a certain amount of money (13 in this case), and figures out how many ways there are to provide change for it. In the case of this testset the solution is 16.
+
+1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1
+1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2
+1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2
+etc
+5, 5, 2, 1
+10, 1, 1, 1
+10, 2, 1
+Total number of ways: 16
+
+I've first tried making a list of these permutations, but that generally was slow and unwieldy. There is no need to give every permutation just the amount of them: 7/10 test cases were able to be done under 5 seconds.
+
+So I went looking around and found this. Where a Haskell solution to a similar problem was used. I just had to make it more general for my needs and translate it in a language I could actually run (e.g. Python). I did and I ended up with the following:
+
+def change(list, number):
+    if (number is 0):
+        return 1
+    if (len(list) is 0):
+        return 0
+    if (number < list[0]):
+        return 0
+
+    return change(list, (number - list[0])) + change(list[1:], number)
+
+print(change([1, 2, 5, 10], 13)) #prints 16 (list needs to be in order btw)
+
+This solution is better then the first one: 9/10 test cases succeeded. However this can be done better! I've yet to talk about the constraints of this assignment.
+
+  • There are no more then 8 unit coins (len(unit_coins) <= 8)
+  • The unit coins are never more then 250 (unit_coin <= 250)
+  • The amount of money is between 0 and 300 (0 < money < 300)
+  • There is always a unit coin with a value of 1
+
+The last part is important (you can tell, because I've highlighted it). The current solution is absolutely not taking advantage of that, and I thing there's a lot to be gained when this is used in the function.
+
+Does anyone have an idea how to to the thing I just described. Any help would be greatly appreciated. More general answers are also welcomed as this type of optimization isn't exclusive to this perticular algorithm.
+
+P.S. I know Python isn't a very quick language, but that's not the point of this exercise. This exercise is about making the whole algorithm better, not just a specific implementation in a certain language.
+
+$\endgroup$
+1
+  • $\begingroup$ cs.stackexchange.com/tags/dynamic-programming/info $\endgroup$ Commented Nov 13, 2018 at 22:54
+
+1 Answer 1
+
+1
+$\begingroup$
+
+The way I understand this, it seems to be the classic coin change problem with a few constraints which you have provided. Although if we try to consider all the subsets of the available coins this problem will definitely take exponential time in terms of number of coins available. (The size of the power-set , each subset has to be considered although few optimizations exist but still it doesn't reduce the time to polynomial). For reducing the time taken we can employ the optimization called memorization.
+
+return change(list, (number - list[0])) + change(list[1:], number)
+
+If you see the line closely in your solution you can see the problem has overlapping subproblems which will be computed again and again. For optimization we try to remember the results of the subproblems and return this precomputed result if we encounter the same sub-problem again.However, as you can guess there is a space-time trade-off here. For speeding up we need to remember the results for this we need atleast $\mathcal{O}({n})$ space (n is the sum which we are trying to make.).
+
+For overlapping subproblems consider the example of making a sum of N using coins 2,3 and, 5.
+
+Suppose solution is given by F(n), then
+
+let us choose the permutations i can make using 2:
+
+Then F(n) = 1+F(n-2)
+
+Now let us choose coin 3:
+
+F(n) = 2+F(n-5) . . . . We calculate this quantity and return the result. However suppose if we choose 5 in the starting step.
+
+then F(n) = 1+ F(n-5)
+
+We now have to calculate F(n-5) again. Hence overlapping subproblems exist.
+
+For the constraints which you have mentioned we can add those constraints by maintaining a count of each coin as well as total count of the coins used at each step of the recursive call to our function (In the function which is named $change(list, number)$ in your implementation ) we can check the constraint and add zero as the result of that particular function call as it generated an invalid permutation. valid permutation contributes to a 1 in our function. Our function will look something like this :
+
+def change(list, number, countCoinsList, totCount):
+if (number is 0):
+    return 1
+if (len(list) is 0):
+    return 0
+if (number < list[0]):
+    return 0
+if(countCoinsList[i]<8)
+     countCoinsList[i]+=1 
+     tmp1= change(list, (number - list[i]),countCoinsList,totCount+1)
+
+ tmp2= change(list[i+1:], number,countCoinsList,totCount)
+return  tmp1+tmp2;
+$\endgroup$
+5
+  • $\begingroup$ What exactly is the point of the CountCoinsList? And how would you run this function? $\endgroup$ Commented Nov 14, 2018 at 14:12
+  • $\begingroup$ And where do you get the i from? $\endgroup$ Commented Nov 14, 2018 at 14:18
+  • $\begingroup$ i is the index of a particular coin in the coin list. when we first call the function we give the index to be 0 which is the starting of the list. at each step we have the choice of either selecting the coin at index i or moving at i+1. the point of the list is to maintain the number of each coin used. we can use such a list for applying the constraints specified $\endgroup$ Commented Nov 14, 2018 at 15:04
+  • $\begingroup$ So if a wanted to get the same result I would call: change([1, 2, 5, 10], 13, [1, 2, 5, 10], 0)? $\endgroup$ Commented Nov 14, 2018 at 15:19
+  • $\begingroup$ yes exactly except the count list will contain [0,0,0,0,0] since you haven't used any coins as if now. once you use a coin the index at that position will increase by one $\endgroup$ Commented Nov 14, 2018 at 16:57
+
+Your Answer
+
+By clicking “Post Your Answer”, you agree to our terms of service and acknowledge you have read our privacy policy.
+
+Start asking to get answers
+
+Find the answer to your question by asking.
+
+Ask question
+
+Explore related questions
+
+See similar questions with these tags.

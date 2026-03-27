@@ -1,0 +1,16 @@
+{
+  "job_id": "ray-run-michaelryan-code_extraction_passk_eval_baseline-20260315-154242",
+  "cluster": "us-central1",
+  "experiment": "experiments/rephraser/code_extraction_passk_eval_baseline.py",
+  "restart_count": 0,
+  "last_check": "2026-03-15T10:04Z",
+  "last_status": "COMPLETE",
+  "results": {
+    "pass@1": 0.305,
+    "pass@2": 0.3138,
+    "pass@8": 0.3297,
+    "pass@16": 0.3327,
+    "pass@32": 0.3346,
+    "pass@64": 0.3354
+  }
+}

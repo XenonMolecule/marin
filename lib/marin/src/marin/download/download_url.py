@@ -52,9 +52,7 @@ class DownloadBanlistsConfig:
     output_path: str
     """GCS directory to write the ban list files to."""
 
-    github_base_url: str = (
-        "https://raw.githubusercontent.com/mlfoundations/dclm/main/baselines/mappers"
-    )
+    github_base_url: str = "https://raw.githubusercontent.com/mlfoundations/dclm/main/baselines/mappers"
     """Base URL for DCLM GitHub raw files."""
 
     files: list[str] = field(

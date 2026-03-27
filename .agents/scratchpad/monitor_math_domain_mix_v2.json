@@ -1,0 +1,146 @@
+{
+  "job_id_original": "ray-run-michaelryan-math_domain_mix_sweep_v2-20260325-022444",
+  "job_id_resubmit_1": "ray-run-michaelryan-math_domain_mix_sweep_v2-20260325-053226",
+  "job_id_resubmit_2": "ray-run-michaelryan-math_domain_mix_sweep_v2-20260325-061902",
+  "job_id_resubmit_3": "ray-run-michaelryan-math_domain_mix_sweep_v2-20260325-070437",
+  "cluster": "us-central1",
+  "last_check": "2026-03-25T10:49Z",
+  "status": "ALL_COMPLETE",
+  "hp": {"lr": 5e-7, "bs": 64, "wd": 0.1, "warmup": 0.03},
+  "model": "Qwen/Qwen3-0.6B-Base",
+  "source_data": "mathhelpforum_extraction_sft_v2_base postprocessed (unified branch)",
+  "v1_reference_scores": {
+    "untrained": {"algebra_mv": 41.4, "prealg_mv": 49.0, "gsm8k_strict": 58.1, "gsm8k_flex": 62.8},
+    "top3": {"algebra_mv": 50.8, "prealg_mv": 54.1, "int_algebra_mv": 12.5, "num_theory_mv": 21.5, "precalc_mv": 14.3, "gsm8k_strict": 54.7, "gsm8k_flex": 60.2},
+    "core_math": {"algebra_mv": 47.0, "prealg_mv": 51.0, "int_algebra_mv": 13.3, "precalc_mv": 16.1, "gsm8k_strict": 56.7, "gsm8k_flex": 60.5}
+  },
+  "mixes": {
+    "top3_plus_mse": {
+      "description": "top3 + math.stackexchange.com (isolate MSE contribution)",
+      "allowed_domains": ["brainly.com", "jiskha.com", "mathhelpforum.com", "math.stackexchange.com"],
+      "status": "EVAL_COMPLETE",
+      "filter_step": {"path": "gs://marin-us-central1/filtered/math_mix_v2_top3_plus_mse-67e83c", "status": "SUCCESS", "file_count": 2723},
+      "tokenize_step": {
+        "path": "gs://marin-us-central1/tokenized/math_mix_v2_top3_plus_mse_qwen3-0.6b-base_sft-0e3699",
+        "status": "SUCCESS",
+        "note": "executor_status=SUCCESS. Tokenize completed."
+      },
+      "train_step": {
+        "path": "gs://marin-us-central1/checkpoints/math-mix-v2-top3_plus_mse-qwen3-0.6b-base-908e48",
+        "status": "SUCCESS",
+        "note": "executor_status=SUCCESS."
+      },
+      "eval_step": {
+        "path": "gs://marin-us-central1/evaluation/lm_evaluation_harness/math-mix-v2-top3_plus_mse-qwen3-0.6b-base-00feeb",
+        "status": "SUCCESS",
+        "tasks_done": 8,
+        "tasks_complete": ["algebra", "prealgebra", "counting_and_prob", "geometry", "intermediate_algebra", "num_theory", "precalc", "gsm8k"],
+        "note": "executor_status=SUCCESS. ALL 8/8 tasks complete. Confirmed at 09:48Z."
+      },
+      "eval_scores": {
+        "algebra_em": 0.4431, "algebra_mv": 0.5080,
+        "prealgebra_em": 0.4983, "prealgebra_mv": 0.5408,
+        "counting_and_prob_em": 0.2532, "counting_and_prob_mv": 0.2679,
+        "geometry_em": 0.2610, "geometry_mv": 0.3048,
+        "intermediate_algebra_em": 0.0975, "intermediate_algebra_mv": 0.1251,
+        "num_theory_em": 0.1852, "num_theory_mv": 0.2148,
+        "precalc_em": 0.0879, "precalc_mv": 0.1429,
+        "gsm8k_strict": 0.5467, "gsm8k_flex": 0.6022
+      }
+    },
+    "top3_plus_advanced": {
+      "description": "top3 + mathoverflow + brilliant + MSE (recover int_alg/precalc)",
+      "allowed_domains": ["brainly.com", "jiskha.com", "mathhelpforum.com", "mathoverflow.net", "brilliant.org", "math.stackexchange.com"],
+      "status": "EVAL_COMPLETE",
+      "filter_step": {"path": "gs://marin-us-central1/filtered/math_mix_v2_top3_plus_advanced-903e63", "status": "SUCCESS", "file_count": 3174},
+      "tokenize_step": {
+        "path": "gs://marin-us-central1/tokenized/math_mix_v2_top3_plus_advanced_qwen3-0.6b-base_sft-12bf80",
+        "status": "SUCCESS",
+        "note": "executor_status=SUCCESS."
+      },
+      "train_step": {
+        "path": "gs://marin-us-central1/checkpoints/math-mix-v2-top3_plus_advanced-qwen3-0.6b-base-b70478",
+        "status": "SUCCESS",
+        "final_step": "step-1485",
+        "hf_export": "hf/step-1485",
+        "note": "Training complete. HF export at step-1485."
+      },
+      "eval_step": {
+        "path": "gs://marin-us-central1/evaluation/lm_evaluation_harness/math-mix-v2-top3_plus_advanced-qwen3-0.6b-base-58ba2f",
+        "status": "SUCCESS",
+        "tasks_done": 8,
+        "tasks_complete": ["algebra", "prealgebra", "counting_and_prob", "geometry", "intermediate_algebra", "num_theory", "precalc", "gsm8k"],
+        "note": "ALL 8/8 tasks complete. Confirmed at 10:49Z. Tasks arrived sequentially: algebra (10:05Z), prealgebra (10:10Z), counting_and_prob (10:14Z), geometry (10:20Z), intermediate_algebra (10:30Z), num_theory (10:36Z), precalc (10:41Z), gsm8k (10:49Z)."
+      },
+      "eval_scores": {
+        "algebra_em": 0.3774, "algebra_mv": 0.4802,
+        "prealgebra_em": 0.4145, "prealgebra_mv": 0.5098,
+        "counting_and_prob_em": 0.2089, "counting_and_prob_mv": 0.2447,
+        "geometry_em": 0.1983, "geometry_mv": 0.2881,
+        "intermediate_algebra_em": 0.0897, "intermediate_algebra_mv": 0.1251,
+        "num_theory_em": 0.1444, "num_theory_mv": 0.1907,
+        "precalc_em": 0.0989, "precalc_mv": 0.1557,
+        "gsm8k_strict": 0.5666, "gsm8k_flex": 0.6046
+      }
+    },
+    "top3_plus_wordprob": {
+      "description": "top3 + khanacademy + varsitytutors + openstax + mathplanet (recover GSM8K)",
+      "allowed_domains": ["brainly.com", "jiskha.com", "mathhelpforum.com", "khanacademy.org", "varsitytutors.com", "openstax.org", "mathplanet.com"],
+      "status": "EVAL_COMPLETE",
+      "filter_step": {"path": "gs://marin-us-central1/filtered/math_mix_v2_top3_plus_wordprob-a5a81d", "status": "SUCCESS", "file_count": 3410},
+      "tokenize_step": {"path": "gs://marin-us-central1/tokenized/math_mix_v2_top3_plus_wordprob_qwen3-0.6b-base_sft-4f6afe", "status": "SUCCESS"},
+      "train_step": {"path": "gs://marin-us-central1/checkpoints/math-mix-v2-top3_plus_wordprob-qwen3-0.6b-base-a4da0e", "status": "SUCCESS", "final_step": "step-974"},
+      "eval_step": {
+        "path": "gs://marin-us-central1/evaluation/lm_evaluation_harness/math-mix-v2-top3_plus_wordprob-qwen3-0.6b-base-909c69",
+        "status": "SUCCESS",
+        "tasks_done": 8,
+        "tasks_complete": ["algebra", "prealgebra", "counting_and_prob", "geometry", "intermediate_algebra", "num_theory", "precalc", "gsm8k"],
+        "note": "ALL 8/8 tasks complete. Confirmed unchanged at 09:52Z."
+      },
+      "eval_scores": {
+        "algebra_em": 0.4364, "algebra_mv": 0.5088,
+        "prealgebra_em": 0.5017, "prealgebra_mv": 0.5385,
+        "counting_and_prob_em": 0.2447, "counting_and_prob_mv": 0.2574,
+        "geometry_em": 0.2526, "geometry_mv": 0.2965,
+        "intermediate_algebra_em": 0.0975, "intermediate_algebra_mv": 0.1185,
+        "num_theory_em": 0.1963, "num_theory_mv": 0.2204,
+        "precalc_em": 0.0897, "precalc_mv": 0.1502,
+        "gsm8k_strict": 0.5385, "gsm8k_flex": 0.5980
+      }
+    },
+    "top3_plus_best5": {
+      "description": "top3 + MSE + khanacademy + varsitytutors + openstax + brilliant (predicted optimal)",
+      "allowed_domains": ["brainly.com", "jiskha.com", "mathhelpforum.com", "math.stackexchange.com", "khanacademy.org", "varsitytutors.com", "openstax.org", "brilliant.org"],
+      "status": "EVAL_COMPLETE",
+      "filter_step": {"path": "gs://marin-us-central1/filtered/math_mix_v2_top3_plus_best5-3c376f", "status": "SUCCESS", "file_count": 3410},
+      "tokenize_step": {"path": "gs://marin-us-central1/tokenized/math_mix_v2_top3_plus_best5_qwen3-0.6b-base_sft-1d9f00", "status": "SUCCESS"},
+      "train_step": {
+        "path": "gs://marin-us-central1/checkpoints/math-mix-v2-top3_plus_best5-qwen3-0.6b-base-dcd788",
+        "status": "SUCCESS",
+        "final_step": "step-974",
+        "note": "executor_status=SUCCESS. HF export dir present (step-1021)."
+      },
+      "eval_step": {
+        "path": "gs://marin-us-central1/evaluation/lm_evaluation_harness/math-mix-v2-top3_plus_best5-qwen3-0.6b-base-05fadb",
+        "status": "SUCCESS",
+        "tasks_done": 8,
+        "tasks_complete": ["algebra", "prealgebra", "counting_and_prob", "geometry", "intermediate_algebra", "num_theory", "precalc", "gsm8k"],
+        "note": "ALL 8/8 tasks complete. executor_status=SUCCESS. Confirmed unchanged at 09:52Z."
+      },
+      "eval_scores": {
+        "algebra_em": 0.3833, "algebra_mv": 0.4869,
+        "prealgebra_em": 0.4432, "prealgebra_mv": 0.5270,
+        "counting_and_prob_em": 0.2236, "counting_and_prob_mv": 0.2489,
+        "geometry_em": 0.2234, "geometry_mv": 0.2985,
+        "intermediate_algebra_em": 0.0886, "intermediate_algebra_mv": 0.1174,
+        "num_theory_em": 0.1481, "num_theory_mv": 0.1870,
+        "precalc_em": 0.0916, "precalc_mv": 0.1538,
+        "gsm8k_strict": 0.5500, "gsm8k_flex": 0.6046
+      }
+    }
+  },
+  "evals": ["minerva_math_algebra_4shot", "minerva_math_prealgebra_4shot", "minerva_math_counting_and_prob_4shot", "minerva_math_geometry_4shot", "minerva_math_intermediate_algebra_4shot", "minerva_math_num_theory_4shot", "minerva_math_precalc_4shot", "gsm8k_platinum_cot_8shot"],
+  "notes": "10:49Z Mar 25: ADVANCED EVAL_COMPLETE (8/8). ALL 4 MIXES COMPLETE. Advanced scores: algebra em=0.3774 mv=0.4802, prealgebra em=0.4145 mv=0.5098, counting_and_prob em=0.2089 mv=0.2447, geometry em=0.1983 mv=0.2881, int_algebra em=0.0897 mv=0.1251, num_theory em=0.1444 mv=0.1907, precalc em=0.0989 mv=0.1557, gsm8k_strict=0.5666 gsm8k_flex=0.6046. Tasks arrived sequentially from 10:05Z to 10:49Z (vLLM warmup took ~24 min after eval started at ~09:41Z — longer than typical due to 6-domain model). Report written.\n09:52Z Mar 25: ADVANCED eval lock fresh 09:50:17Z but still no task subdirs — vLLM still warming up (~12 min into eval). ETA first tasks ~10:00Z, all 8/8 done ~10:25Z. All other mixes (wordprob, best5, mse) confirmed EVAL_COMPLETE unchanged.\n09:48Z Mar 25: MSE EVAL_COMPLETE (8/8). ADVANCED eval now RUNNING (lock 09:41:44Z, vLLM warming up). WORDPROB: confirmed EVAL_COMPLETE (unchanged). BEST5: confirmed EVAL_COMPLETE (unchanged). MSE: executor_status=SUCCESS — all 8/8 tasks confirmed done. Final new scores: precalc_em=0.0879 precalc_mv=0.1429; gsm8k_strict=0.5467 gsm8k_flex=0.6022. ADVANCED: training SUCCESS — HF export step-1485 written 09:34Z, checkpoints through step-1485. Eval picked up at 09:41Z (lock fresh), executor_status=RUNNING, no task subdirs yet (vLLM warming up). ETA first tasks ~09:55Z, all 8/8 done ~10:20Z.\n09:38Z Mar 25: MSE progressed to 6/8 tasks; ADVANCED training at step-1300. WORDPROB: confirmed EVAL_COMPLETE (unchanged). BEST5: confirmed EVAL_COMPLETE (unchanged). MSE: eval RUNNING — lock 09:30:45Z, 6/8 tasks done (added num_theory: em=0.1852, mv=0.2148); remaining: precalc, gsm8k_platinum_cot; ETA all done ~09:50Z. ADVANCED: training RUNNING at step-1300 — lock 09:30:49Z, progressed 1000→1300 in ~10 min; still no HF export dir; eval dir has only .executor_info; ETA training done ~09:40Z, eval starts ~09:45Z, all eval done ~10:15Z.\n09:28Z Mar 25: Progress on MSE and ADVANCED. WORDPROB: confirmed EVAL_COMPLETE (unchanged). BEST5: confirmed EVAL_COMPLETE (unchanged). MSE: eval RUNNING — lock 09:20:42Z, 5/8 tasks done (algebra: em=0.4431 mv=0.5080; prealgebra: em=0.4983 mv=0.5408; counting_and_prob: em=0.2532 mv=0.2679; geometry: em=0.2610 mv=0.3048; intermediate_algebra: em=0.0975 mv=0.1251), remaining 3 tasks (num_theory, precalc, gsm8k) in progress; ETA all done ~09:45Z. ADVANCED: training RUNNING at step-1000 — lock 09:20:45Z, executor_status=RUNNING, no HF export yet; ETA training done ~09:28Z, eval done ~10:00Z.",
+  "next_check_at": "COMPLETE",
+  "expected_timeline": "ALL 4 MIXES COMPLETE as of 10:49Z Mar 25. Report written."
+}

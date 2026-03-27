@@ -88,6 +88,11 @@ class LMEvaluationHarnessEvaluator(Evaluator):
 
         mode_str = resolve_vllm_mode(None)
         pip_packages = VLLM_NATIVE_PIP_PACKAGES if mode_str == "native" else ()
+        eval_env_vars: dict[str, str] = {"HF_ALLOW_CODE_EVAL": "1"}
+        # Forward MARIN_VLLM_MODE so the TPU worker uses the same vLLM backend
+        vllm_mode = os.environ.get("MARIN_VLLM_MODE")
+        if vllm_mode:
+            eval_env_vars["MARIN_VLLM_MODE"] = vllm_mode
         launch_evaluate_with_ray(
             evaluator=self,
             job_name="lm-eval",
@@ -99,7 +104,7 @@ class LMEvaluationHarnessEvaluator(Evaluator):
             wandb_tags=wandb_tags,
             extras=("eval", "tpu"),
             pip_packages=pip_packages,
-            env_vars={"HF_ALLOW_CODE_EVAL": "1"},
+            env_vars=eval_env_vars,
         )
 
     def evaluate(
@@ -127,15 +132,88 @@ class LMEvaluationHarnessEvaluator(Evaluator):
             with VllmEnvironment(model) as env:
                 resolved_model = env.model
 
+                def _task_results_exist_on_remote(task_dir_name: str) -> bool:
+                    """Check if results for a task already exist on the remote output path."""
+                    if not is_remote_path(output_path):
+                        return False
+                    remote_task_dir = f"{output_path}/{task_dir_name}"
+                    try:
+                        fs, fs_path = fsspec.core.url_to_fs(remote_task_dir)
+                        existing_results = fs.glob(f"{fs_path}/**/results*.json")
+                        return len(existing_results) > 0
+                    except Exception:
+                        return False
+
+                def _upload_task_results(task_dir_name: str, result_filepath: str) -> None:
+                    """Upload a single task's results to the remote output path."""
+                    if not is_remote_path(output_path):
+                        return
+                    remote_task_dir = f"{output_path}/{task_dir_name}"
+                    try:
+                        logger.info(f"Uploading {task_dir_name} results to {remote_task_dir}...")
+                        upload_to_gcs(result_filepath, remote_task_dir)
+                        logger.info(f"Successfully uploaded {task_dir_name} results.")
+                    except Exception as e:
+                        logger.warning(f"Failed to upload {task_dir_name} results to GCS: {e}")
+
                 def _run_lm_eval(lm_eval_model_local: str, pretrained_args_local: str) -> None:
                     from lm_eval.evaluator import simple_evaluate
                     from lm_eval.loggers import EvaluationTracker, WandbLogger
+                    from lm_eval.tasks import TaskManager
                     from lm_eval.utils import simple_parse_args_string
 
+                    # Allow custom task YAMLs from experiments/rephraser/custom_tasks/
+                    custom_tasks_dir = os.path.join(os.getcwd(), "experiments", "rephraser", "custom_tasks")
+                    include_path = custom_tasks_dir if os.path.isdir(custom_tasks_dir) else None
+                    task_manager = TaskManager(include_path=include_path)
+
+                    # JAX-backed vLLM (TPU) does not support per-request seeds.
+                    # lm-eval always sends "seed": 1234 in API payloads, which causes
+                    # a 400 error. Strip it so sampling tasks (e.g. humaneval_64) work.
+                    import lm_eval.models.openai_completions as _oai_mod
+
+                    _orig_create_payload = _oai_mod.LocalCompletionsAPI._create_payload
+
+                    def _create_payload_no_seed(self, *args, **kwargs):
+                        payload = _orig_create_payload(self, *args, **kwargs)
+                        payload.pop("seed", None)
+                        return payload
+
+                    _oai_mod.LocalCompletionsAPI._create_payload = _create_payload_no_seed
+
+                    # Use a deterministic wandb run ID derived from the model name
+                    # so that crash+reboot resumes the same run instead of creating
+                    # a duplicate.  All eval tasks for a model are logged to a single
+                    # wandb run.
+                    import hashlib
+
+                    wandb_run_id = hashlib.sha256(resolved_model.name.encode()).hexdigest()[:16]
+                    wandb_args_dict = {
+                        "project": "marin",
+                        "job_type": "eval",
+                        "group": resolved_model.name,
+                        "name": resolved_model.name,
+                        "id": wandb_run_id,
+                        "resume": "allow",
+                        "tags": wandb_tags,
+                    }
+
+                    try:
+                        wandb_logger = WandbLogger(init_args=wandb_args_dict)
+                    except Exception as e:
+                        logger.warning(f"Failed to initialize wandb logger: {e}")
+                        wandb_logger = None
+
                     for eval_task in evals:
-                        result_filepath = os.path.join(
-                            self.RESULTS_PATH, f"{eval_task.name}_{eval_task.num_fewshot}shot"
-                        )
+                        task_dir_name = f"{eval_task.name}_{eval_task.num_fewshot}shot"
+                        result_filepath = os.path.join(self.RESULTS_PATH, task_dir_name)
+
+                        # Skip tasks whose results already exist on the remote (preemption recovery)
+                        if _task_results_exist_on_remote(task_dir_name):
+                            logger.info(
+                                f"Skipping {task_dir_name}: results already exist at " f"{output_path}/{task_dir_name}"
+                            )
+                            continue
 
                         # Create the output directory
                         output_dir = os.path.dirname(result_filepath)
@@ -143,15 +221,6 @@ class LMEvaluationHarnessEvaluator(Evaluator):
 
                         evaluation_tracker_args = simple_parse_args_string(f",output_path={result_filepath}")
                         evaluation_tracker = EvaluationTracker(**evaluation_tracker_args)
-
-                        wandb_args_dict = {
-                            "project": "marin",
-                            "job_type": "eval",
-                            "name": resolved_model.name,
-                            "tags": wandb_tags,
-                        }
-                        # wandb_config_args_dict = simple_parse_args_string("")
-                        wandb_logger = WandbLogger(init_args=wandb_args_dict)
 
                         results = simple_evaluate(
                             model=lm_eval_model_local,
@@ -164,23 +233,34 @@ class LMEvaluationHarnessEvaluator(Evaluator):
                             limit=max_eval_instances if max_eval_instances is not None else None,
                             evaluation_tracker=evaluation_tracker,
                             log_samples=True,
+                            task_manager=task_manager,
                         )
                         if results is not None:
                             samples = results.pop("samples")
                             evaluation_tracker.save_results_aggregated(results=results, samples=samples)
 
-                            try:
-                                wandb_logger.post_init(results)
-                                wandb_logger.log_eval_result()
-                                wandb_logger.log_eval_samples(samples)
-                                wandb_logger.run.finish()
-                            except Exception as e:
-                                print(f"Logging to Weights and Biases failed due to {e}")
+                            if wandb_logger is not None:
+                                try:
+                                    wandb_logger.post_init(results)
+                                    wandb_logger.log_eval_result()
+                                    wandb_logger.log_eval_samples(samples)
+                                except Exception as e:
+                                    logger.warning(f"Logging to Weights and Biases failed: {e}")
 
                             for task_name in results["configs"].keys():
                                 evaluation_tracker.save_results_samples(task_name=task_name, samples=samples[task_name])
 
                         assert os.path.exists(result_filepath), f"Results file {result_filepath} does not exist."
+
+                        # Upload this task's results immediately (preemption resilience)
+                        _upload_task_results(task_dir_name, result_filepath)
+
+                    # Finish the wandb run after all tasks are done
+                    if wandb_logger is not None:
+                        try:
+                            wandb_logger.run.finish()
+                        except Exception as e:
+                            logger.warning(f"Failed to finish wandb run: {e}")
 
                 if env.model_id is None:
                     raise RuntimeError("vLLM server did not report a model id.")

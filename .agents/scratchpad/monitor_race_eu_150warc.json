@@ -1,7 +1,11 @@
 {
-  "job_id": "ray-run-michaelryan-rephraser_cooldown_150warc_train_eu-20260304-012640",
+  "job_id": "STOPPED - hardware issue",
   "cluster": "eu-west4-a",
   "experiment": "experiments/rephraser/rephraser_cooldown_150warc_train_eu.py",
-  "restart_count": 0,
-  "description": "150-WARC cooldown on eu-west4-a v6e-32, fresh start"
+  "restart_count": 3,
+  "description": "150-WARC cooldown on eu-west4-a v6e-32, fresh start",
+  "last_restart_reason": "BLOCKED: TPU HAL init error on node 10.164.1.112. This node is part of the v6e-32 TPU slice and cannot be avoided. All 3 job submissions have failed with the same error. Cluster admin intervention needed to replace/reset this TPU node.",
+  "last_restart_time": "2026-03-03T20:26:18",
+  "status": "BLOCKED_HARDWARE",
+  "blocked_reason": "Node 10.164.1.112 has persistent TPU HAL init error. Every job attempt crashes because this node is part of the v6e-32 multi-host TPU slice. Needs cluster admin to reset/replace the node or the TPU slice."
 }

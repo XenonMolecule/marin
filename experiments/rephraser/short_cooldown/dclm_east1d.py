@@ -60,8 +60,7 @@ COOLDOWN_1B_PATH = "gs://marin-us-east1/tokenized/nemotron_cooldown_1e20_short_1
 DCLM_TOKENIZED_PATH = "gs://marin-us-east1/tokenized/dclm_baseline_100m_llama3-f42a23"
 
 CHECKPOINT_PATH = (
-    "gs://marin-us-east1/exp2166-scaling-ladder-nemotron-validation-optimal-1e+20-9563f0"
-    "/checkpoints/step-35000"
+    "gs://marin-us-east1/exp2166-scaling-ladder-nemotron-validation-optimal-1e+20-9563f0" "/checkpoints/step-35000"
 )
 
 import experiments.rephraser.rephraser_cooldown as cooldown_module
@@ -101,8 +100,7 @@ dclm_component = DatasetComponent(
 # Validation sets
 validation_steps = default_validation_sets(tokenizer=llama3_tokenizer)
 validation_component_configs = {
-    name: step_to_lm_mixture_component(step, include_raw_paths=False)
-    for name, step in validation_steps.items()
+    name: step_to_lm_mixture_component(step, include_raw_paths=False) for name, step in validation_steps.items()
 }
 
 

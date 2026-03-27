@@ -198,6 +198,7 @@ class DockerVllmServerBackend(VllmServerBackend):
     def stop(self, handle: VllmServerHandle) -> None:
         container_name = handle.docker_container_name
         subprocess.run(["docker", "rm", "-f", container_name], check=False, capture_output=True, text=True)
+        _remove_tpu_lockfile()
 
 
 class NativeVllmServerBackend(VllmServerBackend):
@@ -251,6 +252,26 @@ def _resolve_vllm_backend(
     if mode == "native":
         return NativeVllmServerBackend()
     raise ValueError(f"Unknown vLLM mode {mode!r}; expected 'native' or 'docker'.")
+
+
+_TPU_LOCKFILE = "/tmp/libtpu_lockfile"
+
+
+def _remove_tpu_lockfile() -> None:
+    """Remove the libtpu lockfile if it exists.
+
+    The lockfile is created by libtpu inside Docker containers and persists on
+    the host via the ``-v /tmp:/tmp`` bind mount.  A stale lockfile from a
+    crashed container prevents all subsequent containers on the same node from
+    initialising the TPU backend.
+    """
+    try:
+        os.remove(_TPU_LOCKFILE)
+        logger.info("Removed stale TPU lockfile %s", _TPU_LOCKFILE)
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        logger.warning("Could not remove TPU lockfile %s: %s", _TPU_LOCKFILE, exc)
 
 
 def _is_object_store_path(path: str) -> bool:
@@ -419,8 +440,16 @@ def _pick_free_port(host: str) -> int:
 
 
 def _detect_tpu_environment() -> bool:
-    """Detects whether the TPU environment variable TPU_NAME is set and non-empty."""
-    return bool(os.environ.get("TPU_NAME"))
+    """Detects whether TPU hardware is available.
+
+    Checks TPU_NAME env var first, then falls back to checking for TPU device
+    files (VFIO for v4/v5p, accel for v5e/v6e). The env var alone is unreliable
+    on Ray-managed TPU workers where it may not be set.
+    """
+    if os.environ.get("TPU_NAME"):
+        return True
+    # v4/v5p TPUs use VFIO passthrough; v5e/v6e use accel devices
+    return bool(glob.glob("/dev/vfio/[0-9]*")) or bool(glob.glob("/dev/accel[0-9]*"))
 
 
 def _detect_nvidia_gpu_environment() -> bool:
@@ -618,6 +647,12 @@ def _start_vllm_docker_server(
     resolved_port = port if port is not None else _pick_free_port(host)
     resolved_name = container_name or f"marin-vllm-{uuid.uuid4().hex[:10]}-{resolved_port}"
 
+    # Remove stale TPU lockfile before starting the container. The lockfile is
+    # created by libtpu inside Docker and persists on the host via the /tmp bind
+    # mount. If a previous container crashed without cleanup, the lockfile blocks
+    # TPU initialization for all subsequent containers on this node.
+    _remove_tpu_lockfile()
+
     cmd = _build_docker_run_command(
         image=docker_image,
         model_name_or_path=model_name_or_path,
@@ -696,6 +731,7 @@ def _start_vllm_docker_server(
             time.sleep(poll_interval_seconds)
     except Exception:
         subprocess.run(["docker", "rm", "-f", resolved_name], check=False, capture_output=True, text=True)
+        _remove_tpu_lockfile()
         raise
 
 

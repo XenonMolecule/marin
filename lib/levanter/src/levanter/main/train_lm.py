@@ -194,9 +194,11 @@ def main(config: TrainLmConfig):
                 opt_state = opt_state._replace(count=jnp.zeros_like(opt_state.count))
                 if hasattr(opt_state, "hyperparams_states"):
                     new_hp_states = {
-                        k: v._replace(count=jnp.zeros_like(v.count))
-                        if hasattr(v, "count") and hasattr(v, "_replace")
-                        else v
+                        k: (
+                            v._replace(count=jnp.zeros_like(v.count))
+                            if hasattr(v, "count") and hasattr(v, "_replace")
+                            else v
+                        )
                         for k, v in opt_state.hyperparams_states.items()
                     }
                     opt_state = opt_state._replace(hyperparams_states=new_hp_states)

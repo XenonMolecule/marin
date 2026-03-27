@@ -88,8 +88,7 @@ dclm_download = ExecutorStep(
         gcs_output_path=this_output_path(),
         hf_urls_glob=versioned(
             [
-                "global-shard_01_of_10/local-shard_0_of_10/"
-                "shard_0000000[0-2]_processed.jsonl.zst",
+                "global-shard_01_of_10/local-shard_0_of_10/" "shard_0000000[0-2]_processed.jsonl.zst",
             ]
         ),
         wait_for_completion=True,

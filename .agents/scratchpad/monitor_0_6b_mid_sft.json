@@ -1,6 +1,9 @@
 {
-  "job_id": "ray-run-michaelryan-exp_qwen3_0_6b_rephraser_mid_sft-20260303-144846",
-  "cluster": "us-east5-a",
+  "job_id": "ray-run-michaelryan-exp_qwen3_0_6b_rephraser_mid_sft-20260304-062254",
+  "cluster": "us-central1",
   "experiment": "experiments/exp_qwen3_0_6b_rephraser_mid_sft.py",
-  "restart_count": 1
+  "restart_count": 2,
+  "status": "COMPLETED",
+  "final_checkpoint": "step-9398",
+  "completed_at": "2026-03-05T17:35:57Z"
 }

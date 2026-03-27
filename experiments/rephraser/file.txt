@@ -1,0 +1,2858 @@
+<html id="XF" lang="en-US" dir="LTR" data-xf="2.3" data-app="public" data-template="thread_view" data-container-key="node-12" data-content-key="thread-144425" data-logged-in="false" data-cookie-prefix="xf_" data-csrf="1773781965,53ee11f89b15e855645cdafdc1e56cd1" class="has-js template-thread_view has-no-touchevents has-passiveeventlisteners has-hiddenscroll has-no-overflowanchor has-no-displaymodestandalone has-flexgap has-os-mac has-browser-safari has-pointer-nav"><head>
+	<meta charset="utf-8">
+	<link rel="preload" href="https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/tex-chtml.js" as="script">
+	<link rel="preload" href="https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/output/chtml/fonts/woff-v2/MathJax_Zero.woff" as="font" type="font/woff2" crossorigin="">
+	
+	
+	
+	<title>
+	
+		arithmetic problem | Math Help Forum
+	
+</title>
+
+	<link rel="manifest" crossorigin="use-credentials" href="/webmanifest.php">
+
+	<meta http-equiv="X-UA-Compatible" content="IE=Edge">
+	<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+
+	
+		<meta name="theme-color" content="#2f4456">
+	
+
+	<meta name="apple-mobile-web-app-title" content="Math Forum">
+	
+		<link rel="apple-touch-icon" href="https://mathhelpforum.com/i/math-192.png">
+		
+
+	
+		
+		<meta name="description" content="On the first day, Nabil put  $1 in a big box. Then, each succeeding day, he added to the box exactly twice as many dollars as he did on the previous day. On...">
+		<meta property="og:description" content="On the first day, Nabil put  $1 in a big box. Then, each succeeding day, he added to the box exactly twice as many dollars as he did on the previous day. On which day will Nabil have more than $1000 in his box for the first time?
+
+(A) 8th day (B) 9th day (C) 10th day (D) 11th day (E) 1000th day">
+		<meta property="twitter:description" content="On the first day, Nabil put  $1 in a big box. Then, each succeeding day, he added to the box exactly twice as many dollars as he did on the previous day. On which day will Nabil have more than...">
+	
+	
+		<meta property="og:url" content="https://mathhelpforum.com/t/arithmetic-problem.144425/">
+	
+		<link rel="canonical" href="https://mathhelpforum.com/t/arithmetic-problem.144425/">
+	
+
+	
+		
+	
+	
+	<meta property="og:site_name" content="Math Help Forum">
+
+
+	
+	
+		
+	
+	
+	<meta property="og:type" content="website">
+
+
+	
+	
+		
+	
+	
+	
+		<meta property="og:title" content="arithmetic problem">
+		<meta property="twitter:title" content="arithmetic problem">
+	
+
+
+	
+	
+	
+	
+		
+	
+	
+	
+		<meta property="og:image" content="https://mathhelpforum.com/i/math-900.png">
+		<meta property="twitter:image" content="https://mathhelpforum.com/i/math-900.png">
+		<meta property="twitter:card" content="summary">
+	
+
+
+	
+	
+	
+		<script async="" src="https://sb.scorecardresearch.com/cs/37076962/beacon.js"></script><script async="" src="https://ads.adthrive.com/sites/62a88f35a2fcf777131ac175/ads.min.js?referrer=https%3A%2F%2Fmathhelpforum.com%2Ft%2Farithmetic-problem.144425%2F&amp;cb=43"></script><script async="" src="/jc/gtm.js?_v=3a5848c2"></script>
+	
+	<script>
+		window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments)}gtag("js",new Date);gtag('config','G-1EQ28WBB8E',{'node_id':12,'node_title':'Algebra','thread_id':144425,'thread_title':'arithmetic problem','thread_author':'sri340','user_properties': {
+		
+		'pwa':navigator.standalone||window.matchMedia('(display-mode: standalone), (display-mode: minimal-ui)').matches?1:0,
+		},});
+!function(b,c){"object"==typeof console&&"function"==typeof console.error&&(console.error_old=console.error,console.error=function(){console.error_old.apply(this,arguments);b.gtag("event","exception",{error_type:"console",error_message:arguments[0],fatal:!1})});b.onerror=function(a,d,e){b.gtag("event","exception",{error_type:"javascript",error_message:a,error_location:d,error_line_number:e,fatal:!1})};b.onload=function(){c.querySelectorAll("img").forEach(a=>{a.complete&&0===a.naturalWidth&&b.gtag("event",
+"exception",{error_type:"image",error_message:"not_loaded",error_location:a.src,fatal:!1})})}}(window,document);
+	</script>
+
+
+	
+	
+	
+
+	<link rel="stylesheet" href="/css.php?css=public%3Anormalize.css%2Cpublic%3Afa.css%2Cpublic%3Acore.less%2Cpublic%3Aapp.less&amp;s=11&amp;l=1&amp;d=1770679317&amp;k=fea1bfa21f6315f86436c4bea50be532c2b84cdb">
+
+	<link rel="stylesheet" href="/css.php?css=public%3ACMTV_Math.less&amp;s=11&amp;l=1&amp;d=1770679317&amp;k=997e8fbd42f66691fa02273167208630aac7e051">
+<link rel="stylesheet" href="/css.php?css=public%3Abb_code.less&amp;s=11&amp;l=1&amp;d=1770679317&amp;k=b7e0f6371243f0284706d131b2be468abefa4be3">
+<link rel="stylesheet" href="/css.php?css=public%3Acxf_last_edited_position.less&amp;s=11&amp;l=1&amp;d=1770679317&amp;k=e27a22560200a244c6fe4081203ff1a62f60ae2c">
+<link rel="stylesheet" href="/css.php?css=public%3Alurkers.less&amp;s=11&amp;l=1&amp;d=1770679317&amp;k=9a202ec76ec74399bbd8b9e4851f6fd3d9cda13a">
+<link rel="stylesheet" href="/css.php?css=public%3Amessage.less&amp;s=11&amp;l=1&amp;d=1770679317&amp;k=66a67aba3740247548b85f602e903f6194e07da2">
+<link rel="stylesheet" href="/css.php?css=public%3Astructured_list.less&amp;s=11&amp;l=1&amp;d=1770679317&amp;k=1c1540dacc292386d567b8bcc57fb3309919d49b">
+<link rel="stylesheet" href="/css.php?css=public%3Aextra.less&amp;s=11&amp;l=1&amp;d=1770679317&amp;k=079689dfe27500967b9d1bc9585bd10769a80fd6">
+
+<script>
+	window.MathJax = {
+		loader: {
+			load: ['[tex]/ams', '[tex]/html', '[tex]/enclose', '[tex]/mhchem', '[tex]/physics'],
+			versionWarnings: false
+		},
+		tex: {
+			inlineMath: [['##', '##']],
+			displayMath: [['$$', '$$']],
+			packages: {'[+]': ['ams', 'html', 'enclose', 'mhchem', 'physics']},
+			processEscapes: false,
+			macros: {cf: ["\\ce{#1}", 1]}
+		},
+		options: {
+			skipHtmlTags: ["script", "noscript", "style", "textarea", "pre", "code", "time"],
+			ignoreHtmlClass: "fr-wrapper|fr-view|xfPreview|username|js-editor|codeBlock|bbCodeBlock|bbCodeInlineCode|u-anchorTarget|is-editing|message-attribution|message-userArrow|message-avatar|actionBar|reactionsBar|js-bookmarkText|u-srOnly|js-selectToQuoteEnd",
+			renderActions: {
+				addFormulae: [
+					10,
+					function (doc) {
+						for (const node of document.querySelectorAll("formula")) {
+							const isDisplay = node.getAttribute('display') === 'true';
+							const math = new doc.options.MathItem(node.textContent, doc.inputJax[0], isDisplay);
+							math.display = isDisplay;
+							const text = document.createTextNode("");
+							node.replaceWith(text);
+							math.start = {node: text, delim: "", n: 0};
+							math.end = {node: text, delim: "", n: 0};
+							doc.math.push(math);
+						}
+					},
+					""
+				]
+			}
+		},
+		startup: {
+			typeset: true,
+			ready: () => {
+				MathJax.startup.defaultReady();
+			}
+		}
+	};
+</script>
+
+
+
+	
+		<script src="/js/xf/preamble.min.js?_v=3a5848c2"></script>
+	
+
+	
+	<script src="/js/vendor/vendor-compiled.js?_v=3a5848c2" defer=""></script>
+	<script src="/js/xf/core-compiled.js?_v=3a5848c2" defer=""></script>
+
+	<script>
+		XF.ready(() =>
+		{
+			XF.extendObject(true, XF.config, {
+				// 
+
+				userId: 0,
+				enablePush: true,
+				pushAppServerKey: 'BNjBJx9tV-xpLYBqoPkymZ-KAWQlUO_JPPu8OKkyDkQq8tZE6JLI_NrwzAN34zT3ei-CHysM4WJOr2uKx1gFOa0',
+				url: {
+					fullBase: 'https://mathhelpforum.com/',
+					basePath: '/',
+					css: '/css.php?css=__SENTINEL__&s=11&l=1&d=1770679317',
+					js: '/js/__SENTINEL__?_v=3a5848c2',
+					icon: '/data/local/icons/__VARIANT__.svg?v=1770679322#__NAME__',
+					iconInline: '/styles/fa/__VARIANT__/__NAME__.svg?v=5.15.3',
+					keepAlive: '/login/keep-alive'
+				},
+				cookie: {
+					path: '/',
+					domain: '',
+					prefix: 'xf_',
+					secure: true,
+					consentMode: 'disabled',
+					consented: ["optional","_third_party"]
+				},
+				cacheKey: 'f3ed7234243583f554e27d349fe769c5',
+				csrf: '1773781965,53ee11f89b15e855645cdafdc1e56cd1',
+				js: {"https:\/\/cdn.jsdelivr.net\/npm\/mathjax@3.2.2\/es5\/tex-chtml.js":true},
+				fullJs: false,
+				css: {"public:CMTV_Math.less":true,"public:bb_code.less":true,"public:cxf_last_edited_position.less":true,"public:lurkers.less":true,"public:message.less":true,"public:structured_list.less":true,"public:extra.less":true},
+				time: {
+					now: 1773781965,
+					today: 1773730800,
+					todayDow: 2,
+					tomorrow: 1773817200,
+					yesterday: 1773644400,
+					week: 1773212400,
+					month: 1772352000,
+					year: 1767254400
+				},
+				style: {
+					light: '',
+					dark: '',
+					defaultColorScheme: 'light'
+				},
+				borderSizeFeature: '3px',
+				fontAwesomeWeight: 'r',
+				enableRtnProtect: true,
+				
+				enableFormSubmitSticky: true,
+				imageOptimization: '0',
+				imageOptimizationQuality: 0.85,
+				uploadMaxFilesize: 67108864,
+				uploadMaxWidth: 0,
+				uploadMaxHeight: 0,
+				allowedVideoExtensions: ["m4v","mov","mp4","mp4v","mpeg","mpg","ogv","webm"],
+				allowedAudioExtensions: ["mp3","opus","ogg","wav"],
+				shortcodeToEmoji: true,
+				visitorCounts: {
+					conversations_unread: '0',
+					alerts_unviewed: '0',
+					total_unread: '0',
+					title_count: true,
+					icon_indicator: true
+				},
+				jsMt: {"xf\/action.js":"3a8ff38b","xf\/embed.js":"3a8ff38b","xf\/form.js":"3a8ff38b","xf\/structure.js":"3a8ff38b","xf\/tooltip.js":"3a8ff38b"},
+				jsState: {},
+				publicMetadataLogoUrl: 'https://mathhelpforum.com/i/math-900.png',
+				publicPushBadgeUrl: 'https://mathhelpforum.com/styles/default/xenforo/bell.png'
+			})
+
+			XF.extendObject(XF.phrases, {
+				// 
+"time.day": "{count} day",
+"time.days": "{count} days",
+"time.hour": "{count} hour",
+"time.hours": "{count} hours",
+"time.minute": "{count} minute",
+"time.minutes": "{count} minutes",
+"time.month": "{count} month",
+"time.months": "{count} months",
+"time.second": "{count} second",
+"time.seconds": "{count} seconds",
+"time.week": "time.week",
+"time.weeks": "{count} weeks",
+"time.year": "{count} year",
+"time.years": "{count} years",
+				date_x_at_time_y:     "{date} at {time}",
+				day_x_at_time_y:      "{day} at {time}",
+				yesterday_at_x:       "Yesterday at {time}",
+				x_minutes_ago:        "{minutes} minutes ago",
+				one_minute_ago:       "1 minute ago",
+				a_moment_ago:         "A moment ago",
+				today_at_x:           "Today at {time}",
+				in_a_moment:          "In a moment",
+				in_a_minute:          "In a minute",
+				in_x_minutes:         "In {minutes} minutes",
+				later_today_at_x:     "Later today at {time}",
+				tomorrow_at_x:        "Tomorrow at {time}",
+				short_date_x_minutes: "{minutes}m",
+				short_date_x_hours:   "{hours}h",
+				short_date_x_days:    "{days}d",
+
+				day0: "Sunday",
+				day1: "Monday",
+				day2: "Tuesday",
+				day3: "Wednesday",
+				day4: "Thursday",
+				day5: "Friday",
+				day6: "Saturday",
+
+				dayShort0: "Sun",
+				dayShort1: "Mon",
+				dayShort2: "Tue",
+				dayShort3: "Wed",
+				dayShort4: "Thu",
+				dayShort5: "Fri",
+				dayShort6: "Sat",
+
+				month0: "January",
+				month1: "February",
+				month2: "March",
+				month3: "April",
+				month4: "May",
+				month5: "June",
+				month6: "July",
+				month7: "August",
+				month8: "September",
+				month9: "October",
+				month10: "November",
+				month11: "December",
+
+				active_user_changed_reload_page: "The active user has changed. Reload the page for the latest version.",
+				server_did_not_respond_in_time_try_again: "The server did not respond in time. Please try again.",
+				oops_we_ran_into_some_problems: "To have no errors would be a life without meaning...",
+				oops_we_ran_into_some_problems_more_details_console: "Oops! We ran into some problems. Please try again later. More error details may be in the browser console.",
+				file_too_large_to_upload: "The file is too large to be uploaded.",
+				uploaded_file_is_too_large_for_server_to_process: "The uploaded file is too large for the server to process.",
+				files_being_uploaded_are_you_sure: "Files are still being uploaded. Are you sure you want to submit this form?",
+				attach: "Attach Pictures",
+				rich_text_box: "Rich text box",
+				close: "Close",
+				link_copied_to_clipboard: "Link copied to clipboard.",
+				text_copied_to_clipboard: "Text copied to clipboard.",
+				loading: "Loading…",
+				you_have_exceeded_maximum_number_of_selectable_items: "You have exceeded the maximum number of selectable items.",
+
+				processing: "Processing",
+				'processing...': "Processing…",
+
+				showing_x_of_y_items: "Showing {count} of {total} items",
+				showing_all_items: "Showing all items",
+				no_items_to_display: "No items to display",
+
+				number_button_up: "Increase",
+				number_button_down: "Decrease",
+
+				push_enable_notification_title: "Push notifications enabled successfully at Math Help Forum",
+				push_enable_notification_body: "Thank you for enabling push notifications!",
+
+				pull_down_to_refresh: "Pull down to refresh",
+				release_to_refresh: "Release to refresh",
+				refreshing: "Refreshing…"
+			})
+		})
+	
+window.addEventListener('DOMContentLoaded',()=>{XF.on(document,"xf:reinit",(a)=>{if(a&&typeof(a)==='object'&&Object.prototype.toString.call(a)==='[object Event]'){if(typeof(a.target.querySelectorAll)==='function'){a.target.querySelectorAll(".overlay[data-url]:not([ga])").forEach(b=>{ b.setAttribute('ga',1);gtag("event","page_view",{page_title:b.querySelector(".overlay-title").textContent,page_location:b.getAttribute("data-url")})})}}})});document.querySelectorAll(".file-preview").forEach(filePreview=>{filePreview.addEventListener("click",()=>{gtag('event','file_download',{link_url:(new URL(filePreview.getAttribute("href"),window.location.origin)).href, file_name:filePreview.parentNode.querySelector('.file-name').textContent});});});document.querySelectorAll('.shareButtons-button').forEach(shareButton=>{shareButton.addEventListener('click',()=>{gtag('event','share',{method:shareButton.getAttribute('class').match(/.*shareButtons-button--(.*?)$|\s/)[1]});});});document.querySelectorAll('.bookmarkLink:not(.is-bookmarked)').forEach(bookmarkLink=>{bookmarkLink.addEventListener('click',()=>{gtag('event','bookmark');});});document.querySelectorAll(".js-installPromptButton").forEach(a=>{a.addEventListener("click",()=>{gtag("event","app_install_prompt")})});window.addEventListener("appinstalled",()=>{gtag("event","app_install")});XF.PWA&&XF.PWA.isRunning()&&document.addEventListener("visibilitychange",()=>{"visible"===document.visibilityState&&gtag("event","app_open")});setTimeout(()=>{document.querySelectorAll(".adsbygoogle").forEach(a=>{a.addEventListener("mouseenter",()=>{XF.aH=!0});a.addEventListener("mouseleave",()=>{XF.aH=!1});gtag("event","ads_impression",{ad_platform:"adsense"})});["pagehide","blur"].forEach(function(a){window.addEventListener(a,()=>{XF.aH&&gtag("event","ad_click",{ad_platform:"adsense"})},!1)})},3E3);
+
+
+window.addEventListener('DOMContentLoaded',()=>{XF.Push.updateUserSubscriptionParent=XF.Push.updateUserSubscription;XF.Push.updateUserSubscription=function(b,a){"unsubscribe"===a&&XF.browser.safari&&XF.Push.setPushHistoryUserIds({});XF.Push.updateUserSubscriptionParent(b,a)}});
+</script>
+
+	<script src="https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/tex-chtml.js" defer=""></script>
+<script>
+XF.ready(() =>
+{
+
+
+XF.Andy_MessageManager = XF.extend(XF.QuoteClick, {
+	__backup: {
+		'handleAjax': '_handleAjax'
+	},
+
+	handleAjax: function(data)
+	{
+		var $editor = XF.findRelativeIf(this.options.editor, this.$target);
+
+		data.quoteHtml = data.quoteHtml + '<p></p>';
+		data.quote = data.quote + '\n';
+
+		XF.insertIntoEditor($editor, data.quoteHtml, data.quote);
+	}
+});
+
+XF.Element.register('quote', 'XF.Andy_MessageManager');
+
+
+})
+</script>
+
+
+	
+		<link rel="icon" type="image/png" href="https://mathhelpforum.com/i/mh-fav.png" sizes="32x32">
+	
+	
+	
+	
+		<script data-no-optimize="1" data-cfasync="false">
+(function(w, d) {
+	w.adthrive = w.adthrive || {};
+	w.adthrive.cmd = w.
+	adthrive.cmd || [];
+	w.adthrive.plugin = 'adthrive-ads-manual';
+	w.adthrive.host = 'ads.adthrive.com';var s = d.createElement('script');
+	s.async = true;
+	s.referrerpolicy='no-referrer-when-downgrade';
+	s.src = 'https://' + w.adthrive.host + '/sites/62a88f35a2fcf777131ac175/ads.min.js?referrer=' + w.encodeURIComponent(w.location.href) + '&cb=' + (Math.floor(Math.random() * 100) + 1);
+	var n = d.getElementsByTagName('script')[0];
+	n.parentNode.insertBefore(s, n);
+})(window, document);
+	</script>
+	<script>
+adthrive.cmd.push(function () {
+  var disabledUrls = [
+	'^/$',
+	'/register/',
+    '/login/',
+    '/lost-password/',
+    '/contact/'
+  ];
+  adthrive.disableAds(disabledUrls);
+  adthrive.disablePlaylistPlayers(disabledUrls);
+});
+	</script>
+
+<script>var _comscore=_comscore||[];_comscore.push({c1:"2",c2:"37076962",options:{enableFirstPartyCookie:"true"}});(function(){var s=document.createElement("script"),el=document.getElementsByTagName("script")[0];s.async=true;s.src="https://sb.scorecardresearch.com/cs/37076962/beacon.js";el.parentNode.insertBefore(s,el);})();</script>
+<noscript><img src="https://sb.scorecardresearch.com/p?c1=2&amp;c2=37076962&amp;cv=3.9.1&amp;cj=1"></noscript>
+<script src="https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/input/tex/extensions/html.js" charset="UTF-8"></script><script src="https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/input/tex/extensions/enclose.js" charset="UTF-8"></script><script src="https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/input/tex/extensions/mhchem.js" charset="UTF-8"></script><script src="https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/input/tex/extensions/physics.js" charset="UTF-8"></script><style type="text/css">.CtxtMenu_InfoClose {  top:.2em; right:.2em;}
+.CtxtMenu_InfoContent {  overflow:auto; text-align:left; font-size:80%;  padding:.4em .6em; border:1px inset; margin:1em 0px;  max-height:20em; max-width:30em; background-color:#EEEEEE;  white-space:normal;}
+.CtxtMenu_Info.CtxtMenu_MousePost {outline:none;}
+.CtxtMenu_Info {  position:fixed; left:50%; width:auto; text-align:center;  border:3px outset; padding:1em 2em; background-color:#DDDDDD;  color:black;  cursor:default; font-family:message-box; font-size:120%;  font-style:normal; text-indent:0; text-transform:none;  line-height:normal; letter-spacing:normal; word-spacing:normal;  word-wrap:normal; white-space:nowrap; float:none; z-index:201;  border-radius: 15px;                     /* Opera 10.5 and IE9 */  -webkit-border-radius:15px;               /* Safari and Chrome */  -moz-border-radius:15px;                  /* Firefox */  -khtml-border-radius:15px;                /* Konqueror */  box-shadow:0px 10px 20px #808080;         /* Opera 10.5 and IE9 */  -webkit-box-shadow:0px 10px 20px #808080; /* Safari 3 & Chrome */  -moz-box-shadow:0px 10px 20px #808080;    /* Forefox 3.5 */  -khtml-box-shadow:0px 10px 20px #808080;  /* Konqueror */  filter:progid:DXImageTransform.Microsoft.dropshadow(OffX=2, OffY=2, Color="gray", Positive="true"); /* IE */}
+</style><style type="text/css">.CtxtMenu_MenuClose {  position:absolute;  cursor:pointer;  display:inline-block;  border:2px solid #AAA;  border-radius:18px;  -webkit-border-radius: 18px;             /* Safari and Chrome */  -moz-border-radius: 18px;                /* Firefox */  -khtml-border-radius: 18px;              /* Konqueror */  font-family: "Courier New", Courier;  font-size:24px;  color:#F0F0F0}
+.CtxtMenu_MenuClose span {  display:block; background-color:#AAA; border:1.5px solid;  border-radius:18px;  -webkit-border-radius: 18px;             /* Safari and Chrome */  -moz-border-radius: 18px;                /* Firefox */  -khtml-border-radius: 18px;              /* Konqueror */  line-height:0;  padding:8px 0 6px     /* may need to be browser-specific */}
+.CtxtMenu_MenuClose:hover {  color:white!important;  border:2px solid #CCC!important}
+.CtxtMenu_MenuClose:hover span {  background-color:#CCC!important}
+.CtxtMenu_MenuClose:hover:focus {  outline:none}
+</style><style type="text/css">.CtxtMenu_Menu {  position:absolute;  background-color:white;  color:black;  width:auto; padding:5px 0px;  border:1px solid #CCCCCC; margin:0; cursor:default;  font: menu; text-align:left; text-indent:0; text-transform:none;  line-height:normal; letter-spacing:normal; word-spacing:normal;  word-wrap:normal; white-space:nowrap; float:none; z-index:201;  border-radius: 5px;                     /* Opera 10.5 and IE9 */  -webkit-border-radius: 5px;             /* Safari and Chrome */  -moz-border-radius: 5px;                /* Firefox */  -khtml-border-radius: 5px;              /* Konqueror */  box-shadow:0px 10px 20px #808080;         /* Opera 10.5 and IE9 */  -webkit-box-shadow:0px 10px 20px #808080; /* Safari 3 & Chrome */  -moz-box-shadow:0px 10px 20px #808080;    /* Forefox 3.5 */  -khtml-box-shadow:0px 10px 20px #808080;  /* Konqueror */}
+.CtxtMenu_MenuItem {  padding: 1px 2em;  background:transparent;}
+.CtxtMenu_MenuArrow {  position:absolute; right:.5em; padding-top:.25em; color:#666666;  font-family: null; font-size: .75em}
+.CtxtMenu_MenuActive .CtxtMenu_MenuArrow {color:white}
+.CtxtMenu_MenuArrow.CtxtMenu_RTL {left:.5em; right:auto}
+.CtxtMenu_MenuCheck {  position:absolute; left:.7em;  font-family: null}
+.CtxtMenu_MenuCheck.CtxtMenu_RTL { right:.7em; left:auto }
+.CtxtMenu_MenuRadioCheck {  position:absolute; left: .7em;}
+.CtxtMenu_MenuRadioCheck.CtxtMenu_RTL {  right: .7em; left:auto}
+.CtxtMenu_MenuInputBox {  padding-left: 1em; right:.5em; color:#666666;  font-family: null;}
+.CtxtMenu_MenuInputBox.CtxtMenu_RTL {  left: .1em;}
+.CtxtMenu_MenuComboBox {  left:.1em; padding-bottom:.5em;}
+.CtxtMenu_MenuSlider {  left: .1em;}
+.CtxtMenu_SliderValue {  position:absolute; right:.1em; padding-top:.25em; color:#333333;  font-size: .75em}
+.CtxtMenu_SliderBar {  outline: none; background: #d3d3d3}
+.CtxtMenu_MenuLabel {  padding: 1px 2em 3px 1.33em;  font-style:italic}
+.CtxtMenu_MenuRule {  border-top: 1px solid #DDDDDD;  margin: 4px 3px;}
+.CtxtMenu_MenuDisabled {  color:GrayText}
+.CtxtMenu_MenuActive {  background-color: #606872;  color: white;}
+.CtxtMenu_MenuDisabled:focus {  background-color: #E8E8E8}
+.CtxtMenu_MenuLabel:focus {  background-color: #E8E8E8}
+.CtxtMenu_ContextMenu:focus {  outline:none}
+.CtxtMenu_ContextMenu .CtxtMenu_MenuItem:focus {  outline:none}
+.CtxtMenu_SelectionMenu {  position:relative; float:left;  border-bottom: none; -webkit-box-shadow:none; -webkit-border-radius:0px; }
+.CtxtMenu_SelectionItem {  padding-right: 1em;}
+.CtxtMenu_Selection {  right: 40%; width:50%; }
+.CtxtMenu_SelectionBox {  padding: 0em; max-height:20em; max-width: none;  background-color:#FFFFFF;}
+.CtxtMenu_SelectionDivider {  clear: both; border-top: 2px solid #000000;}
+.CtxtMenu_Menu .CtxtMenu_MenuClose {  top:-10px; left:-10px}
+</style><style id="MJX-CHTML-styles">
+mjx-container[jax="CHTML"] {
+  line-height: 0;
+}
+
+mjx-container [space="1"] {
+  margin-left: .111em;
+}
+
+mjx-container [space="2"] {
+  margin-left: .167em;
+}
+
+mjx-container [space="3"] {
+  margin-left: .222em;
+}
+
+mjx-container [space="4"] {
+  margin-left: .278em;
+}
+
+mjx-container [space="5"] {
+  margin-left: .333em;
+}
+
+mjx-container [rspace="1"] {
+  margin-right: .111em;
+}
+
+mjx-container [rspace="2"] {
+  margin-right: .167em;
+}
+
+mjx-container [rspace="3"] {
+  margin-right: .222em;
+}
+
+mjx-container [rspace="4"] {
+  margin-right: .278em;
+}
+
+mjx-container [rspace="5"] {
+  margin-right: .333em;
+}
+
+mjx-container [size="s"] {
+  font-size: 70.7%;
+}
+
+mjx-container [size="ss"] {
+  font-size: 50%;
+}
+
+mjx-container [size="Tn"] {
+  font-size: 60%;
+}
+
+mjx-container [size="sm"] {
+  font-size: 85%;
+}
+
+mjx-container [size="lg"] {
+  font-size: 120%;
+}
+
+mjx-container [size="Lg"] {
+  font-size: 144%;
+}
+
+mjx-container [size="LG"] {
+  font-size: 173%;
+}
+
+mjx-container [size="hg"] {
+  font-size: 207%;
+}
+
+mjx-container [size="HG"] {
+  font-size: 249%;
+}
+
+mjx-container [width="full"] {
+  width: 100%;
+}
+
+mjx-box {
+  display: inline-block;
+}
+
+mjx-block {
+  display: block;
+}
+
+mjx-itable {
+  display: inline-table;
+}
+
+mjx-row {
+  display: table-row;
+}
+
+mjx-row > * {
+  display: table-cell;
+}
+
+mjx-mtext {
+  display: inline-block;
+}
+
+mjx-mstyle {
+  display: inline-block;
+}
+
+mjx-merror {
+  display: inline-block;
+  color: red;
+  background-color: yellow;
+}
+
+mjx-mphantom {
+  visibility: hidden;
+}
+
+_::-webkit-full-page-media, _:future, :root mjx-container {
+  will-change: opacity;
+}
+
+mjx-assistive-mml {
+  position: absolute !important;
+  top: 0px;
+  left: 0px;
+  clip: rect(1px, 1px, 1px, 1px);
+  padding: 1px 0px 0px 0px !important;
+  border: 0px !important;
+  display: block !important;
+  width: auto !important;
+  overflow: hidden !important;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  -khtml-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  user-select: none;
+}
+
+mjx-assistive-mml[display="block"] {
+  width: 100% !important;
+}
+
+mjx-c::before {
+  display: block;
+  width: 0;
+}
+
+.MJX-TEX {
+  font-family: MJXZERO, MJXTEX;
+}
+
+.TEX-B {
+  font-family: MJXZERO, MJXTEX-B;
+}
+
+.TEX-I {
+  font-family: MJXZERO, MJXTEX-I;
+}
+
+.TEX-MI {
+  font-family: MJXZERO, MJXTEX-MI;
+}
+
+.TEX-BI {
+  font-family: MJXZERO, MJXTEX-BI;
+}
+
+.TEX-S1 {
+  font-family: MJXZERO, MJXTEX-S1;
+}
+
+.TEX-S2 {
+  font-family: MJXZERO, MJXTEX-S2;
+}
+
+.TEX-S3 {
+  font-family: MJXZERO, MJXTEX-S3;
+}
+
+.TEX-S4 {
+  font-family: MJXZERO, MJXTEX-S4;
+}
+
+.TEX-A {
+  font-family: MJXZERO, MJXTEX-A;
+}
+
+.TEX-C {
+  font-family: MJXZERO, MJXTEX-C;
+}
+
+.TEX-CB {
+  font-family: MJXZERO, MJXTEX-CB;
+}
+
+.TEX-FR {
+  font-family: MJXZERO, MJXTEX-FR;
+}
+
+.TEX-FRB {
+  font-family: MJXZERO, MJXTEX-FRB;
+}
+
+.TEX-SS {
+  font-family: MJXZERO, MJXTEX-SS;
+}
+
+.TEX-SSB {
+  font-family: MJXZERO, MJXTEX-SSB;
+}
+
+.TEX-SSI {
+  font-family: MJXZERO, MJXTEX-SSI;
+}
+
+.TEX-SC {
+  font-family: MJXZERO, MJXTEX-SC;
+}
+
+.TEX-T {
+  font-family: MJXZERO, MJXTEX-T;
+}
+
+.TEX-V {
+  font-family: MJXZERO, MJXTEX-V;
+}
+
+.TEX-VB {
+  font-family: MJXZERO, MJXTEX-VB;
+}
+
+mjx-stretchy-v mjx-c, mjx-stretchy-h mjx-c {
+  font-family: MJXZERO, MJXTEX-S1, MJXTEX-S4, MJXTEX, MJXTEX-A ! important;
+}
+
+@font-face /* 0 */ {
+  font-family: MJXZERO;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/output/chtml/fonts/woff-v2/MathJax_Zero.woff") format("woff");
+}
+
+@font-face /* 1 */ {
+  font-family: MJXTEX;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/output/chtml/fonts/woff-v2/MathJax_Main-Regular.woff") format("woff");
+}
+
+@font-face /* 2 */ {
+  font-family: MJXTEX-B;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/output/chtml/fonts/woff-v2/MathJax_Main-Bold.woff") format("woff");
+}
+
+@font-face /* 3 */ {
+  font-family: MJXTEX-I;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/output/chtml/fonts/woff-v2/MathJax_Math-Italic.woff") format("woff");
+}
+
+@font-face /* 4 */ {
+  font-family: MJXTEX-MI;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/output/chtml/fonts/woff-v2/MathJax_Main-Italic.woff") format("woff");
+}
+
+@font-face /* 5 */ {
+  font-family: MJXTEX-BI;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/output/chtml/fonts/woff-v2/MathJax_Math-BoldItalic.woff") format("woff");
+}
+
+@font-face /* 6 */ {
+  font-family: MJXTEX-S1;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/output/chtml/fonts/woff-v2/MathJax_Size1-Regular.woff") format("woff");
+}
+
+@font-face /* 7 */ {
+  font-family: MJXTEX-S2;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/output/chtml/fonts/woff-v2/MathJax_Size2-Regular.woff") format("woff");
+}
+
+@font-face /* 8 */ {
+  font-family: MJXTEX-S3;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/output/chtml/fonts/woff-v2/MathJax_Size3-Regular.woff") format("woff");
+}
+
+@font-face /* 9 */ {
+  font-family: MJXTEX-S4;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/output/chtml/fonts/woff-v2/MathJax_Size4-Regular.woff") format("woff");
+}
+
+@font-face /* 10 */ {
+  font-family: MJXTEX-A;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/output/chtml/fonts/woff-v2/MathJax_AMS-Regular.woff") format("woff");
+}
+
+@font-face /* 11 */ {
+  font-family: MJXTEX-C;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/output/chtml/fonts/woff-v2/MathJax_Calligraphic-Regular.woff") format("woff");
+}
+
+@font-face /* 12 */ {
+  font-family: MJXTEX-CB;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/output/chtml/fonts/woff-v2/MathJax_Calligraphic-Bold.woff") format("woff");
+}
+
+@font-face /* 13 */ {
+  font-family: MJXTEX-FR;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/output/chtml/fonts/woff-v2/MathJax_Fraktur-Regular.woff") format("woff");
+}
+
+@font-face /* 14 */ {
+  font-family: MJXTEX-FRB;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/output/chtml/fonts/woff-v2/MathJax_Fraktur-Bold.woff") format("woff");
+}
+
+@font-face /* 15 */ {
+  font-family: MJXTEX-SS;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/output/chtml/fonts/woff-v2/MathJax_SansSerif-Regular.woff") format("woff");
+}
+
+@font-face /* 16 */ {
+  font-family: MJXTEX-SSB;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/output/chtml/fonts/woff-v2/MathJax_SansSerif-Bold.woff") format("woff");
+}
+
+@font-face /* 17 */ {
+  font-family: MJXTEX-SSI;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/output/chtml/fonts/woff-v2/MathJax_SansSerif-Italic.woff") format("woff");
+}
+
+@font-face /* 18 */ {
+  font-family: MJXTEX-SC;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/output/chtml/fonts/woff-v2/MathJax_Script-Regular.woff") format("woff");
+}
+
+@font-face /* 19 */ {
+  font-family: MJXTEX-T;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/output/chtml/fonts/woff-v2/MathJax_Typewriter-Regular.woff") format("woff");
+}
+
+@font-face /* 20 */ {
+  font-family: MJXTEX-V;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/output/chtml/fonts/woff-v2/MathJax_Vector-Regular.woff") format("woff");
+}
+
+@font-face /* 21 */ {
+  font-family: MJXTEX-VB;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/output/chtml/fonts/woff-v2/MathJax_Vector-Bold.woff") format("woff");
+}
+</style><script src="/js/xf/action.min.js?_v=3a5848c2_mt=undefined"></script><script src="/js/xf/tooltip.min.js?_v=3a5848c2_mt=undefined"></script></head>
+<body data-template="thread_view">
+
+<div class="p-pageWrapper" id="top">
+
+	
+
+	<header class="p-header" id="header">
+		<div class="p-header-inner">
+			<div class="p-header-content">
+				<div class="p-header-logo">
+					<a href="/" class="logo-desktop" title="Math Help Forum" aria-label="Math Help Forum">Math Help Forum</a>
+				</div>
+				
+			</div>
+		</div>
+	</header>
+
+	
+	
+
+	
+		<div class="p-navSticky p-navSticky--primary" data-xf-init="sticky-header">
+			
+		<nav class="p-nav">
+			<div class="p-nav-inner">
+				<button type="button" class="button button--plain p-nav-menuTrigger" data-xf-click="off-canvas" data-menu=".js-headerOffCanvasMenu" tabindex="0" aria-label="Menu"><span class="button-text">
+					<i aria-hidden="true"></i>
+				</span></button>
+				<div class="p-nav-smallLogo">
+					<a href="/" class="logo-mobile" title="Math Help Forum" aria-label="Math Help Forum">MHF</a>
+				</div>
+				<div class="p-nav-scroller hScroller" data-xf-init="h-scroller" data-auto-scroll=".p-navEl.is-selected">
+					<div class="hScroller-scroll is-calculated">
+						<ul class="p-nav-list js-offCanvasNavSource">
+							
+								<li>
+									
+	<div class="p-navEl " data-has-children="true">
+	
+
+		
+	
+	<a href="/" class="p-navEl-link p-navEl-link--splitMenu " data-nav-id="home">Home</a>
+
+
+		<a data-xf-key="1" data-xf-click="menu" data-menu-pos-ref="&lt; .p-navEl" class="p-navEl-splitTrigger" role="button" tabindex="0" aria-label="Toggle expanded" aria-expanded="false" aria-haspopup="true"></a>
+
+		
+	
+		<div class="menu menu--structural" data-menu="menu" aria-hidden="true">
+			<div class="menu-content">
+				
+					
+	
+	
+	<a href="/algebra/" class="menu-linkRow u-indentDepth0 js-offCanvasCopy " data-nav-id="Algebra">Algebra</a>
+
+	
+
+				
+					
+	
+	
+	<a href="/precalculus/" class="menu-linkRow u-indentDepth0 js-offCanvasCopy " data-nav-id="PreCalculus">Pre-Calculus</a>
+
+	
+
+				
+					
+	
+	
+	<a href="/geometry/" class="menu-linkRow u-indentDepth0 js-offCanvasCopy " data-nav-id="Geometry">Geometry</a>
+
+	
+
+				
+					
+	
+	
+	<a href="/trigonometry/" class="menu-linkRow u-indentDepth0 js-offCanvasCopy " data-nav-id="Trigonometry">Trigonometry</a>
+
+	
+
+				
+					
+	
+	
+	<a href="/calculus/" class="menu-linkRow u-indentDepth0 js-offCanvasCopy " data-nav-id="Calculus">Calculus</a>
+
+	
+
+				
+					
+	
+	
+	<a href="/advanced-algebra/" class="menu-linkRow u-indentDepth0 js-offCanvasCopy " data-nav-id="AAlgebra">Advanced Algebra</a>
+
+	
+
+				
+					
+	
+	
+	<a href="/discrete-math/" class="menu-linkRow u-indentDepth0 js-offCanvasCopy " data-nav-id="DMath">Discrete Math</a>
+
+	
+
+				
+					
+	
+	
+	<a href="/differential-geometry/" class="menu-linkRow u-indentDepth0 js-offCanvasCopy " data-nav-id="DGeometry">Differential Geometry</a>
+
+	
+
+				
+					
+	
+	
+	<a href="/differential-equations/" class="menu-linkRow u-indentDepth0 js-offCanvasCopy " data-nav-id="DiffEq">Differential Equations</a>
+
+	
+
+				
+					
+	
+	
+	<a href="/number-theory/" class="menu-linkRow u-indentDepth0 js-offCanvasCopy " data-nav-id="NumberTheory">Number Theory</a>
+
+	
+
+				
+					
+	
+	
+	<a href="/advanced-probability-statistics/" class="menu-linkRow u-indentDepth0 js-offCanvasCopy " data-nav-id="StatsProb">Statistics &amp; Probability</a>
+
+	
+
+				
+					
+	
+	
+	<a href="/business-math/" class="menu-linkRow u-indentDepth0 js-offCanvasCopy " data-nav-id="BusinessMath">Business Math</a>
+
+	
+
+				
+					
+	
+	
+	<a href="/math-challenge-problems/" class="menu-linkRow u-indentDepth0 js-offCanvasCopy " data-nav-id="Problems">Challenge Problems</a>
+
+	
+
+				
+					
+	
+	
+	<a href="/math-software/" class="menu-linkRow u-indentDepth0 js-offCanvasCopy " data-nav-id="Software">Math Software</a>
+
+	
+
+				
+			</div>
+		</div>
+	
+	</div>
+
+								</li>
+							
+								<li>
+									
+	<div class="p-navEl is-selected" data-has-children="true">
+	
+
+		
+	
+	<a href="/community/" class="p-navEl-link p-navEl-link--splitMenu " data-nav-id="forums">Forums</a>
+
+
+		<a data-xf-key="2" data-xf-click="menu" data-menu-pos-ref="&lt; .p-navEl" class="p-navEl-splitTrigger" role="button" tabindex="0" aria-label="Toggle expanded" aria-expanded="false" aria-haspopup="true"></a>
+
+		
+	
+		<div class="menu menu--structural" data-menu="menu" aria-hidden="true">
+			<div class="menu-content">
+				
+					
+	
+	
+	<a href="/high-school-math/" class="menu-linkRow u-indentDepth0 js-offCanvasCopy " data-nav-id="high_school_math">High School Math Help</a>
+
+	
+
+				
+					
+	
+	
+	<a href="/high-school-stem/" class="menu-linkRow u-indentDepth0 js-offCanvasCopy " data-nav-id="academics">High School STEM</a>
+
+	
+
+				
+					
+	
+	
+	<a href="/university-math/" class="menu-linkRow u-indentDepth0 js-offCanvasCopy " data-nav-id="university_math">University Math Homework Help</a>
+
+	
+
+				
+					
+	
+	
+	<a href="/university-stem/" class="menu-linkRow u-indentDepth0 js-offCanvasCopy " data-nav-id="mathematics">University STEM</a>
+
+	
+
+				
+					
+	
+	
+	<a href="/general-math/" class="menu-linkRow u-indentDepth0 js-offCanvasCopy " data-nav-id="generalMath">General Mathematics</a>
+
+	
+
+				
+					
+	
+	
+	<a href="/s/?type=post" class="menu-linkRow u-indentDepth0 js-offCanvasCopy " data-nav-id="searchForums">Search forums</a>
+
+	
+
+				
+			</div>
+		</div>
+	
+	</div>
+
+								</li>
+							
+								<li>
+									
+	<div class="p-navEl ">
+	
+
+		
+	
+	<a href="/trending/" class="p-navEl-link " data-xf-key="3" data-nav-id="thtrending">Trending</a>
+
+
+		
+
+		
+	
+	</div>
+
+								</li>
+							
+								<li>
+									
+	<div class="p-navEl ">
+	
+
+		
+	
+	<a href="https://physicsforum.com" class="p-navEl-link " target="_blank" data-xf-key="4" data-nav-id="physics">Physics</a>
+
+
+		
+
+		
+	
+	</div>
+
+								</li>
+							
+								<li>
+									
+	<div class="p-navEl ">
+	
+
+		
+	
+	<a href="https://chemistryforum.com" class="p-navEl-link " target="_blank" data-xf-key="5" data-nav-id="chemistry">Chemistry</a>
+
+
+		
+
+		
+	
+	</div>
+
+								</li>
+							
+						</ul>
+					</div><i class="hScroller-action hScroller-action--end" aria-hidden="true"></i><i class="hScroller-action hScroller-action--start" aria-hidden="true"></i>
+				</div>
+
+				<div class="p-nav-opposite">
+					<div class="p-navgroup p-account p-navgroup--guest">
+						
+							<a href="/login/" class="p-navgroup-link p-navgroup-link--textual p-navgroup-link--logIn" data-follow-redirects="on">
+								<span class="p-navgroup-linkText">Login</span>
+							</a>
+							
+								<a href="/register/" class="p-navgroup-link p-navgroup-link--textual p-navgroup-link--register" data-follow-redirects="on">
+									<span class="p-navgroup-linkText">Register</span>
+								</a>
+							
+						
+					</div>
+
+					<div class="p-navgroup p-discovery">
+						<a href="/whats-new/" class="p-navgroup-link p-navgroup-link--iconic p-navgroup-link--whatsnew" aria-label="What's new" title="What's new">
+							<i aria-hidden="true"></i>
+							<span class="p-navgroup-linkText">What's new</span>
+						</a>
+
+						
+							<a href="/s/" class="p-navgroup-link p-navgroup-link--iconic p-navgroup-link--search" data-xf-click="menu" data-xf-key="/" aria-label="Search" aria-expanded="false" aria-haspopup="true" title="Search">
+								<i aria-hidden="true"></i>
+								<span class="p-navgroup-linkText">Search</span>
+							</a>
+							<div class="menu menu--structural menu--wide" data-menu="menu" aria-hidden="true">
+								<form action="/s/search" method="post" class="menu-content" data-xf-init="quick-search">
+
+									<h3 class="menu-header">Search</h3>
+									
+									<div class="menu-row">
+										
+											<div class="inputGroup inputGroup--joined">
+												<input type="text" class="input" name="keywords" data-acurl="/s/auto-complete" placeholder="Search…" aria-label="Search" data-menu-autofocus="true">
+												
+			<select name="constraints" class="js-quickSearch-constraint input" aria-label="Search within" style="width: 111px; flex-grow: 0; flex-shrink: 0;">
+				<option value="">Everywhere</option>
+<option value="{&quot;search_type&quot;:&quot;post&quot;}">Threads</option>
+<option value="{&quot;search_type&quot;:&quot;post&quot;,&quot;c&quot;:{&quot;nodes&quot;:[12],&quot;child_nodes&quot;:1}}">This forum</option>
+<option value="{&quot;search_type&quot;:&quot;post&quot;,&quot;c&quot;:{&quot;thread&quot;:144425}}">This thread</option>
+
+			</select>
+		
+											</div>
+										
+									</div>
+
+									
+									<div class="menu-row">
+										<label class="iconic"><input type="checkbox" name="c[title_only]" value="1"><i aria-hidden="true"></i><span class="iconic-label">Search titles only</span></label>
+
+									</div>
+									
+									<div class="menu-row">
+										<div class="inputGroup">
+											<span class="inputGroup-text" id="ctrl_search_menu_by_member">By:</span>
+											<input type="text" class="input" name="c[users]" data-xf-init="auto-complete" placeholder="Member" aria-labelledby="ctrl_search_menu_by_member" autocomplete="off">
+										</div>
+									</div>
+									<div class="menu-footer">
+									<span class="menu-footer-controls">
+										<button type="submit" class="button button--icon button--icon--search button--primary"><i class="fa--xf far fa-search "><svg xmlns="http://www.w3.org/2000/svg" role="img" aria-hidden="true"><use href="/data/local/icons/regular.svg?v=1770679322#search"></use></svg></i><span class="button-text">Search</span></button>
+										<button type="submit" class="button " name="from_search_menu"><span class="button-text">Advanced search</span></button>
+									</span>
+									</div>
+
+									<input type="hidden" name="_xfToken" value="1773781965,53ee11f89b15e855645cdafdc1e56cd1">
+								</form>
+							</div>
+						
+					</div>
+				</div>
+			</div>
+		</nav>
+	
+		</div>
+		
+		
+			<div class="p-sectionLinks">
+				<div class="p-sectionLinks-inner hScroller" data-xf-init="h-scroller">
+					<div class="hScroller-scroll is-calculated">
+						<ul class="p-sectionLinks-list">
+							
+								<li>
+									
+	<div class="p-navEl ">
+	
+
+		
+	
+	<a href="/high-school-math/" class="p-navEl-link " data-xf-key="alt+1" data-nav-id="high_school_math">High School Math Help</a>
+
+
+		
+
+		
+	
+	</div>
+
+								</li>
+							
+								<li>
+									
+	<div class="p-navEl ">
+	
+
+		
+	
+	<a href="/high-school-stem/" class="p-navEl-link " data-xf-key="alt+2" data-nav-id="academics">High School STEM</a>
+
+
+		
+
+		
+	
+	</div>
+
+								</li>
+							
+								<li>
+									
+	<div class="p-navEl ">
+	
+
+		
+	
+	<a href="/university-math/" class="p-navEl-link " data-xf-key="alt+3" data-nav-id="university_math">University Math Homework Help</a>
+
+
+		
+
+		
+	
+	</div>
+
+								</li>
+							
+								<li>
+									
+	<div class="p-navEl ">
+	
+
+		
+	
+	<a href="/university-stem/" class="p-navEl-link " data-xf-key="alt+4" data-nav-id="mathematics">University STEM</a>
+
+
+		
+
+		
+	
+	</div>
+
+								</li>
+							
+								<li>
+									
+	<div class="p-navEl ">
+	
+
+		
+	
+	<a href="/general-math/" class="p-navEl-link " data-xf-key="alt+5" data-nav-id="generalMath">General Mathematics</a>
+
+
+		
+
+		
+	
+	</div>
+
+								</li>
+							
+								<li>
+									
+	<div class="p-navEl ">
+	
+
+		
+	
+	<a href="/s/?type=post" class="p-navEl-link " data-xf-key="alt+6" data-nav-id="searchForums">Search forums</a>
+
+
+		
+
+		
+	
+	</div>
+
+								</li>
+							
+						</ul>
+					</div><i class="hScroller-action hScroller-action--end" aria-hidden="true"></i><i class="hScroller-action hScroller-action--start" aria-hidden="true"></i>
+				</div>
+			</div>
+			
+	
+		
+
+	<div class="offCanvasMenu offCanvasMenu--nav js-headerOffCanvasMenu" data-menu="menu" aria-hidden="true" data-ocm-builder="navigation">
+		<div class="offCanvasMenu-backdrop" data-menu-close="true"></div>
+		<div class="offCanvasMenu-content">
+			<div class="offCanvasMenu-header">
+				Math Help Forum
+				<a class="offCanvasMenu-closer" data-menu-close="true" role="button" tabindex="0" aria-label="Close"></a>
+			</div>
+			
+			
+			<div class="js-offCanvasNavTarget"></div>
+		</div>
+	</div>
+
+	<div class="p-body">
+		<div class="p-body-inner">
+			<!--XF:EXTRA_OUTPUT-->
+
+			
+
+			
+
+			
+			
+	
+		<ul class="p-breadcrumbs " itemscope="" itemtype="https://schema.org/BreadcrumbList">
+			
+				
+
+				
+				
+
+				
+					
+					
+	<li itemprop="itemListElement" itemscope="" itemtype="https://schema.org/ListItem">
+		<a href="/" itemprop="item">
+			<span itemprop="name">Home</span>
+		</a>
+		<meta itemprop="position" content="1">
+	</li>
+
+				
+
+				
+					
+					
+	<li itemprop="itemListElement" itemscope="" itemtype="https://schema.org/ListItem">
+		<a href="/community/" itemprop="item">
+			<span itemprop="name">Forums</span>
+		</a>
+		<meta itemprop="position" content="2">
+	</li>
+
+				
+				
+					
+					
+	<li itemprop="itemListElement" itemscope="" itemtype="https://schema.org/ListItem">
+		<a href="/high-school-math/" itemprop="item">
+			<span itemprop="name">High School Math</span>
+		</a>
+		<meta itemprop="position" content="3">
+	</li>
+
+				
+					
+					
+	<li itemprop="itemListElement" itemscope="" itemtype="https://schema.org/ListItem">
+		<a href="/algebra/" itemprop="item">
+			<span itemprop="name">Algebra</span>
+		</a>
+		<meta itemprop="position" content="4">
+	</li>
+
+				
+			
+		</ul>
+	
+
+			
+
+
+
+			
+	
+
+			
+	
+
+
+			
+				<div class="p-body-header">
+					
+						
+							<div class="p-title ">
+								
+									
+										<h1 class="p-title-value">arithmetic problem</h1>
+									
+									
+								
+							</div>
+						
+
+						
+							<div class="p-description">
+	
+	<ul class="listInline listInline--bullet">
+		<li>
+			<i class="fa--xf far fa-at "><svg xmlns="http://www.w3.org/2000/svg" role="img"><title>Thread starter</title><use href="/data/local/icons/regular.svg?v=1770679322#at"></use></svg></i>
+			<span class="u-srOnly">Thread starter</span>
+
+			<a href="/u/sri340.8872/" class="username  u-concealed" dir="auto" data-user-id="8872" data-xf-init="member-tooltip" id="js-XFUniqueId1">sri340</a>
+		</li>
+		<li>
+			<i class="fa--xf far fa-clock "><svg xmlns="http://www.w3.org/2000/svg" role="img"><title>Start date</title><use href="/data/local/icons/regular.svg?v=1770679322#clock"></use></svg></i>
+			<span class="u-srOnly">Start date</span>
+
+			<a href="/t/arithmetic-problem.144425/" class="u-concealed"><time class="u-dt" dir="auto" datetime="2010-05-12T17:34:15-0700" data-timestamp="1273710855" data-date="May 12, 2010" data-time="5:34 PM" data-short="May '10" title="May 12, 2010 at 5:34 PM">May 12, 2010</time></a>
+		</li>
+		
+		
+
+
+			<li>
+				
+
+	
+
+	<dl class="tagList tagList--thread-144425 ">
+		<dt>
+			
+				
+		<i class="fa--xf far fa-hashtag "><svg xmlns="http://www.w3.org/2000/svg" role="img"><title>Tags</title><use href="/data/local/icons/regular.svg?v=1770679322#hashtag"></use></svg></i>
+		<span class="u-srOnly">Tags</span>
+	
+			
+		</dt>
+		<dd>
+			<span class="js-tagList">
+				
+					
+						<a href="/topics/arithmetic/" class="tagItem tagItem--tag_arithmetic" dir="auto">
+							arithmetic
+						</a>
+					
+						<a href="/topics/problem/" class="tagItem tagItem--tag_problem" dir="auto">
+							problem
+						</a>
+					
+				
+			</span>
+		</dd>
+	</dl>
+
+
+			</li>
+
+
+		
+	</ul>
+</div>
+						
+					
+				</div>
+			
+
+			<div class="p-body-main p-body-main--withSidebar ">
+				
+				<div class="p-body-contentCol"></div>
+				
+					<div class="p-body-sidebarCol"></div>
+				
+
+				
+
+				<div class="p-body-content">
+					
+					<div class="p-body-pageContent">
+
+
+
+
+
+
+
+
+
+
+	
+	
+	
+		
+	
+	
+	
+
+
+	
+	
+	
+		
+	
+	
+	
+
+
+	
+	
+		
+	
+	
+	
+
+
+	
+	
+
+
+
+	
+
+
+
+
+
+
+
+
+
+
+
+
+	
+
+	
+		
+		
+	
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<div class="block block--messages" data-xf-init="" data-type="post" data-href="/inline-mod/" data-search-target="*">
+
+	<span class="u-anchorTarget" id="posts"></span>
+
+	
+		
+	
+
+	
+
+	<div class="block-outer"></div>
+
+	
+
+	
+		
+	<div class="block-outer js-threadStatusField"></div>
+
+	
+
+	<div class="block-container lbContainer" data-xf-init="lightbox" data-message-selector=".js-post" data-lb-id="thread-144425" data-lb-universal="">
+
+		<div class="block-body js-replyNewMessageContainer">
+			
+				
+
+					
+
+					
+						
+
+	
+	
+
+	
+
+	
+	<article class="message message--post js-post js-inlineModContainer  " data-author="sri340" data-content="post-511693" id="js-post-511693">
+
+		
+
+		<span class="u-anchorTarget" id="post-511693"></span>
+
+		
+			<div class="message-inner">
+				
+					<div class="message-cell message-cell--user">
+						
+
+	<section class="message-user">
+
+		
+
+		<div class="message-avatar ">
+			<div class="message-avatar-wrapper">
+				<a href="/u/sri340.8872/" class="avatar avatar--m avatar--default avatar--default--dynamic" data-user-id="8872" data-xf-init="member-tooltip" style="background-color: #85e085; color: #248f24" id="js-XFUniqueId2">
+			<span class="avatar-u8872-m" role="img" aria-label="sri340">S</span> 
+		</a>
+				
+			</div>
+		</div>
+		<div class="message-userDetails">
+			<h4 class="message-name"><a href="/u/sri340.8872/" class="username " dir="auto" data-user-id="8872" data-xf-init="member-tooltip" id="js-XFUniqueId3">sri340</a></h4>
+		</div>
+		
+			
+			
+		
+		<span class="message-userArrow"></span>
+	</section>
+
+					</div>
+				
+
+				
+					<div class="message-cell message-cell--main">
+					
+						<div class="message-main js-quickEditTarget">
+
+							
+								
+
+	
+
+	<header class="message-attribution message-attribution--split">
+		<ul class="message-attribution-main listInline  listInline--bullet">
+			
+			
+			<li class="u-concealed">
+				<div class="threadop"><i class="fa--xf far fa-check-circle  u-spaceAfter"><svg xmlns="http://www.w3.org/2000/svg" role="img" aria-hidden="true"><use href="/data/local/icons/regular.svg?v=1770679322#check-circle"></use></svg></i>Discussion Starter</div>
+				<a href="/t/arithmetic-problem.144425/post-511693" rel="nofollow">
+					<time class="u-dt" dir="auto" datetime="2010-05-12T17:34:15-0700" data-timestamp="1273710855" data-date="May 12, 2010" data-time="5:34 PM" data-short="May '10" title="May 12, 2010 at 5:34 PM">May 12, 2010</time>
+				</a>
+			</li>
+			
+
+
+
+		</ul>
+
+		<ul class="message-attribution-opposite message-attribution-opposite--list ">
+			
+			<li>
+				<a href="/t/arithmetic-problem.144425/post-511693" class="message-attribution-gadget" data-xf-init="share-tooltip" data-href="/posts/511693/share" aria-label="Share" rel="nofollow" id="js-XFUniqueId26">
+					<i class="fa--xf far fa-share-alt "><svg xmlns="http://www.w3.org/2000/svg" role="img" aria-hidden="true"><use href="/data/local/icons/regular.svg?v=1770679322#share-alt"></use></svg></i>
+				</a>
+			</li>
+			
+			
+			
+				<li>
+					<a href="/t/arithmetic-problem.144425/post-511693" rel="nofollow">
+						#1
+					</a>
+				</li>
+			
+		</ul>
+	</header>
+
+							
+
+							<div class="message-content js-messageContent">
+
+<div class="cxf-lep-mobile message-lastEdit">
+    
+</div>
+							
+
+								
+									
+	
+	
+	
+
+								
+
+								
+									
+	
+
+	<div class="message-userContent lbContainer js-lbContainer " data-lb-id="post-511693" data-lb-caption-desc="sri340 · May 12, 2010 at 5:34 PM">
+
+		
+			
+
+	
+		
+	
+
+		
+
+		<article class="message-body js-selectToQuote">
+			
+				
+			
+
+			<div>
+				
+					<div class="bbWrapper"><span style="font-family: 'Times New Roman'"><span style="font-size: 12px">On the first day, Nabil put  $1 in a big box. Then, each succeeding day, he added to the box exactly twice as many dollars as he did on the previous day. On which day will Nabil have more than $1000 in his box for the first time?<br>
+<br>
+(A) 8th day (B) 9th day (C) 10th day (D) 11th day (E) 1000th day</span></span><br>
+ <br></div>
+				
+			</div>
+
+			<div class="js-selectToQuoteEnd">&nbsp;</div>
+			
+				
+			
+		</article>
+
+		
+			
+
+	
+		
+	
+
+		
+
+		
+	
+
+	</div>
+
+								
+
+								
+									
+								
+
+								
+									
+	
+
+								
+
+							
+							</div>
+
+							
+								
+	
+
+	<footer class="message-footer">
+		
+
+		
+
+		<div class="reactionsBar js-reactionsList ">
+			
+		</div>
+
+		<div class="js-historyTarget message-historyTarget toggleTarget" data-href="trigger-href"></div>
+	</footer>
+
+							
+						</div>
+
+					
+					</div>
+				
+			</div>
+		
+	</article>
+
+	
+	
+
+					
+
+					
+
+				
+
+					
+
+					
+						
+
+	
+	
+
+	
+
+	
+	<article class="message message--post js-post js-inlineModContainer  " data-author="sa-ri-ga-ma" data-content="post-511725" id="js-post-511725" itemscope="" itemtype="https://schema.org/Comment" itemid="https://mathhelpforum.com/posts/511725/">
+
+		
+			<meta itemprop="parentItem" itemscope="" itemid="https://mathhelpforum.com/t/arithmetic-problem.144425/">
+			<meta itemprop="name" content="Post #2">
+		
+
+		<span class="u-anchorTarget" id="post-511725"></span>
+
+		
+			<div class="message-inner">
+				
+					<div class="message-cell message-cell--user">
+						
+
+	<section class="message-user" itemprop="author" itemscope="" itemtype="https://schema.org/Person" itemid="https://mathhelpforum.com/u/sa-ri-ga-ma.27796/">
+
+		
+			<meta itemprop="url" content="https://mathhelpforum.com/u/sa-ri-ga-ma.27796/">
+		
+
+		<div class="message-avatar ">
+			<div class="message-avatar-wrapper">
+				<a href="/u/sa-ri-ga-ma.27796/" class="avatar avatar--m avatar--default avatar--default--dynamic" data-user-id="27796" data-xf-init="member-tooltip" style="background-color: #143352; color: #478cd1" id="js-XFUniqueId4">
+			<span class="avatar-u27796-m" role="img" aria-label="sa-ri-ga-ma">S</span> 
+		</a>
+				
+			</div>
+		</div>
+		<div class="message-userDetails">
+			<h4 class="message-name"><a href="/u/sa-ri-ga-ma.27796/" class="username " dir="auto" data-user-id="27796" data-xf-init="member-tooltip" id="js-XFUniqueId5"><span itemprop="name">sa-ri-ga-ma</span></a></h4>
+		</div>
+		
+			
+			
+		
+		<span class="message-userArrow"></span>
+	</section>
+
+					</div>
+				
+
+				
+					<div class="message-cell message-cell--main">
+					
+						<div class="message-main js-quickEditTarget">
+
+							
+								
+
+	
+
+	<header class="message-attribution message-attribution--split">
+		<ul class="message-attribution-main listInline  listInline--bullet">
+			
+			
+			<li class="u-concealed">
+				
+				<a href="/t/arithmetic-problem.144425/post-511725" rel="nofollow" itemprop="url">
+					<time class="u-dt" dir="auto" datetime="2010-05-12T18:37:26-0700" data-timestamp="1273714646" data-date="May 12, 2010" data-time="6:37 PM" data-short="May '10" title="May 12, 2010 at 6:37 PM" itemprop="datePublished">May 12, 2010</time>
+				</a>
+			</li>
+			
+
+
+
+		</ul>
+
+		<ul class="message-attribution-opposite message-attribution-opposite--list ">
+			
+			<li>
+				<a href="/t/arithmetic-problem.144425/post-511725" class="message-attribution-gadget" data-xf-init="share-tooltip" data-href="/posts/511725/share" aria-label="Share" rel="nofollow" id="js-XFUniqueId27">
+					<i class="fa--xf far fa-share-alt "><svg xmlns="http://www.w3.org/2000/svg" role="img" aria-hidden="true"><use href="/data/local/icons/regular.svg?v=1770679322#share-alt"></use></svg></i>
+				</a>
+			</li>
+			
+			
+			
+				<li>
+					<a href="/t/arithmetic-problem.144425/post-511725" rel="nofollow">
+						#2
+					</a>
+				</li>
+			
+		</ul>
+	</header>
+
+							
+
+							<div class="message-content js-messageContent">
+
+<div class="cxf-lep-mobile message-lastEdit">
+    
+</div>
+							
+
+								
+									
+	
+	
+	
+
+								
+
+								
+									
+	
+
+	<div class="message-userContent lbContainer js-lbContainer " data-lb-id="post-511725" data-lb-caption-desc="sa-ri-ga-ma · May 12, 2010 at 6:37 PM">
+
+		
+
+		<article class="message-body js-selectToQuote">
+			
+				
+			
+
+			<div itemprop="text">
+				
+					<div class="bbWrapper"><blockquote data-attributes="" data-quote="sri340" data-source="post: 511693" class="bbCodeBlock bbCodeBlock--expandable bbCodeBlock--quote js-expandWatch">
+	
+		<div class="bbCodeBlock-title">
+			
+				<a href="/goto/post?id=511693" class="bbCodeBlock-sourceJump" rel="nofollow" data-xf-click="attribution" data-content-selector="#post-511693">sri340 said:</a>
+			
+		</div>
+	
+	<div class="bbCodeBlock-content">
+		
+		<div class="bbCodeBlock-expandContent js-expandContent ">
+			<span style="font-family: 'Times New Roman'"><span style="font-size: 12px">On the first day, Nabil put  $1 in a big box. Then, each succeeding day, he added to the box exactly twice as many dollars as he did on the previous day. On which day will Nabil have more than $1000 in his box for the first time?<br>
+<br>
+(A) 8th day (B) 9th day (C) 10th day (D) 11th day (E) 1000th day</span></span>
+		</div>
+		<div class="bbCodeBlock-expandLink js-expandLink"><a role="button" tabindex="0">Click to expand...</a></div>
+	</div>
+</blockquote><br>
+Sum S = 1 + 2 + 4 + ..........<br>
+<br>
+It is geometric series.<br>
+<br>
+S = a(r^n - 1)/(r-1) <br>
+<br>
+Here a is the first term r is the common ratio and n is the number of days.<br>
+<br>
+S, a and r is given.<br>
+<br>
+Can you find n?</div>
+				
+			</div>
+
+			<div class="js-selectToQuoteEnd">&nbsp;</div>
+			
+				
+			
+		</article>
+
+		
+
+		
+	
+
+	</div>
+
+								
+
+								
+									
+								
+
+								
+									
+	
+
+								
+
+							
+							</div>
+
+							
+								
+	
+
+	<footer class="message-footer">
+		
+			<div class="message-microdata" itemprop="interactionStatistic" itemtype="https://schema.org/InteractionCounter" itemscope="">
+				<meta itemprop="userInteractionCount" content="0">
+				<meta itemprop="interactionType" content="https://schema.org/LikeAction">
+			</div>
+		
+
+		
+
+		<div class="reactionsBar js-reactionsList ">
+			
+		</div>
+
+		<div class="js-historyTarget message-historyTarget toggleTarget" data-href="trigger-href"></div>
+	</footer>
+
+							
+						</div>
+
+					
+					</div>
+				
+			</div>
+		
+	</article>
+
+	
+	
+
+					
+
+					
+
+				
+			
+		</div>
+	</div>
+
+	
+		<div class="block-outer block-outer--after">
+			
+				
+
+				
+				
+					<div class="block-outer-opposite">
+						
+							<a href="/login/" class="button button--link button--wrap"><span class="button-text">
+								Login or Register / Reply
+							</span></a>
+						
+					</div>
+				
+			
+		</div>
+	
+
+	
+	
+
+</div>
+
+
+
+	
+	<script type="text/javascript" src="https://s.skimresources.com/js/140190X1604316.skimlinks.js"></script>
+
+
+
+
+
+
+
+
+
+	<div class="block" data-widget-id="55" data-widget-key="similar" data-widget-definition="xfes_similar_threads">
+		<div class="block-container">
+			
+				<h3 class="block-header">Similar Discussions</h3>
+
+				<div class="block-body">
+					<div class="structItemContainer">
+						
+							
+
+	
+
+	<div class="structItem structItem--thread js-trendingThreadItem js-inlineModContainer js-threadListItem-311105" data-author="j.hh">
+
+	
+		<div class="structItem-cell structItem-cell--icon">
+			<div class="structItem-iconContainer">
+				<a href="/u/j-hh.162083/" class="avatar avatar--s avatar--default avatar--default--dynamic" data-user-id="162083" data-xf-init="member-tooltip" style="background-color: #7a3d1f; color: #db9470" id="js-XFUniqueId6">
+			<span class="avatar-u162083-s" role="img" aria-label="j.hh">J</span> 
+		</a>
+				
+			</div>
+		</div>
+	
+
+	
+		<div class="structItem-cell structItem-cell--main" data-xf-init="touch-proxy">
+			
+
+			<div class="structItem-title">
+				
+				
+				<a href="/t/oddly-baffling-algebra-2-problem.311105/" class="" data-tp-primary="on" data-xf-init="preview-tooltip" data-preview-url="/t/oddly-baffling-algebra-2-problem.311105/preview" id="js-XFUniqueId28">
+					Oddly Baffling Algebra 2 Problem
+				</a>
+			</div>
+
+			<div class="structItem-minor">
+				
+
+				
+					
+<ul class="structItem-parts">
+						<li><a href="/u/j-hh.162083/" class="username " dir="auto" data-user-id="162083" data-xf-init="member-tooltip" id="js-XFUniqueId7">j.hh</a></li>
+						<li class="structItem-startDate"><a href="/t/oddly-baffling-algebra-2-problem.311105/" rel="nofollow"><time class="u-dt" dir="auto" datetime="2025-03-25T17:43:33-0700" data-timestamp="1742949813" data-date="Mar 25, 2025" data-time="5:43 PM" data-short="Mar '25" title="Mar 25, 2025 at 5:43 PM">Mar 25, 2025</time></a></li>
+						
+							<li><a href="/algebra/">Algebra</a></li>
+						
+					</ul>
+
+					
+<ul class="structItem-parts">
+
+</ul>
+				
+			</div>
+		</div>
+	
+
+	
+		<div class="structItem-cell structItem-cell--meta" title="First message reaction score: 0">
+			<dl class="pairs pairs--justified">
+				<dt>Replies</dt>
+				<dd>6</dd>
+			</dl>
+			<dl class="pairs pairs--justified structItem-minor">
+				<dt>Views</dt>
+				<dd>860</dd>
+			</dl>
+		</div>
+	
+
+	
+		<div class="structItem-cell structItem-cell--latest">
+			
+				<a href="/t/oddly-baffling-algebra-2-problem.311105/latest" rel="nofollow"><time class="structItem-latestDate u-dt" dir="auto" datetime="2025-03-29T05:10:18-0700" data-timestamp="1743250218" data-date="Mar 29, 2025" data-time="5:10 AM" data-short="Mar '25" title="Mar 29, 2025 at 5:10 AM">Mar 29, 2025</time></a>
+				<div class="structItem-minor">
+					
+						<a href="/u/romsek.81121/" class="username " dir="auto" data-user-id="81121" data-xf-init="member-tooltip" id="js-XFUniqueId8"><span class="username--staff">romsek</span></a>
+					
+				</div>
+			
+		</div>
+	
+
+	</div>
+
+						
+							
+
+	
+
+	<div class="structItem structItem--thread js-trendingThreadItem js-inlineModContainer js-threadListItem-310075" data-author="joan321">
+
+	
+		<div class="structItem-cell structItem-cell--icon">
+			<div class="structItem-iconContainer">
+				<a href="/u/joan321.159580/" class="avatar avatar--s avatar--default avatar--default--dynamic" data-user-id="159580" data-xf-init="member-tooltip" style="background-color: #cccc66; color: #606020" id="js-XFUniqueId9">
+			<span class="avatar-u159580-s" role="img" aria-label="joan321">J</span> 
+		</a>
+				
+			</div>
+		</div>
+	
+
+	
+		<div class="structItem-cell structItem-cell--main" data-xf-init="touch-proxy">
+			
+
+			<div class="structItem-title">
+				
+				
+				<a href="/t/proba-money-game.310075/" class="" data-tp-primary="on" data-xf-init="preview-tooltip" data-preview-url="/t/proba-money-game.310075/preview" id="js-XFUniqueId29">
+					Proba money game
+				</a>
+			</div>
+
+			<div class="structItem-minor">
+				
+
+				
+					
+<ul class="structItem-parts">
+						<li><a href="/u/joan321.159580/" class="username " dir="auto" data-user-id="159580" data-xf-init="member-tooltip" id="js-XFUniqueId10">joan321</a></li>
+						<li class="structItem-startDate"><a href="/t/proba-money-game.310075/" rel="nofollow"><time class="u-dt" dir="auto" datetime="2024-03-24T02:34:07-0700" data-timestamp="1711272847" data-date="Mar 24, 2024" data-time="2:34 AM" data-short="Mar '24" title="Mar 24, 2024 at 2:34 AM">Mar 24, 2024</time></a></li>
+						
+							<li><a href="/probability-statistics/">Probability &amp; Statistics</a></li>
+						
+					</ul>
+
+					
+<ul class="structItem-parts">
+
+</ul>
+				
+			</div>
+		</div>
+	
+
+	
+		<div class="structItem-cell structItem-cell--meta" title="First message reaction score: 0">
+			<dl class="pairs pairs--justified">
+				<dt>Replies</dt>
+				<dd>1</dd>
+			</dl>
+			<dl class="pairs pairs--justified structItem-minor">
+				<dt>Views</dt>
+				<dd>803</dd>
+			</dl>
+		</div>
+	
+
+	
+		<div class="structItem-cell structItem-cell--latest">
+			
+				<a href="/t/proba-money-game.310075/latest" rel="nofollow"><time class="structItem-latestDate u-dt" dir="auto" datetime="2024-03-24T09:27:38-0700" data-timestamp="1711297658" data-date="Mar 24, 2024" data-time="9:27 AM" data-short="Mar '24" title="Mar 24, 2024 at 9:27 AM">Mar 24, 2024</time></a>
+				<div class="structItem-minor">
+					
+						<a href="/u/mrtwhs.157392/" class="username " dir="auto" data-user-id="157392" data-xf-init="member-tooltip" id="js-XFUniqueId11">mrtwhs</a>
+					
+				</div>
+			
+		</div>
+	
+
+	</div>
+
+						
+							
+
+	
+
+	<div class="structItem structItem--thread js-trendingThreadItem js-inlineModContainer js-threadListItem-302151" data-author="Zephyr1779">
+
+	
+		<div class="structItem-cell structItem-cell--icon">
+			<div class="structItem-iconContainer">
+				<a href="/u/zephyr1779.151562/" class="avatar avatar--s avatar--default avatar--default--dynamic" data-user-id="151562" data-xf-init="member-tooltip" style="background-color: #3333cc; color: #c2c2f0" id="js-XFUniqueId12">
+			<span class="avatar-u151562-s" role="img" aria-label="Zephyr1779">Z</span> 
+		</a>
+				
+			</div>
+		</div>
+	
+
+	
+		<div class="structItem-cell structItem-cell--main" data-xf-init="touch-proxy">
+			
+
+			<div class="structItem-title">
+				
+				
+				<a href="/t/planning-on-studying-math-for-the-college-entrance-exam-i-need-a-little-help-in-organizing-how-i-should-study.302151/" class="" data-tp-primary="on" data-xf-init="preview-tooltip" data-preview-url="/t/planning-on-studying-math-for-the-college-entrance-exam-i-need-a-little-help-in-organizing-how-i-should-study.302151/preview" id="js-XFUniqueId30">
+					Planning on studying math for the college entrance exam, I need a little help in organizing how I should study
+				</a>
+			</div>
+
+			<div class="structItem-minor">
+				
+
+				
+					
+<ul class="structItem-parts">
+						<li><a href="/u/zephyr1779.151562/" class="username " dir="auto" data-user-id="151562" data-xf-init="member-tooltip" id="js-XFUniqueId13">Zephyr1779</a></li>
+						<li class="structItem-startDate"><a href="/t/planning-on-studying-math-for-the-college-entrance-exam-i-need-a-little-help-in-organizing-how-i-should-study.302151/" rel="nofollow"><time class="u-dt" dir="auto" datetime="2022-07-15T10:55:30-0700" data-timestamp="1657907730" data-date="Jul 15, 2022" data-time="10:55 AM" data-short="Jul '22" title="Jul 15, 2022 at 10:55 AM">Jul 15, 2022</time></a></li>
+						
+							<li><a href="/general-math/">General Math</a></li>
+						
+					</ul>
+
+					
+<ul class="structItem-parts">
+
+</ul>
+				
+			</div>
+		</div>
+	
+
+	
+		<div class="structItem-cell structItem-cell--meta" title="First message reaction score: 0">
+			<dl class="pairs pairs--justified">
+				<dt>Replies</dt>
+				<dd>2</dd>
+			</dl>
+			<dl class="pairs pairs--justified structItem-minor">
+				<dt>Views</dt>
+				<dd>1K</dd>
+			</dl>
+		</div>
+	
+
+	
+		<div class="structItem-cell structItem-cell--latest">
+			
+				<a href="/t/planning-on-studying-math-for-the-college-entrance-exam-i-need-a-little-help-in-organizing-how-i-should-study.302151/latest" rel="nofollow"><time class="structItem-latestDate u-dt" dir="auto" datetime="2022-08-01T08:31:19-0700" data-timestamp="1659367879" data-date="Aug 1, 2022" data-time="8:31 AM" data-short="Aug '22" title="Aug 1, 2022 at 8:31 AM">Aug 1, 2022</time></a>
+				<div class="structItem-minor">
+					
+						<a href="/u/ramanujanfromaustralia.152146/" class="username " dir="auto" data-user-id="152146" data-xf-init="member-tooltip" id="js-XFUniqueId14">RamanujanFromAustralia</a>
+					
+				</div>
+			
+		</div>
+	
+
+	</div>
+
+						
+							
+
+	
+
+	<div class="structItem structItem--thread js-trendingThreadItem js-inlineModContainer js-threadListItem-289331" data-author="BlazonGhost">
+
+	
+		<div class="structItem-cell structItem-cell--icon">
+			<div class="structItem-iconContainer">
+				<a href="/u/blazonghost.137380/" class="avatar avatar--s avatar--default avatar--default--dynamic" data-user-id="137380" data-xf-init="member-tooltip" style="background-color: #336666; color: #88c3c3" id="js-XFUniqueId15">
+			<span class="avatar-u137380-s" role="img" aria-label="BlazonGhost">B</span> 
+		</a>
+				
+			</div>
+		</div>
+	
+
+	
+		<div class="structItem-cell structItem-cell--main" data-xf-init="touch-proxy">
+			
+
+			<div class="structItem-title">
+				
+				
+				<a href="/t/objective-quantity-system-of-equations.289331/" class="" data-tp-primary="on" data-xf-init="preview-tooltip" data-preview-url="/t/objective-quantity-system-of-equations.289331/preview" id="js-XFUniqueId31">
+					Objective Quantity &amp; System of equations
+				</a>
+			</div>
+
+			<div class="structItem-minor">
+				
+
+				
+					
+<ul class="structItem-parts">
+						<li><a href="/u/blazonghost.137380/" class="username " dir="auto" data-user-id="137380" data-xf-init="member-tooltip" id="js-XFUniqueId16">BlazonGhost</a></li>
+						<li class="structItem-startDate"><a href="/t/objective-quantity-system-of-equations.289331/" rel="nofollow"><time class="u-dt" dir="auto" datetime="2021-03-01T14:24:36-0800" data-timestamp="1614637476" data-date="Mar 1, 2021" data-time="2:24 PM" data-short="Mar '21" title="Mar 1, 2021 at 2:24 PM">Mar 1, 2021</time></a></li>
+						
+							<li><a href="/algebra/">Algebra</a></li>
+						
+					</ul>
+
+					
+<ul class="structItem-parts">
+
+</ul>
+				
+			</div>
+		</div>
+	
+
+	
+		<div class="structItem-cell structItem-cell--meta" title="First message reaction score: 0">
+			<dl class="pairs pairs--justified">
+				<dt>Replies</dt>
+				<dd>1</dd>
+			</dl>
+			<dl class="pairs pairs--justified structItem-minor">
+				<dt>Views</dt>
+				<dd>1K</dd>
+			</dl>
+		</div>
+	
+
+	
+		<div class="structItem-cell structItem-cell--latest">
+			
+				<a href="/t/objective-quantity-system-of-equations.289331/latest" rel="nofollow"><time class="structItem-latestDate u-dt" dir="auto" datetime="2021-03-02T08:08:17-0800" data-timestamp="1614701297" data-date="Mar 2, 2021" data-time="8:08 AM" data-short="Mar '21" title="Mar 2, 2021 at 8:08 AM">Mar 2, 2021</time></a>
+				<div class="structItem-minor">
+					
+						<a href="/u/frick.127133/" class="username " dir="auto" data-user-id="127133" data-xf-init="member-tooltip" id="js-XFUniqueId17">frick</a>
+					
+				</div>
+			
+		</div>
+	
+
+	</div>
+
+						
+					</div>
+				</div>
+			
+		</div>
+	</div>
+
+
+
+
+<div class="blockMessage blockMessage--none">
+	
+
+	
+
+	
+
+</div>
+
+
+
+
+
+
+
+
+</div>
+					
+				</div>
+
+				
+					<div class="p-body-sidebar">
+						
+						
+							<div class="block">
+		<div class="block-container" data-widget-id="51" data-widget-key="register_cta_public" data-widget-definition="html">
+			
+				<h3 class="block-minorHeader">Register CTA</h3>
+			
+			<div class="block-body block-row">
+				<strong>Register on Math Help Forum!</strong> This sidebar will go away, and you will see fewer ads.
+<a class="button--cta button button--icon button--icon--write rippleButton" href="/register/" rel="nofollow">
+	<span class="signup">Sign Up</span>
+</a>
+			</div>
+		</div>
+	</div>
+
+
+	<div class="block" data-widget-id="50" data-widget-key="p_recent" data-widget-definition="new_posts">
+		<div class="block-container">
+			
+				<h3 class="block-minorHeader">
+					<a href="/community/">Recent Discussions</a>
+				</h3>
+				<ul class="block-body">
+					
+						
+							<li class="block-row">
+								
+	<div class="contentRow">
+		<div class="contentRow-figure">
+			<a href="/u/vinod.58312/" class="avatar avatar--xxs" data-user-id="58312" data-xf-init="member-tooltip" id="js-XFUniqueId18">
+			<img src="/data/avatars/s/58/58312.jpg?1647242087" alt="Vinod" class="avatar-u58312-s" width="48" height="48"> 
+		</a>
+		</div>
+		<div class="contentRow-main contentRow-main--close">
+			
+				<a href="/t/electric-direct-current-model-nonlinear-programming-model.311382/post-1002409">Electric direct current model (Nonlinear programming model)</a>
+			
+
+			<div class="contentRow-minor contentRow-minor--hideLinks">
+				<ul class="listInline listInline--bullet">
+					<li>Latest: Vinod</li>
+					<li><time class="u-dt" dir="auto" datetime="2026-03-15T03:42:17-0700" data-timestamp="1773571337" data-date="Mar 15, 2026" data-time="3:42 AM" data-short="2d" title="Mar 15, 2026 at 3:42 AM">Sunday at 3:42 AM</time></li>
+				</ul>
+			</div>
+			<div class="contentRow-minor contentRow-minor--hideLinks">
+				<a href="/applied-math/">Applied Math</a>
+			</div>
+		</div>
+	</div>
+
+							</li>
+						
+							<li class="block-row">
+								
+	<div class="contentRow">
+		<div class="contentRow-figure">
+			<a href="/u/zzephod.63243/" class="avatar avatar--xxs" data-user-id="63243" data-xf-init="member-tooltip" id="js-XFUniqueId19">
+			<img src="/data/avatars/s/63/63243.jpg?1763025761" alt="zzephod" class="avatar-u63243-s" width="48" height="48"> 
+		</a>
+		</div>
+		<div class="contentRow-main contentRow-main--close">
+			
+				<a href="/t/ivpusing-u-x.311385/post-1002404">IVPusing u(x)</a>
+			
+
+			<div class="contentRow-minor contentRow-minor--hideLinks">
+				<ul class="listInline listInline--bullet">
+					<li>Latest: zzephod</li>
+					<li><time class="u-dt" dir="auto" datetime="2026-03-14T22:33:32-0700" data-timestamp="1773552812" data-date="Mar 14, 2026" data-time="10:33 PM" data-short="2d" title="Mar 14, 2026 at 10:33 PM">Saturday at 10:33 PM</time></li>
+				</ul>
+			</div>
+			<div class="contentRow-minor contentRow-minor--hideLinks">
+				<a href="/differential-equations/">Differential Equations</a>
+			</div>
+		</div>
+	</div>
+
+							</li>
+						
+							<li class="block-row">
+								
+	<div class="contentRow">
+		<div class="contentRow-figure">
+			<a href="/u/jcbptrk.162584/" class="avatar avatar--xxs avatar--default avatar--default--dynamic" data-user-id="162584" data-xf-init="member-tooltip" style="background-color: #335214; color: #8cd147" id="js-XFUniqueId20">
+			<span class="avatar-u162584-s" role="img" aria-label="jcbptrk">J</span> 
+		</a>
+		</div>
+		<div class="contentRow-main contentRow-main--close">
+			
+				<a href="/t/has-anyone-tried-algeprime.311384/post-1002394">Has Anyone tried AlgePrime</a>
+			
+
+			<div class="contentRow-minor contentRow-minor--hideLinks">
+				<ul class="listInline listInline--bullet">
+					<li>Latest: jcbptrk</li>
+					<li><time class="u-dt" dir="auto" datetime="2026-03-08T01:21:02-0800" data-timestamp="1772961662" data-date="Mar 8, 2026" data-time="1:21 AM" data-short="9d" title="Mar 8, 2026 at 1:21 AM">Mar 8, 2026</time></li>
+				</ul>
+			</div>
+			<div class="contentRow-minor contentRow-minor--hideLinks">
+				<a href="/math-software/">Math Software</a>
+			</div>
+		</div>
+	</div>
+
+							</li>
+						
+							<li class="block-row">
+								
+	<div class="contentRow">
+		<div class="contentRow-figure">
+			<a href="/u/jcbptrk.162584/" class="avatar avatar--xxs avatar--default avatar--default--dynamic" data-user-id="162584" data-xf-init="member-tooltip" style="background-color: #335214; color: #8cd147" id="js-XFUniqueId21">
+			<span class="avatar-u162584-s" role="img" aria-label="jcbptrk">J</span> 
+		</a>
+		</div>
+		<div class="contentRow-main contentRow-main--close">
+			
+				<a href="/t/hello-everyone.311383/post-1002393">Hello Everyone</a>
+			
+
+			<div class="contentRow-minor contentRow-minor--hideLinks">
+				<ul class="listInline listInline--bullet">
+					<li>Latest: jcbptrk</li>
+					<li><time class="u-dt" dir="auto" datetime="2026-03-08T01:18:03-0800" data-timestamp="1772961483" data-date="Mar 8, 2026" data-time="1:18 AM" data-short="9d" title="Mar 8, 2026 at 1:18 AM">Mar 8, 2026</time></li>
+				</ul>
+			</div>
+			<div class="contentRow-minor contentRow-minor--hideLinks">
+				<a href="/introductions/">Introductions</a>
+			</div>
+		</div>
+	</div>
+
+							</li>
+						
+							<li class="block-row">
+								
+	<div class="contentRow">
+		<div class="contentRow-figure">
+			<a href="/u/zexuo.126112/" class="avatar avatar--xxs avatar--default avatar--default--dynamic" data-user-id="126112" data-xf-init="member-tooltip" style="background-color: #adebcc; color: #2eb873" id="js-XFUniqueId22">
+			<span class="avatar-u126112-s" role="img" aria-label="Zexuo">Z</span> 
+		</a>
+		</div>
+		<div class="contentRow-main contentRow-main--close">
+			
+				<a href="/t/turning-nested-integral-into-a-2d-surface-integral.311380/post-1002390">Turning nested integral into a 2D surface integral</a>
+			
+
+			<div class="contentRow-minor contentRow-minor--hideLinks">
+				<ul class="listInline listInline--bullet">
+					<li>Latest: Zexuo</li>
+					<li><time class="u-dt" dir="auto" datetime="2026-03-03T06:33:10-0800" data-timestamp="1772548390" data-date="Mar 3, 2026" data-time="6:33 AM" data-short="14d" title="Mar 3, 2026 at 6:33 AM">Mar 3, 2026</time></li>
+				</ul>
+			</div>
+			<div class="contentRow-minor contentRow-minor--hideLinks">
+				<a href="/calculus/">Calculus</a>
+			</div>
+		</div>
+	</div>
+
+							</li>
+						
+					
+				</ul>
+			
+		</div>
+	</div>
+
+
+	<div class="block" data-widget-id="49" data-widget-key="p_trending" data-widget-definition="thtrending">
+		<div class="block-container">
+			<h3 class="block-minorHeader">
+				<a href="/trending/" rel="nofollow">Trending Discussions</a>
+			</h3>
+			<ul class="block-body">
+				
+					<li class="block-row">
+						
+	<div class="contentRow">
+		<div class="contentRow-figure">
+			<a href="/u/vinod.58312/" class="avatar avatar--xxs" data-user-id="58312" data-xf-init="member-tooltip" id="js-XFUniqueId23">
+			<img src="/data/avatars/s/58/58312.jpg?1647242087" alt="Vinod" class="avatar-u58312-s" width="48" height="48"> 
+		</a>
+		</div>
+		<div class="contentRow-main contentRow-main--close">
+			<a href="/t/electric-direct-current-model-nonlinear-programming-model.311382/">Electric direct current model (Nonlinear programming model)</a>
+
+			<div class="contentRow-minor contentRow-minor--hideLinks">
+				<ul class="listInline listInline--bullet">
+					<li>Started by Vinod</li>
+					<li><time class="u-dt" dir="auto" datetime="2026-03-06T08:07:53-0800" data-timestamp="1772813273" data-date="Mar 6, 2026" data-time="8:07 AM" data-short="11d" title="Mar 6, 2026 at 8:07 AM">Mar 6, 2026</time></li>
+					<li>Replies: 8</li>
+				</ul>
+			</div>
+			<div class="contentRow-minor contentRow-minor--hideLinks">
+				<a href="/applied-math/">Applied Math</a>
+			</div>
+		</div>
+	</div>
+
+					</li>
+				
+					<li class="block-row">
+						
+	<div class="contentRow">
+		<div class="contentRow-figure">
+			<a href="/u/bigwave.33122/" class="avatar avatar--xxs" data-user-id="33122" data-xf-init="member-tooltip" id="js-XFUniqueId24">
+			<img src="/data/avatars/s/33/33122.jpg?1571646844" alt="bigwave" class="avatar-u33122-s" width="48" height="48"> 
+		</a>
+		</div>
+		<div class="contentRow-main contentRow-main--close">
+			<a href="/t/ivpusing-u-x.311385/">IVPusing u(x)</a>
+
+			<div class="contentRow-minor contentRow-minor--hideLinks">
+				<ul class="listInline listInline--bullet">
+					<li>Started by bigwave</li>
+					<li><time class="u-dt" dir="auto" datetime="2026-03-10T13:44:28-0700" data-timestamp="1773175468" data-date="Mar 10, 2026" data-time="1:44 PM" data-short="7d" title="Mar 10, 2026 at 1:44 PM">Mar 10, 2026</time></li>
+					<li>Replies: 5</li>
+				</ul>
+			</div>
+			<div class="contentRow-minor contentRow-minor--hideLinks">
+				<a href="/differential-equations/">Differential Equations</a>
+			</div>
+		</div>
+	</div>
+
+					</li>
+				
+					<li class="block-row">
+						
+	<div class="contentRow">
+		<div class="contentRow-figure">
+			<a href="/u/jcbptrk.162584/" class="avatar avatar--xxs avatar--default avatar--default--dynamic" data-user-id="162584" data-xf-init="member-tooltip" style="background-color: #335214; color: #8cd147" id="js-XFUniqueId25">
+			<span class="avatar-u162584-s" role="img" aria-label="jcbptrk">J</span> 
+		</a>
+		</div>
+		<div class="contentRow-main contentRow-main--close">
+			<a href="/t/has-anyone-tried-algeprime.311384/">Has Anyone tried AlgePrime</a>
+
+			<div class="contentRow-minor contentRow-minor--hideLinks">
+				<ul class="listInline listInline--bullet">
+					<li>Started by jcbptrk</li>
+					<li><time class="u-dt" dir="auto" datetime="2026-03-08T01:21:02-0800" data-timestamp="1772961662" data-date="Mar 8, 2026" data-time="1:21 AM" data-short="9d" title="Mar 8, 2026 at 1:21 AM">Mar 8, 2026</time></li>
+					<li>Replies: 0</li>
+				</ul>
+			</div>
+			<div class="contentRow-minor contentRow-minor--hideLinks">
+				<a href="/math-software/">Math Software</a>
+			</div>
+		</div>
+	</div>
+
+					</li>
+				
+			</ul>
+		</div>
+	</div>
+						
+						
+					</div>
+				
+			</div>
+
+			
+			
+	
+		<ul class="p-breadcrumbs p-breadcrumbs--bottom" itemscope="" itemtype="https://schema.org/BreadcrumbList">
+			
+				
+
+				
+				
+
+				
+					
+					
+	<li itemprop="itemListElement" itemscope="" itemtype="https://schema.org/ListItem">
+		<a href="/" itemprop="item">
+			<span itemprop="name">Home</span>
+		</a>
+		<meta itemprop="position" content="1">
+	</li>
+
+				
+
+				
+					
+					
+	<li itemprop="itemListElement" itemscope="" itemtype="https://schema.org/ListItem">
+		<a href="/community/" itemprop="item">
+			<span itemprop="name">Forums</span>
+		</a>
+		<meta itemprop="position" content="2">
+	</li>
+
+				
+				
+					
+					
+	<li itemprop="itemListElement" itemscope="" itemtype="https://schema.org/ListItem">
+		<a href="/high-school-math/" itemprop="item">
+			<span itemprop="name">High School Math</span>
+		</a>
+		<meta itemprop="position" content="3">
+	</li>
+
+				
+					
+					
+	<li itemprop="itemListElement" itemscope="" itemtype="https://schema.org/ListItem">
+		<a href="/algebra/" itemprop="item">
+			<span itemprop="name">Algebra</span>
+		</a>
+		<meta itemprop="position" content="4">
+	</li>
+
+				
+			
+		</ul>
+	
+
+			
+		</div>
+	</div>
+
+	<footer class="p-footer" id="footer">
+		<div class="p-footer-inner">
+
+			<div class="p-footer-row">
+				
+				<div class="p-footer-row-opposite">
+					<ul class="p-footer-linkList">
+						<li><a href="/">Home</a></li>
+						<li><a href="/community/">Forums</a></li>
+						<li><a href="/contact/" rel="nofollow">Contact</a></li>
+					</ul>
+				</div>
+			</div>
+				<div class="p-footer-copyright">
+					Copyright © 2008-2026 Math Help Forum. All rights reserved.<br>
+					<a href="/terms/" rel="nofollow">Terms of Service</a> • <a href="/privacy/" rel="nofollow">Privacy Policy</a>
+				</div>
+			
+		</div>
+	</footer>
+</div> <!-- closing p-pageWrapper -->
+
+<div class="u-bottomFixer js-bottomFixTarget">
+	
+	
+</div>
+
+<div class="u-navButtons js-navButtons">
+	<a href="javascript:" class="button button--scroll"><span class="button-text"><i class="fa--xf far fa-arrow-left "><svg xmlns="http://www.w3.org/2000/svg" role="img" aria-hidden="true"><use href="/data/local/icons/regular.svg?v=1770679322#arrow-left"></use></svg></i><span class="u-srOnly">Back</span></span></a>
+</div>
+
+
+
+
+	<form style="display:none" hidden="hidden">
+		<input type="text" name="_xfClientLoadTime" value="" id="_xfClientLoadTime" title="_xfClientLoadTime" tabindex="-1">
+	</form>
+
+	
+
+
+
+
+
+
+
+	
+	
+		
+		
+			<script type="application/ld+json">
+				{
+    "@context": "https://schema.org",
+    "@type": "WebPage",
+    "url": "https://mathhelpforum.com/t/arithmetic-problem.144425/",
+    "mainEntity": {
+        "@type": "DiscussionForumPosting",
+        "@id": "https://mathhelpforum.com/t/arithmetic-problem.144425/",
+        "headline": "arithmetic problem",
+        "datePublished": "2010-05-13T00:34:15+00:00",
+        "keywords": "arithmetic, problem",
+        "url": "https://mathhelpforum.com/t/arithmetic-problem.144425/",
+        "articleSection": "Algebra",
+        "author": {
+            "@type": "Person",
+            "@id": "https://mathhelpforum.com/u/sri340.8872/",
+            "name": "sri340",
+            "url": "https://mathhelpforum.com/u/sri340.8872/"
+        },
+        "interactionStatistic": [
+            {
+                "@type": "InteractionCounter",
+                "interactionType": "https://schema.org/ViewAction",
+                "userInteractionCount": 724
+            },
+            {
+                "@type": "InteractionCounter",
+                "interactionType": "https://schema.org/CommentAction",
+                "userInteractionCount": 1
+            },
+            {
+                "@type": "InteractionCounter",
+                "interactionType": "https://schema.org/LikeAction",
+                "userInteractionCount": 0
+            }
+        ],
+        "text": "On the first day, Nabil put  $1 in a big box. Then, each succeeding day, he added to the box exactly twice as many dollars as he did on the previous day. On which day will Nabil have more than $1000 in his box for the first time?\n\n(A) 8th day (B) 9th day (C) 10th day (D) 11th day (E) 1000th day"
+    },
+    "publisher": {
+        "@type": "Organization",
+        "name": "Math Help Forum",
+        "alternateName": "Math Forum",
+        "description": "Free Math Help Forum - Math Homework Help, Algebra Help, Calculus Help, Geometry Help, Trigonometry Help, Statistics Help, Differential Equations Help",
+        "url": "https://mathhelpforum.com",
+        "logo": "https://mathhelpforum.com/i/math-900.png"
+    }
+}
+			</script>
+		
+	
+
+
+	<script type="text/javascript" async="" src="https://btloader.com/tag?o=5698917485248512&amp;upapi=true&amp;domain=mathhelpforum.com"></script>
+<script>!function(){"use strict";var e;e=document,function(){var t,n;function r(){var t=e.createElement("script");t.src="https://cafemedia-com.videoplayerhub.com/galleryplayer.js",e.head.appendChild(t)}function a(){var t=e.cookie.match("(^|[^;]+)\s*__adblocker\s*=\s*([^;]+)");return t&&t.pop()}function c(){clearInterval(n)}return{init:function(){var e;"true"===(t=a())?r():(e=0,n=setInterval((function(){100!==e&&"false" !== t || c(), "true" === t && (r(), c()), t = a(), e++}), 50))}}}().init()}();
+</script>
+
+
+<script defer="" src="https://static.cloudflareinsights.com/beacon.min.js" data-cf-beacon="{&quot;token&quot;: &quot;46d569974a9c464ab14ce423dd883cea&quot;}"></script>
+
+
+
+
+
+
+
+
+
+
+
+</body></html>

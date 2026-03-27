@@ -133,6 +133,7 @@ tpu = ["jax[tpu]==0.8.0", "torch==2.9.0", "torchvision==0.24.0"]
 cpu = [
   "jax==0.8.0",
   "torch==2.9.0",
+  "duckdb>=1.0.0",
   # Linux x86_64
   "torchvision==0.24.0+cpu; sys_platform == 'linux' and platform_machine == 'x86_64'",
   # Windows x86_64 (AMD64)

@@ -1,0 +1,109 @@
+{
+  "_description": "Optimal hyperparameters for extraction SFT, found via Phase 1 (LR × BS) + Phase 2 (WD × Warmup) sweeps. Selection metric: MBPP 3-shot pass@1. HumanEval 0-shot evaluated as held-out test.",
+  "_last_updated": "2026-03-21",
+
+  "code": {
+    "v3_extraction": {
+      "Qwen3-0.6B-Base": {
+        "learning_rate": 2e-6,
+        "batch_size": 32,
+        "weight_decay": 0.001,
+        "warmup": 0.0,
+        "seq_len": 4096,
+        "lr_schedule": "cosine",
+        "decay": 0.97,
+        "max_grad_norm": 1.0,
+        "epochs": 1,
+        "train_tpu_type": "v5p-8",
+        "dataset_tokens": 260800000,
+        "mbpp_3shot": 0.394,
+        "humaneval_0shot": 0.335,
+        "baseline_mbpp_3shot": 0.398,
+        "baseline_humaneval_0shot": 0.305
+      },
+      "Qwen3-14B-Base": {
+        "learning_rate": 2e-6,
+        "batch_size": 32,
+        "weight_decay": 0.05,
+        "warmup": 0.0,
+        "seq_len": 4096,
+        "lr_schedule": "cosine",
+        "decay": 0.97,
+        "max_grad_norm": 1.0,
+        "epochs": 1,
+        "train_tpu_type": "v5p-32",
+        "dataset_tokens": 260800000,
+        "mbpp_3shot": 0.738,
+        "humaneval_0shot": 0.774,
+        "baseline_mbpp_3shot": 0.740,
+        "baseline_humaneval_0shot": 0.543,
+        "baseline_humaneval_0shot_fence_stripped": 0.726
+      },
+      "Qwen3-8B-Base": null,
+      "Marin-8B-Base": null,
+      "Marin-32B-Base": null
+    },
+    "resiliparse": {
+      "Qwen3-0.6B-Base": {
+        "learning_rate": 2e-6,
+        "batch_size": 64,
+        "weight_decay": 0.1,
+        "warmup": 0.03,
+        "seq_len": 4096,
+        "lr_schedule": "cosine",
+        "decay": 0.97,
+        "max_grad_norm": 1.0,
+        "epochs": 1,
+        "train_tpu_type": "v5p-8",
+        "dataset_tokens": 792500000,
+        "mbpp_3shot": 0.382,
+        "humaneval_0shot": 0.311
+      },
+      "Qwen3-14B-Base": {
+        "learning_rate": 1e-6,
+        "batch_size": 16,
+        "weight_decay": 0.05,
+        "warmup": 0.03,
+        "seq_len": 4096,
+        "lr_schedule": "cosine",
+        "decay": 0.97,
+        "max_grad_norm": 1.0,
+        "epochs": 1,
+        "train_tpu_type": "v5p-32",
+        "dataset_tokens": 792500000,
+        "mbpp_3shot": 0.734,
+        "humaneval_0shot": 0.695
+      },
+      "Qwen3-8B-Base": null,
+      "Marin-8B-Base": null,
+      "Marin-32B-Base": null
+    }
+  },
+
+  "math": {
+    "_status": "sweeps not yet started"
+  },
+
+  "medical": {
+    "_status": "sweeps not yet started"
+  },
+
+  "_notes": {
+    "scaling_trends": [
+      "14B is much less HP-sensitive than 0.6B (1.6pp MBPP spread vs wider)",
+      "Optimal LR increases with model size for V3 (2e-6 for both, but 1e-5 was Phase 1 winner for 14B)",
+      "Optimal LR decreases with model size for resiliparse (2e-6 -> 1e-6)",
+      "Optimal weight decay increases with model size (0.001 -> 0.05)",
+      "Optimal batch size decreases with model size (32 -> 32 for V3, 64 -> 16 for resiliparse)",
+      "wd=0.05 optimal for both V3 and resiliparse at 14B scale",
+      "lr=5e-5 is catastrophic at both scales"
+    ],
+    "evaluation": [
+      "MBPP 3-shot used as validation metric for all HP decisions",
+      "HumanEval 0-shot is held-out test set",
+      "Baseline HumanEval includes markdown fence contamination (54.3%); fence-stripped baseline is 72.6%",
+      "V3 extraction adds genuine +4.8pp HumanEval over fence-stripped baseline",
+      "Resiliparse MBPP-optimal config hurts HumanEval by -3.1pp vs fence-stripped baseline"
+    ]
+  }
+}

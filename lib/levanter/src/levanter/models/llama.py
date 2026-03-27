@@ -87,6 +87,13 @@ class LlamaConfig(HFCompatConfig):
     reference_checkpoint: str = "NousResearch/Llama-2-7b-hf"
     tokenizer: Optional[str] = None
 
+    # Preserves the original max_position_embeddings from the HF config. When a
+    # model is loaded from HF and then fine-tuned with a shorter max_seq_len,
+    # the exported HF config should still reflect the model's full RoPE capacity
+    # (not the training seq_len). vLLM uses max_position_embeddings to determine
+    # the maximum context length it will serve.
+    hf_max_position_embeddings: Optional[int] = None
+
     # Axis
     @property
     def KeyPos(self) -> Axis:
@@ -129,6 +136,7 @@ class LlamaConfig(HFCompatConfig):
             layer_norm_epsilon=hf_config.rms_norm_eps,
             tie_word_embeddings=hf_config.tie_word_embeddings,
             rope=rope_config,
+            hf_max_position_embeddings=hf_config.max_position_embeddings,
         )
 
     def to_hf_config(self, vocab_size: int, config_overrides: Optional[Dict] = None) -> HfLlamaConfig:
@@ -162,7 +170,7 @@ class LlamaConfig(HFCompatConfig):
             rope_scaling = None
 
         return HfLlamaConfig(
-            max_position_embeddings=self.max_seq_len,
+            max_position_embeddings=self.hf_max_position_embeddings or self.max_seq_len,
             hidden_size=self.hidden_dim,
             intermediate_size=self.intermediate_dim,
             num_hidden_layers=self.num_layers,
