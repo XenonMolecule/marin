@@ -1,3 +1,6 @@
+# Copyright 2025 The Marin Authors
+# SPDX-License-Identifier: Apache-2.0
+
 """Lightweight mediqa_qa2019 utils — ROUGE-only, no bleurt/bert-score dependency."""
 
 import numpy as np

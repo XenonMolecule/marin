@@ -42,7 +42,9 @@ RESOURCE_CONFIG = ResourceConfig.with_tpu("v5p-8")
 # Existing checkpoint paths (already trained and evaluated with pass@1)
 # ---------------------------------------------------------------------------
 BASELINE_MODEL = "Qwen/Qwen3-0.6B-Base"
-EXTRACTION_CHECKPOINT = "gs://marin-us-central1/checkpoints/code-extract-plaintext-qwen3-0.6b-base-sft-5bce58/hf/step-978"
+EXTRACTION_CHECKPOINT = (
+    "gs://marin-us-central1/checkpoints/code-extract-plaintext-qwen3-0.6b-base-sft-5bce58/hf/step-978"
+)
 RESILIPARSE_CHECKPOINT = "gs://marin-us-central1/checkpoints/code-resiliparse-qwen3-0.6b-base-sft-80285d/hf/step-3023"
 
 # ---------------------------------------------------------------------------

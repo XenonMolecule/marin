@@ -26,7 +26,6 @@ from experiments.rephraser.extraction_sft_recipe import (
 )
 from experiments.rephraser.mathhelpforum_extraction_sft_v2_base import result as math_result
 from fray.cluster import ResourceConfig
-from marin.evaluation.evaluation_config import EvalTaskConfig
 from marin.execution.executor import ExecutorStep, executor_main, output_path_of, this_output_path
 from marin.processing.tokenize import lm_data_config
 

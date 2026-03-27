@@ -2,13 +2,13 @@
 	<meta charset="utf-8">
 	<link rel="preload" href="https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/tex-chtml.js" as="script">
 	<link rel="preload" href="https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/output/chtml/fonts/woff-v2/MathJax_Zero.woff" as="font" type="font/woff2" crossorigin="">
-	
-	
-	
+
+
+
 	<title>
-	
+
 		arithmetic problem | Math Help Forum
-	
+
 </title>
 
 	<link rel="manifest" crossorigin="use-credentials" href="/webmanifest.php">
@@ -16,77 +16,77 @@
 	<meta http-equiv="X-UA-Compatible" content="IE=Edge">
 	<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 
-	
+
 		<meta name="theme-color" content="#2f4456">
-	
+
 
 	<meta name="apple-mobile-web-app-title" content="Math Forum">
-	
-		<link rel="apple-touch-icon" href="https://mathhelpforum.com/i/math-192.png">
-		
 
-	
-		
+		<link rel="apple-touch-icon" href="https://mathhelpforum.com/i/math-192.png">
+
+
+
+
 		<meta name="description" content="On the first day, Nabil put  $1 in a big box. Then, each succeeding day, he added to the box exactly twice as many dollars as he did on the previous day. On...">
 		<meta property="og:description" content="On the first day, Nabil put  $1 in a big box. Then, each succeeding day, he added to the box exactly twice as many dollars as he did on the previous day. On which day will Nabil have more than $1000 in his box for the first time?
 
 (A) 8th day (B) 9th day (C) 10th day (D) 11th day (E) 1000th day">
 		<meta property="twitter:description" content="On the first day, Nabil put  $1 in a big box. Then, each succeeding day, he added to the box exactly twice as many dollars as he did on the previous day. On which day will Nabil have more than...">
-	
-	
-		<meta property="og:url" content="https://mathhelpforum.com/t/arithmetic-problem.144425/">
-	
-		<link rel="canonical" href="https://mathhelpforum.com/t/arithmetic-problem.144425/">
-	
 
-	
-		
-	
-	
+
+		<meta property="og:url" content="https://mathhelpforum.com/t/arithmetic-problem.144425/">
+
+		<link rel="canonical" href="https://mathhelpforum.com/t/arithmetic-problem.144425/">
+
+
+
+
+
+
 	<meta property="og:site_name" content="Math Help Forum">
 
 
-	
-	
-		
-	
-	
+
+
+
+
+
 	<meta property="og:type" content="website">
 
 
-	
-	
-		
-	
-	
-	
+
+
+
+
+
+
 		<meta property="og:title" content="arithmetic problem">
 		<meta property="twitter:title" content="arithmetic problem">
-	
 
 
-	
-	
-	
-	
-		
-	
-	
-	
+
+
+
+
+
+
+
+
+
 		<meta property="og:image" content="https://mathhelpforum.com/i/math-900.png">
 		<meta property="twitter:image" content="https://mathhelpforum.com/i/math-900.png">
 		<meta property="twitter:card" content="summary">
-	
 
 
-	
-	
-	
+
+
+
+
 		<script async="" src="https://sb.scorecardresearch.com/cs/37076962/beacon.js"></script><script async="" src="https://ads.adthrive.com/sites/62a88f35a2fcf777131ac175/ads.min.js?referrer=https%3A%2F%2Fmathhelpforum.com%2Ft%2Farithmetic-problem.144425%2F&amp;cb=43"></script><script async="" src="/jc/gtm.js?_v=3a5848c2"></script>
-	
+
 	<script>
 		window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments)}gtag("js",new Date);gtag('config','G-1EQ28WBB8E',{'node_id':12,'node_title':'Algebra','thread_id':144425,'thread_title':'arithmetic problem','thread_author':'sri340','user_properties': {
-		
+
 		'pwa':navigator.standalone||window.matchMedia('(display-mode: standalone), (display-mode: minimal-ui)').matches?1:0,
 		},});
 !function(b,c){"object"==typeof console&&"function"==typeof console.error&&(console.error_old=console.error,console.error=function(){console.error_old.apply(this,arguments);b.gtag("event","exception",{error_type:"console",error_message:arguments[0],fatal:!1})});b.onerror=function(a,d,e){b.gtag("event","exception",{error_type:"javascript",error_message:a,error_location:d,error_line_number:e,fatal:!1})};b.onload=function(){c.querySelectorAll("img").forEach(a=>{a.complete&&0===a.naturalWidth&&b.gtag("event",
@@ -94,9 +94,9 @@
 	</script>
 
 
-	
-	
-	
+
+
+
 
 	<link rel="stylesheet" href="/css.php?css=public%3Anormalize.css%2Cpublic%3Afa.css%2Cpublic%3Acore.less%2Cpublic%3Aapp.less&amp;s=11&amp;l=1&amp;d=1770679317&amp;k=fea1bfa21f6315f86436c4bea50be532c2b84cdb">
 
@@ -154,11 +154,11 @@
 
 
 
-	
-		<script src="/js/xf/preamble.min.js?_v=3a5848c2"></script>
-	
 
-	
+		<script src="/js/xf/preamble.min.js?_v=3a5848c2"></script>
+
+
+
 	<script src="/js/vendor/vendor-compiled.js?_v=3a5848c2" defer=""></script>
 	<script src="/js/xf/core-compiled.js?_v=3a5848c2" defer=""></script>
 
@@ -166,7 +166,7 @@
 		XF.ready(() =>
 		{
 			XF.extendObject(true, XF.config, {
-				// 
+				//
 
 				userId: 0,
 				enablePush: true,
@@ -211,7 +211,7 @@
 				borderSizeFeature: '3px',
 				fontAwesomeWeight: 'r',
 				enableRtnProtect: true,
-				
+
 				enableFormSubmitSticky: true,
 				imageOptimization: '0',
 				imageOptimizationQuality: 0.85,
@@ -235,7 +235,7 @@
 			})
 
 			XF.extendObject(XF.phrases, {
-				// 
+				//
 "time.day": "{count} day",
 "time.days": "{count} days",
 "time.hour": "{count} hour",
@@ -328,7 +328,7 @@
 				refreshing: "Refreshing…"
 			})
 		})
-	
+
 window.addEventListener('DOMContentLoaded',()=>{XF.on(document,"xf:reinit",(a)=>{if(a&&typeof(a)==='object'&&Object.prototype.toString.call(a)==='[object Event]'){if(typeof(a.target.querySelectorAll)==='function'){a.target.querySelectorAll(".overlay[data-url]:not([ga])").forEach(b=>{ b.setAttribute('ga',1);gtag("event","page_view",{page_title:b.querySelector(".overlay-title").textContent,page_location:b.getAttribute("data-url")})})}}})});document.querySelectorAll(".file-preview").forEach(filePreview=>{filePreview.addEventListener("click",()=>{gtag('event','file_download',{link_url:(new URL(filePreview.getAttribute("href"),window.location.origin)).href, file_name:filePreview.parentNode.querySelector('.file-name').textContent});});});document.querySelectorAll('.shareButtons-button').forEach(shareButton=>{shareButton.addEventListener('click',()=>{gtag('event','share',{method:shareButton.getAttribute('class').match(/.*shareButtons-button--(.*?)$|\s/)[1]});});});document.querySelectorAll('.bookmarkLink:not(.is-bookmarked)').forEach(bookmarkLink=>{bookmarkLink.addEventListener('click',()=>{gtag('event','bookmark');});});document.querySelectorAll(".js-installPromptButton").forEach(a=>{a.addEventListener("click",()=>{gtag("event","app_install_prompt")})});window.addEventListener("appinstalled",()=>{gtag("event","app_install")});XF.PWA&&XF.PWA.isRunning()&&document.addEventListener("visibilitychange",()=>{"visible"===document.visibilityState&&gtag("event","app_open")});setTimeout(()=>{document.querySelectorAll(".adsbygoogle").forEach(a=>{a.addEventListener("mouseenter",()=>{XF.aH=!0});a.addEventListener("mouseleave",()=>{XF.aH=!1});gtag("event","ads_impression",{ad_platform:"adsense"})});["pagehide","blur"].forEach(function(a){window.addEventListener(a,()=>{XF.aH&&gtag("event","ad_click",{ad_platform:"adsense"})},!1)})},3E3);
 
 
@@ -364,12 +364,12 @@ XF.Element.register('quote', 'XF.Andy_MessageManager');
 </script>
 
 
-	
+
 		<link rel="icon" type="image/png" href="https://mathhelpforum.com/i/mh-fav.png" sizes="32x32">
-	
-	
-	
-	
+
+
+
+
 		<script data-no-optimize="1" data-cfasync="false">
 (function(w, d) {
 	w.adthrive = w.adthrive || {};
@@ -794,7 +794,7 @@ mjx-stretchy-v mjx-c, mjx-stretchy-h mjx-c {
 
 <div class="p-pageWrapper" id="top">
 
-	
+
 
 	<header class="p-header" id="header">
 		<div class="p-header-inner">
@@ -802,17 +802,17 @@ mjx-stretchy-v mjx-c, mjx-stretchy-h mjx-c {
 				<div class="p-header-logo">
 					<a href="/" class="logo-desktop" title="Math Help Forum" aria-label="Math Help Forum">Math Help Forum</a>
 				</div>
-				
+
 			</div>
 		</div>
 	</header>
 
-	
-	
 
-	
+
+
+
 		<div class="p-navSticky p-navSticky--primary" data-xf-init="sticky-header">
-			
+
 		<nav class="p-nav">
 			<div class="p-nav-inner">
 				<button type="button" class="button button--plain p-nav-menuTrigger" data-xf-click="off-canvas" data-menu=".js-headerOffCanvasMenu" tabindex="0" aria-label="Menu"><span class="button-text">
@@ -824,285 +824,285 @@ mjx-stretchy-v mjx-c, mjx-stretchy-h mjx-c {
 				<div class="p-nav-scroller hScroller" data-xf-init="h-scroller" data-auto-scroll=".p-navEl.is-selected">
 					<div class="hScroller-scroll is-calculated">
 						<ul class="p-nav-list js-offCanvasNavSource">
-							
-								<li>
-									
-	<div class="p-navEl " data-has-children="true">
-	
 
-		
-	
+								<li>
+
+	<div class="p-navEl " data-has-children="true">
+
+
+
+
 	<a href="/" class="p-navEl-link p-navEl-link--splitMenu " data-nav-id="home">Home</a>
 
 
 		<a data-xf-key="1" data-xf-click="menu" data-menu-pos-ref="&lt; .p-navEl" class="p-navEl-splitTrigger" role="button" tabindex="0" aria-label="Toggle expanded" aria-expanded="false" aria-haspopup="true"></a>
 
-		
-	
+
+
 		<div class="menu menu--structural" data-menu="menu" aria-hidden="true">
 			<div class="menu-content">
-				
-					
-	
-	
+
+
+
+
 	<a href="/algebra/" class="menu-linkRow u-indentDepth0 js-offCanvasCopy " data-nav-id="Algebra">Algebra</a>
 
-	
 
-				
-					
-	
-	
+
+
+
+
+
 	<a href="/precalculus/" class="menu-linkRow u-indentDepth0 js-offCanvasCopy " data-nav-id="PreCalculus">Pre-Calculus</a>
 
-	
 
-				
-					
-	
-	
+
+
+
+
+
 	<a href="/geometry/" class="menu-linkRow u-indentDepth0 js-offCanvasCopy " data-nav-id="Geometry">Geometry</a>
 
-	
 
-				
-					
-	
-	
+
+
+
+
+
 	<a href="/trigonometry/" class="menu-linkRow u-indentDepth0 js-offCanvasCopy " data-nav-id="Trigonometry">Trigonometry</a>
 
-	
 
-				
-					
-	
-	
+
+
+
+
+
 	<a href="/calculus/" class="menu-linkRow u-indentDepth0 js-offCanvasCopy " data-nav-id="Calculus">Calculus</a>
 
-	
 
-				
-					
-	
-	
+
+
+
+
+
 	<a href="/advanced-algebra/" class="menu-linkRow u-indentDepth0 js-offCanvasCopy " data-nav-id="AAlgebra">Advanced Algebra</a>
 
-	
 
-				
-					
-	
-	
+
+
+
+
+
 	<a href="/discrete-math/" class="menu-linkRow u-indentDepth0 js-offCanvasCopy " data-nav-id="DMath">Discrete Math</a>
 
-	
 
-				
-					
-	
-	
+
+
+
+
+
 	<a href="/differential-geometry/" class="menu-linkRow u-indentDepth0 js-offCanvasCopy " data-nav-id="DGeometry">Differential Geometry</a>
 
-	
 
-				
-					
-	
-	
+
+
+
+
+
 	<a href="/differential-equations/" class="menu-linkRow u-indentDepth0 js-offCanvasCopy " data-nav-id="DiffEq">Differential Equations</a>
 
-	
 
-				
-					
-	
-	
+
+
+
+
+
 	<a href="/number-theory/" class="menu-linkRow u-indentDepth0 js-offCanvasCopy " data-nav-id="NumberTheory">Number Theory</a>
 
-	
 
-				
-					
-	
-	
+
+
+
+
+
 	<a href="/advanced-probability-statistics/" class="menu-linkRow u-indentDepth0 js-offCanvasCopy " data-nav-id="StatsProb">Statistics &amp; Probability</a>
 
-	
 
-				
-					
-	
-	
+
+
+
+
+
 	<a href="/business-math/" class="menu-linkRow u-indentDepth0 js-offCanvasCopy " data-nav-id="BusinessMath">Business Math</a>
 
-	
 
-				
-					
-	
-	
+
+
+
+
+
 	<a href="/math-challenge-problems/" class="menu-linkRow u-indentDepth0 js-offCanvasCopy " data-nav-id="Problems">Challenge Problems</a>
 
-	
 
-				
-					
-	
-	
+
+
+
+
+
 	<a href="/math-software/" class="menu-linkRow u-indentDepth0 js-offCanvasCopy " data-nav-id="Software">Math Software</a>
 
-	
 
-				
+
+
 			</div>
 		</div>
-	
+
 	</div>
 
 								</li>
-							
-								<li>
-									
-	<div class="p-navEl is-selected" data-has-children="true">
-	
 
-		
-	
+								<li>
+
+	<div class="p-navEl is-selected" data-has-children="true">
+
+
+
+
 	<a href="/community/" class="p-navEl-link p-navEl-link--splitMenu " data-nav-id="forums">Forums</a>
 
 
 		<a data-xf-key="2" data-xf-click="menu" data-menu-pos-ref="&lt; .p-navEl" class="p-navEl-splitTrigger" role="button" tabindex="0" aria-label="Toggle expanded" aria-expanded="false" aria-haspopup="true"></a>
 
-		
-	
+
+
 		<div class="menu menu--structural" data-menu="menu" aria-hidden="true">
 			<div class="menu-content">
-				
-					
-	
-	
+
+
+
+
 	<a href="/high-school-math/" class="menu-linkRow u-indentDepth0 js-offCanvasCopy " data-nav-id="high_school_math">High School Math Help</a>
 
-	
 
-				
-					
-	
-	
+
+
+
+
+
 	<a href="/high-school-stem/" class="menu-linkRow u-indentDepth0 js-offCanvasCopy " data-nav-id="academics">High School STEM</a>
 
-	
 
-				
-					
-	
-	
+
+
+
+
+
 	<a href="/university-math/" class="menu-linkRow u-indentDepth0 js-offCanvasCopy " data-nav-id="university_math">University Math Homework Help</a>
 
-	
 
-				
-					
-	
-	
+
+
+
+
+
 	<a href="/university-stem/" class="menu-linkRow u-indentDepth0 js-offCanvasCopy " data-nav-id="mathematics">University STEM</a>
 
-	
 
-				
-					
-	
-	
+
+
+
+
+
 	<a href="/general-math/" class="menu-linkRow u-indentDepth0 js-offCanvasCopy " data-nav-id="generalMath">General Mathematics</a>
 
-	
 
-				
-					
-	
-	
+
+
+
+
+
 	<a href="/s/?type=post" class="menu-linkRow u-indentDepth0 js-offCanvasCopy " data-nav-id="searchForums">Search forums</a>
 
-	
 
-				
+
+
 			</div>
 		</div>
-	
+
 	</div>
 
 								</li>
-							
-								<li>
-									
-	<div class="p-navEl ">
-	
 
-		
-	
+								<li>
+
+	<div class="p-navEl ">
+
+
+
+
 	<a href="/trending/" class="p-navEl-link " data-xf-key="3" data-nav-id="thtrending">Trending</a>
 
 
-		
 
-		
-	
+
+
+
 	</div>
 
 								</li>
-							
-								<li>
-									
-	<div class="p-navEl ">
-	
 
-		
-	
+								<li>
+
+	<div class="p-navEl ">
+
+
+
+
 	<a href="https://physicsforum.com" class="p-navEl-link " target="_blank" data-xf-key="4" data-nav-id="physics">Physics</a>
 
 
-		
 
-		
-	
+
+
+
 	</div>
 
 								</li>
-							
-								<li>
-									
-	<div class="p-navEl ">
-	
 
-		
-	
+								<li>
+
+	<div class="p-navEl ">
+
+
+
+
 	<a href="https://chemistryforum.com" class="p-navEl-link " target="_blank" data-xf-key="5" data-nav-id="chemistry">Chemistry</a>
 
 
-		
 
-		
-	
+
+
+
 	</div>
 
 								</li>
-							
+
 						</ul>
 					</div><i class="hScroller-action hScroller-action--end" aria-hidden="true"></i><i class="hScroller-action hScroller-action--start" aria-hidden="true"></i>
 				</div>
 
 				<div class="p-nav-opposite">
 					<div class="p-navgroup p-account p-navgroup--guest">
-						
+
 							<a href="/login/" class="p-navgroup-link p-navgroup-link--textual p-navgroup-link--logIn" data-follow-redirects="on">
 								<span class="p-navgroup-linkText">Login</span>
 							</a>
-							
+
 								<a href="/register/" class="p-navgroup-link p-navgroup-link--textual p-navgroup-link--register" data-follow-redirects="on">
 									<span class="p-navgroup-linkText">Register</span>
 								</a>
-							
-						
+
+
 					</div>
 
 					<div class="p-navgroup p-discovery">
@@ -1111,7 +1111,7 @@ mjx-stretchy-v mjx-c, mjx-stretchy-h mjx-c {
 							<span class="p-navgroup-linkText">What's new</span>
 						</a>
 
-						
+
 							<a href="/s/" class="p-navgroup-link p-navgroup-link--iconic p-navgroup-link--search" data-xf-click="menu" data-xf-key="/" aria-label="Search" aria-expanded="false" aria-haspopup="true" title="Search">
 								<i aria-hidden="true"></i>
 								<span class="p-navgroup-linkText">Search</span>
@@ -1120,12 +1120,12 @@ mjx-stretchy-v mjx-c, mjx-stretchy-h mjx-c {
 								<form action="/s/search" method="post" class="menu-content" data-xf-init="quick-search">
 
 									<h3 class="menu-header">Search</h3>
-									
+
 									<div class="menu-row">
-										
+
 											<div class="inputGroup inputGroup--joined">
 												<input type="text" class="input" name="keywords" data-acurl="/s/auto-complete" placeholder="Search…" aria-label="Search" data-menu-autofocus="true">
-												
+
 			<select name="constraints" class="js-quickSearch-constraint input" aria-label="Search within" style="width: 111px; flex-grow: 0; flex-shrink: 0;">
 				<option value="">Everywhere</option>
 <option value="{&quot;search_type&quot;:&quot;post&quot;}">Threads</option>
@@ -1133,17 +1133,17 @@ mjx-stretchy-v mjx-c, mjx-stretchy-h mjx-c {
 <option value="{&quot;search_type&quot;:&quot;post&quot;,&quot;c&quot;:{&quot;thread&quot;:144425}}">This thread</option>
 
 			</select>
-		
+
 											</div>
-										
+
 									</div>
 
-									
+
 									<div class="menu-row">
 										<label class="iconic"><input type="checkbox" name="c[title_only]" value="1"><i aria-hidden="true"></i><span class="iconic-label">Search titles only</span></label>
 
 									</div>
-									
+
 									<div class="menu-row">
 										<div class="inputGroup">
 											<span class="inputGroup-text" id="ctrl_search_menu_by_member">By:</span>
@@ -1160,135 +1160,135 @@ mjx-stretchy-v mjx-c, mjx-stretchy-h mjx-c {
 									<input type="hidden" name="_xfToken" value="1773781965,53ee11f89b15e855645cdafdc1e56cd1">
 								</form>
 							</div>
-						
+
 					</div>
 				</div>
 			</div>
 		</nav>
-	
+
 		</div>
-		
-		
+
+
 			<div class="p-sectionLinks">
 				<div class="p-sectionLinks-inner hScroller" data-xf-init="h-scroller">
 					<div class="hScroller-scroll is-calculated">
 						<ul class="p-sectionLinks-list">
-							
-								<li>
-									
-	<div class="p-navEl ">
-	
 
-		
-	
+								<li>
+
+	<div class="p-navEl ">
+
+
+
+
 	<a href="/high-school-math/" class="p-navEl-link " data-xf-key="alt+1" data-nav-id="high_school_math">High School Math Help</a>
 
 
-		
 
-		
-	
+
+
+
 	</div>
 
 								</li>
-							
-								<li>
-									
-	<div class="p-navEl ">
-	
 
-		
-	
+								<li>
+
+	<div class="p-navEl ">
+
+
+
+
 	<a href="/high-school-stem/" class="p-navEl-link " data-xf-key="alt+2" data-nav-id="academics">High School STEM</a>
 
 
-		
 
-		
-	
+
+
+
 	</div>
 
 								</li>
-							
-								<li>
-									
-	<div class="p-navEl ">
-	
 
-		
-	
+								<li>
+
+	<div class="p-navEl ">
+
+
+
+
 	<a href="/university-math/" class="p-navEl-link " data-xf-key="alt+3" data-nav-id="university_math">University Math Homework Help</a>
 
 
-		
 
-		
-	
+
+
+
 	</div>
 
 								</li>
-							
-								<li>
-									
-	<div class="p-navEl ">
-	
 
-		
-	
+								<li>
+
+	<div class="p-navEl ">
+
+
+
+
 	<a href="/university-stem/" class="p-navEl-link " data-xf-key="alt+4" data-nav-id="mathematics">University STEM</a>
 
 
-		
 
-		
-	
+
+
+
 	</div>
 
 								</li>
-							
-								<li>
-									
-	<div class="p-navEl ">
-	
 
-		
-	
+								<li>
+
+	<div class="p-navEl ">
+
+
+
+
 	<a href="/general-math/" class="p-navEl-link " data-xf-key="alt+5" data-nav-id="generalMath">General Mathematics</a>
 
 
-		
 
-		
-	
+
+
+
 	</div>
 
 								</li>
-							
-								<li>
-									
-	<div class="p-navEl ">
-	
 
-		
-	
+								<li>
+
+	<div class="p-navEl ">
+
+
+
+
 	<a href="/s/?type=post" class="p-navEl-link " data-xf-key="alt+6" data-nav-id="searchForums">Search forums</a>
 
 
-		
 
-		
-	
+
+
+
 	</div>
 
 								</li>
-							
+
 						</ul>
 					</div><i class="hScroller-action hScroller-action--end" aria-hidden="true"></i><i class="hScroller-action hScroller-action--start" aria-hidden="true"></i>
 				</div>
 			</div>
-			
-	
-		
+
+
+
 
 	<div class="offCanvasMenu offCanvasMenu--nav js-headerOffCanvasMenu" data-menu="menu" aria-hidden="true" data-ocm-builder="navigation">
 		<div class="offCanvasMenu-backdrop" data-menu-close="true"></div>
@@ -1297,8 +1297,8 @@ mjx-stretchy-v mjx-c, mjx-stretchy-h mjx-c {
 				Math Help Forum
 				<a class="offCanvasMenu-closer" data-menu-close="true" role="button" tabindex="0" aria-label="Close"></a>
 			</div>
-			
-			
+
+
 			<div class="js-offCanvasNavTarget"></div>
 		</div>
 	</div>
@@ -1307,23 +1307,23 @@ mjx-stretchy-v mjx-c, mjx-stretchy-h mjx-c {
 		<div class="p-body-inner">
 			<!--XF:EXTRA_OUTPUT-->
 
-			
 
-			
 
-			
-			
-	
+
+
+
+
+
 		<ul class="p-breadcrumbs " itemscope="" itemtype="https://schema.org/BreadcrumbList">
-			
-				
 
-				
-				
 
-				
-					
-					
+
+
+
+
+
+
+
 	<li itemprop="itemListElement" itemscope="" itemtype="https://schema.org/ListItem">
 		<a href="/" itemprop="item">
 			<span itemprop="name">Home</span>
@@ -1331,11 +1331,11 @@ mjx-stretchy-v mjx-c, mjx-stretchy-h mjx-c {
 		<meta itemprop="position" content="1">
 	</li>
 
-				
 
-				
-					
-					
+
+
+
+
 	<li itemprop="itemListElement" itemscope="" itemtype="https://schema.org/ListItem">
 		<a href="/community/" itemprop="item">
 			<span itemprop="name">Forums</span>
@@ -1343,10 +1343,10 @@ mjx-stretchy-v mjx-c, mjx-stretchy-h mjx-c {
 		<meta itemprop="position" content="2">
 	</li>
 
-				
-				
-					
-					
+
+
+
+
 	<li itemprop="itemListElement" itemscope="" itemtype="https://schema.org/ListItem">
 		<a href="/high-school-math/" itemprop="item">
 			<span itemprop="name">High School Math</span>
@@ -1354,9 +1354,9 @@ mjx-stretchy-v mjx-c, mjx-stretchy-h mjx-c {
 		<meta itemprop="position" content="3">
 	</li>
 
-				
-					
-					
+
+
+
 	<li itemprop="itemListElement" itemscope="" itemtype="https://schema.org/ListItem">
 		<a href="/algebra/" itemprop="item">
 			<span itemprop="name">Algebra</span>
@@ -1364,39 +1364,39 @@ mjx-stretchy-v mjx-c, mjx-stretchy-h mjx-c {
 		<meta itemprop="position" content="4">
 	</li>
 
-				
-			
+
+
 		</ul>
-	
-
-			
 
 
 
-			
-	
-
-			
-	
 
 
-			
+
+
+
+
+
+
+
+
+
 				<div class="p-body-header">
-					
-						
-							<div class="p-title ">
-								
-									
-										<h1 class="p-title-value">arithmetic problem</h1>
-									
-									
-								
-							</div>
-						
 
-						
+
+							<div class="p-title ">
+
+
+										<h1 class="p-title-value">arithmetic problem</h1>
+
+
+
+							</div>
+
+
+
 							<div class="p-description">
-	
+
 	<ul class="listInline listInline--bullet">
 		<li>
 			<i class="fa--xf far fa-at "><svg xmlns="http://www.w3.org/2000/svg" role="img"><title>Thread starter</title><use href="/data/local/icons/regular.svg?v=1770679322#at"></use></svg></i>
@@ -1410,37 +1410,37 @@ mjx-stretchy-v mjx-c, mjx-stretchy-h mjx-c {
 
 			<a href="/t/arithmetic-problem.144425/" class="u-concealed"><time class="u-dt" dir="auto" datetime="2010-05-12T17:34:15-0700" data-timestamp="1273710855" data-date="May 12, 2010" data-time="5:34 PM" data-short="May '10" title="May 12, 2010 at 5:34 PM">May 12, 2010</time></a>
 		</li>
-		
-		
+
+
 
 
 			<li>
-				
 
-	
+
+
 
 	<dl class="tagList tagList--thread-144425 ">
 		<dt>
-			
-				
+
+
 		<i class="fa--xf far fa-hashtag "><svg xmlns="http://www.w3.org/2000/svg" role="img"><title>Tags</title><use href="/data/local/icons/regular.svg?v=1770679322#hashtag"></use></svg></i>
 		<span class="u-srOnly">Tags</span>
-	
-			
+
+
 		</dt>
 		<dd>
 			<span class="js-tagList">
-				
-					
+
+
 						<a href="/topics/arithmetic/" class="tagItem tagItem--tag_arithmetic" dir="auto">
 							arithmetic
 						</a>
-					
+
 						<a href="/topics/problem/" class="tagItem tagItem--tag_problem" dir="auto">
 							problem
 						</a>
-					
-				
+
+
 			</span>
 		</dd>
 	</dl>
@@ -1449,25 +1449,25 @@ mjx-stretchy-v mjx-c, mjx-stretchy-h mjx-c {
 			</li>
 
 
-		
+
 	</ul>
 </div>
-						
-					
+
+
 				</div>
-			
+
 
 			<div class="p-body-main p-body-main--withSidebar ">
-				
-				<div class="p-body-contentCol"></div>
-				
-					<div class="p-body-sidebarCol"></div>
-				
 
-				
+				<div class="p-body-contentCol"></div>
+
+					<div class="p-body-sidebarCol"></div>
+
+
+
 
 				<div class="p-body-content">
-					
+
 					<div class="p-body-pageContent">
 
 
@@ -1479,38 +1479,6 @@ mjx-stretchy-v mjx-c, mjx-stretchy-h mjx-c {
 
 
 
-	
-	
-	
-		
-	
-	
-	
-
-
-	
-	
-	
-		
-	
-	
-	
-
-
-	
-	
-		
-	
-	
-	
-
-
-	
-	
-
-
-
-	
 
 
 
@@ -1523,12 +1491,44 @@ mjx-stretchy-v mjx-c, mjx-stretchy-h mjx-c {
 
 
 
-	
 
-	
-		
-		
-	
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1552,377 +1552,377 @@ mjx-stretchy-v mjx-c, mjx-stretchy-h mjx-c {
 
 	<span class="u-anchorTarget" id="posts"></span>
 
-	
-		
-	
 
-	
+
+
+
+
 
 	<div class="block-outer"></div>
 
-	
 
-	
-		
+
+
+
 	<div class="block-outer js-threadStatusField"></div>
 
-	
+
 
 	<div class="block-container lbContainer" data-xf-init="lightbox" data-message-selector=".js-post" data-lb-id="thread-144425" data-lb-universal="">
 
 		<div class="block-body js-replyNewMessageContainer">
-			
-				
 
-					
 
-					
-						
 
-	
-	
 
-	
 
-	
+
+
+
+
+
+
+
+
+
 	<article class="message message--post js-post js-inlineModContainer  " data-author="sri340" data-content="post-511693" id="js-post-511693">
 
-		
+
 
 		<span class="u-anchorTarget" id="post-511693"></span>
 
-		
+
 			<div class="message-inner">
-				
+
 					<div class="message-cell message-cell--user">
-						
+
 
 	<section class="message-user">
 
-		
+
 
 		<div class="message-avatar ">
 			<div class="message-avatar-wrapper">
 				<a href="/u/sri340.8872/" class="avatar avatar--m avatar--default avatar--default--dynamic" data-user-id="8872" data-xf-init="member-tooltip" style="background-color: #85e085; color: #248f24" id="js-XFUniqueId2">
-			<span class="avatar-u8872-m" role="img" aria-label="sri340">S</span> 
+			<span class="avatar-u8872-m" role="img" aria-label="sri340">S</span>
 		</a>
-				
+
 			</div>
 		</div>
 		<div class="message-userDetails">
 			<h4 class="message-name"><a href="/u/sri340.8872/" class="username " dir="auto" data-user-id="8872" data-xf-init="member-tooltip" id="js-XFUniqueId3">sri340</a></h4>
 		</div>
-		
-			
-			
-		
+
+
+
+
 		<span class="message-userArrow"></span>
 	</section>
 
 					</div>
-				
 
-				
+
+
 					<div class="message-cell message-cell--main">
-					
+
 						<div class="message-main js-quickEditTarget">
 
-							
-								
 
-	
+
+
+
 
 	<header class="message-attribution message-attribution--split">
 		<ul class="message-attribution-main listInline  listInline--bullet">
-			
-			
+
+
 			<li class="u-concealed">
 				<div class="threadop"><i class="fa--xf far fa-check-circle  u-spaceAfter"><svg xmlns="http://www.w3.org/2000/svg" role="img" aria-hidden="true"><use href="/data/local/icons/regular.svg?v=1770679322#check-circle"></use></svg></i>Discussion Starter</div>
 				<a href="/t/arithmetic-problem.144425/post-511693" rel="nofollow">
 					<time class="u-dt" dir="auto" datetime="2010-05-12T17:34:15-0700" data-timestamp="1273710855" data-date="May 12, 2010" data-time="5:34 PM" data-short="May '10" title="May 12, 2010 at 5:34 PM">May 12, 2010</time>
 				</a>
 			</li>
-			
+
 
 
 
 		</ul>
 
 		<ul class="message-attribution-opposite message-attribution-opposite--list ">
-			
+
 			<li>
 				<a href="/t/arithmetic-problem.144425/post-511693" class="message-attribution-gadget" data-xf-init="share-tooltip" data-href="/posts/511693/share" aria-label="Share" rel="nofollow" id="js-XFUniqueId26">
 					<i class="fa--xf far fa-share-alt "><svg xmlns="http://www.w3.org/2000/svg" role="img" aria-hidden="true"><use href="/data/local/icons/regular.svg?v=1770679322#share-alt"></use></svg></i>
 				</a>
 			</li>
-			
-			
-			
+
+
+
 				<li>
 					<a href="/t/arithmetic-problem.144425/post-511693" rel="nofollow">
 						#1
 					</a>
 				</li>
-			
+
 		</ul>
 	</header>
 
-							
+
 
 							<div class="message-content js-messageContent">
 
 <div class="cxf-lep-mobile message-lastEdit">
-    
+
 </div>
-							
 
-								
-									
-	
-	
-	
 
-								
 
-								
-									
-	
+
+
+
+
+
+
+
+
+
+
 
 	<div class="message-userContent lbContainer js-lbContainer " data-lb-id="post-511693" data-lb-caption-desc="sri340 · May 12, 2010 at 5:34 PM">
 
-		
-			
 
-	
-		
-	
 
-		
+
+
+
+
+
+
 
 		<article class="message-body js-selectToQuote">
-			
-				
-			
+
+
+
 
 			<div>
-				
+
 					<div class="bbWrapper"><span style="font-family: 'Times New Roman'"><span style="font-size: 12px">On the first day, Nabil put  $1 in a big box. Then, each succeeding day, he added to the box exactly twice as many dollars as he did on the previous day. On which day will Nabil have more than $1000 in his box for the first time?<br>
 <br>
 (A) 8th day (B) 9th day (C) 10th day (D) 11th day (E) 1000th day</span></span><br>
  <br></div>
-				
+
 			</div>
 
 			<div class="js-selectToQuoteEnd">&nbsp;</div>
-			
-				
-			
+
+
+
 		</article>
 
-		
-			
 
-	
-		
-	
 
-		
 
-		
-	
+
+
+
+
+
+
+
+
 
 	</div>
 
-								
 
-								
-									
-								
 
-								
-									
-	
 
-								
 
-							
+
+
+
+
+
+
+
+
+
 							</div>
 
-							
-								
-	
+
+
+
 
 	<footer class="message-footer">
-		
 
-		
+
+
 
 		<div class="reactionsBar js-reactionsList ">
-			
+
 		</div>
 
 		<div class="js-historyTarget message-historyTarget toggleTarget" data-href="trigger-href"></div>
 	</footer>
 
-							
+
 						</div>
 
-					
+
 					</div>
-				
+
 			</div>
-		
+
 	</article>
 
-	
-	
 
-					
 
-					
 
-				
 
-					
 
-					
-						
 
-	
-	
 
-	
 
-	
+
+
+
+
+
+
+
+
+
+
+
+
 	<article class="message message--post js-post js-inlineModContainer  " data-author="sa-ri-ga-ma" data-content="post-511725" id="js-post-511725" itemscope="" itemtype="https://schema.org/Comment" itemid="https://mathhelpforum.com/posts/511725/">
 
-		
+
 			<meta itemprop="parentItem" itemscope="" itemid="https://mathhelpforum.com/t/arithmetic-problem.144425/">
 			<meta itemprop="name" content="Post #2">
-		
+
 
 		<span class="u-anchorTarget" id="post-511725"></span>
 
-		
+
 			<div class="message-inner">
-				
+
 					<div class="message-cell message-cell--user">
-						
+
 
 	<section class="message-user" itemprop="author" itemscope="" itemtype="https://schema.org/Person" itemid="https://mathhelpforum.com/u/sa-ri-ga-ma.27796/">
 
-		
+
 			<meta itemprop="url" content="https://mathhelpforum.com/u/sa-ri-ga-ma.27796/">
-		
+
 
 		<div class="message-avatar ">
 			<div class="message-avatar-wrapper">
 				<a href="/u/sa-ri-ga-ma.27796/" class="avatar avatar--m avatar--default avatar--default--dynamic" data-user-id="27796" data-xf-init="member-tooltip" style="background-color: #143352; color: #478cd1" id="js-XFUniqueId4">
-			<span class="avatar-u27796-m" role="img" aria-label="sa-ri-ga-ma">S</span> 
+			<span class="avatar-u27796-m" role="img" aria-label="sa-ri-ga-ma">S</span>
 		</a>
-				
+
 			</div>
 		</div>
 		<div class="message-userDetails">
 			<h4 class="message-name"><a href="/u/sa-ri-ga-ma.27796/" class="username " dir="auto" data-user-id="27796" data-xf-init="member-tooltip" id="js-XFUniqueId5"><span itemprop="name">sa-ri-ga-ma</span></a></h4>
 		</div>
-		
-			
-			
-		
+
+
+
+
 		<span class="message-userArrow"></span>
 	</section>
 
 					</div>
-				
 
-				
+
+
 					<div class="message-cell message-cell--main">
-					
+
 						<div class="message-main js-quickEditTarget">
 
-							
-								
 
-	
+
+
+
 
 	<header class="message-attribution message-attribution--split">
 		<ul class="message-attribution-main listInline  listInline--bullet">
-			
-			
+
+
 			<li class="u-concealed">
-				
+
 				<a href="/t/arithmetic-problem.144425/post-511725" rel="nofollow" itemprop="url">
 					<time class="u-dt" dir="auto" datetime="2010-05-12T18:37:26-0700" data-timestamp="1273714646" data-date="May 12, 2010" data-time="6:37 PM" data-short="May '10" title="May 12, 2010 at 6:37 PM" itemprop="datePublished">May 12, 2010</time>
 				</a>
 			</li>
-			
+
 
 
 
 		</ul>
 
 		<ul class="message-attribution-opposite message-attribution-opposite--list ">
-			
+
 			<li>
 				<a href="/t/arithmetic-problem.144425/post-511725" class="message-attribution-gadget" data-xf-init="share-tooltip" data-href="/posts/511725/share" aria-label="Share" rel="nofollow" id="js-XFUniqueId27">
 					<i class="fa--xf far fa-share-alt "><svg xmlns="http://www.w3.org/2000/svg" role="img" aria-hidden="true"><use href="/data/local/icons/regular.svg?v=1770679322#share-alt"></use></svg></i>
 				</a>
 			</li>
-			
-			
-			
+
+
+
 				<li>
 					<a href="/t/arithmetic-problem.144425/post-511725" rel="nofollow">
 						#2
 					</a>
 				</li>
-			
+
 		</ul>
 	</header>
 
-							
+
 
 							<div class="message-content js-messageContent">
 
 <div class="cxf-lep-mobile message-lastEdit">
-    
+
 </div>
-							
 
-								
-									
-	
-	
-	
 
-								
 
-								
-									
-	
+
+
+
+
+
+
+
+
+
+
 
 	<div class="message-userContent lbContainer js-lbContainer " data-lb-id="post-511725" data-lb-caption-desc="sa-ri-ga-ma · May 12, 2010 at 6:37 PM">
 
-		
+
 
 		<article class="message-body js-selectToQuote">
-			
-				
-			
+
+
+
 
 			<div itemprop="text">
-				
+
 					<div class="bbWrapper"><blockquote data-attributes="" data-quote="sri340" data-source="post: 511693" class="bbCodeBlock bbCodeBlock--expandable bbCodeBlock--quote js-expandWatch">
-	
+
 		<div class="bbCodeBlock-title">
-			
+
 				<a href="/goto/post?id=511693" class="bbCodeBlock-sourceJump" rel="nofollow" data-xf-click="attribution" data-content-selector="#post-511693">sri340 said:</a>
-			
+
 		</div>
-	
+
 	<div class="bbCodeBlock-content">
-		
+
 		<div class="bbCodeBlock-expandContent js-expandContent ">
 			<span style="font-family: 'Times New Roman'"><span style="font-size: 12px">On the first day, Nabil put  $1 in a big box. Then, each succeeding day, he added to the box exactly twice as many dollars as he did on the previous day. On which day will Nabil have more than $1000 in his box for the first time?<br>
 <br>
@@ -1942,107 +1942,107 @@ Here a is the first term r is the common ratio and n is the number of days.<br>
 S, a and r is given.<br>
 <br>
 Can you find n?</div>
-				
+
 			</div>
 
 			<div class="js-selectToQuoteEnd">&nbsp;</div>
-			
-				
-			
+
+
+
 		</article>
 
-		
 
-		
-	
+
+
+
 
 	</div>
 
-								
 
-								
-									
-								
 
-								
-									
-	
 
-								
 
-							
+
+
+
+
+
+
+
+
+
 							</div>
 
-							
-								
-	
+
+
+
 
 	<footer class="message-footer">
-		
+
 			<div class="message-microdata" itemprop="interactionStatistic" itemtype="https://schema.org/InteractionCounter" itemscope="">
 				<meta itemprop="userInteractionCount" content="0">
 				<meta itemprop="interactionType" content="https://schema.org/LikeAction">
 			</div>
-		
 
-		
+
+
 
 		<div class="reactionsBar js-reactionsList ">
-			
+
 		</div>
 
 		<div class="js-historyTarget message-historyTarget toggleTarget" data-href="trigger-href"></div>
 	</footer>
 
-							
+
 						</div>
 
-					
+
 					</div>
-				
+
 			</div>
-		
+
 	</article>
 
-	
-	
 
-					
 
-					
 
-				
-			
+
+
+
+
+
+
 		</div>
 	</div>
 
-	
-		<div class="block-outer block-outer--after">
-			
-				
 
-				
-				
+		<div class="block-outer block-outer--after">
+
+
+
+
+
 					<div class="block-outer-opposite">
-						
+
 							<a href="/login/" class="button button--link button--wrap"><span class="button-text">
 								Login or Register / Reply
 							</span></a>
-						
-					</div>
-				
-			
-		</div>
-	
 
-	
-	
+					</div>
+
+
+		</div>
+
+
+
+
 
 </div>
 
 
 
-	
+
 	<script type="text/javascript" src="https://s.skimresources.com/js/140190X1604316.skimlinks.js"></script>
 
 
@@ -2055,64 +2055,64 @@ Can you find n?</div>
 
 	<div class="block" data-widget-id="55" data-widget-key="similar" data-widget-definition="xfes_similar_threads">
 		<div class="block-container">
-			
+
 				<h3 class="block-header">Similar Discussions</h3>
 
 				<div class="block-body">
 					<div class="structItemContainer">
-						
-							
 
-	
+
+
+
 
 	<div class="structItem structItem--thread js-trendingThreadItem js-inlineModContainer js-threadListItem-311105" data-author="j.hh">
 
-	
+
 		<div class="structItem-cell structItem-cell--icon">
 			<div class="structItem-iconContainer">
 				<a href="/u/j-hh.162083/" class="avatar avatar--s avatar--default avatar--default--dynamic" data-user-id="162083" data-xf-init="member-tooltip" style="background-color: #7a3d1f; color: #db9470" id="js-XFUniqueId6">
-			<span class="avatar-u162083-s" role="img" aria-label="j.hh">J</span> 
+			<span class="avatar-u162083-s" role="img" aria-label="j.hh">J</span>
 		</a>
-				
+
 			</div>
 		</div>
-	
 
-	
+
+
 		<div class="structItem-cell structItem-cell--main" data-xf-init="touch-proxy">
-			
+
 
 			<div class="structItem-title">
-				
-				
+
+
 				<a href="/t/oddly-baffling-algebra-2-problem.311105/" class="" data-tp-primary="on" data-xf-init="preview-tooltip" data-preview-url="/t/oddly-baffling-algebra-2-problem.311105/preview" id="js-XFUniqueId28">
 					Oddly Baffling Algebra 2 Problem
 				</a>
 			</div>
 
 			<div class="structItem-minor">
-				
 
-				
-					
+
+
+
 <ul class="structItem-parts">
 						<li><a href="/u/j-hh.162083/" class="username " dir="auto" data-user-id="162083" data-xf-init="member-tooltip" id="js-XFUniqueId7">j.hh</a></li>
 						<li class="structItem-startDate"><a href="/t/oddly-baffling-algebra-2-problem.311105/" rel="nofollow"><time class="u-dt" dir="auto" datetime="2025-03-25T17:43:33-0700" data-timestamp="1742949813" data-date="Mar 25, 2025" data-time="5:43 PM" data-short="Mar '25" title="Mar 25, 2025 at 5:43 PM">Mar 25, 2025</time></a></li>
-						
+
 							<li><a href="/algebra/">Algebra</a></li>
-						
+
 					</ul>
 
-					
+
 <ul class="structItem-parts">
 
 </ul>
-				
+
 			</div>
 		</div>
-	
 
-	
+
+
 		<div class="structItem-cell structItem-cell--meta" title="First message reaction score: 0">
 			<dl class="pairs pairs--justified">
 				<dt>Replies</dt>
@@ -2123,76 +2123,76 @@ Can you find n?</div>
 				<dd>860</dd>
 			</dl>
 		</div>
-	
 
-	
+
+
 		<div class="structItem-cell structItem-cell--latest">
-			
+
 				<a href="/t/oddly-baffling-algebra-2-problem.311105/latest" rel="nofollow"><time class="structItem-latestDate u-dt" dir="auto" datetime="2025-03-29T05:10:18-0700" data-timestamp="1743250218" data-date="Mar 29, 2025" data-time="5:10 AM" data-short="Mar '25" title="Mar 29, 2025 at 5:10 AM">Mar 29, 2025</time></a>
 				<div class="structItem-minor">
-					
+
 						<a href="/u/romsek.81121/" class="username " dir="auto" data-user-id="81121" data-xf-init="member-tooltip" id="js-XFUniqueId8"><span class="username--staff">romsek</span></a>
-					
+
 				</div>
-			
+
 		</div>
-	
+
 
 	</div>
 
-						
-							
 
-	
+
+
+
 
 	<div class="structItem structItem--thread js-trendingThreadItem js-inlineModContainer js-threadListItem-310075" data-author="joan321">
 
-	
+
 		<div class="structItem-cell structItem-cell--icon">
 			<div class="structItem-iconContainer">
 				<a href="/u/joan321.159580/" class="avatar avatar--s avatar--default avatar--default--dynamic" data-user-id="159580" data-xf-init="member-tooltip" style="background-color: #cccc66; color: #606020" id="js-XFUniqueId9">
-			<span class="avatar-u159580-s" role="img" aria-label="joan321">J</span> 
+			<span class="avatar-u159580-s" role="img" aria-label="joan321">J</span>
 		</a>
-				
+
 			</div>
 		</div>
-	
 
-	
+
+
 		<div class="structItem-cell structItem-cell--main" data-xf-init="touch-proxy">
-			
+
 
 			<div class="structItem-title">
-				
-				
+
+
 				<a href="/t/proba-money-game.310075/" class="" data-tp-primary="on" data-xf-init="preview-tooltip" data-preview-url="/t/proba-money-game.310075/preview" id="js-XFUniqueId29">
 					Proba money game
 				</a>
 			</div>
 
 			<div class="structItem-minor">
-				
 
-				
-					
+
+
+
 <ul class="structItem-parts">
 						<li><a href="/u/joan321.159580/" class="username " dir="auto" data-user-id="159580" data-xf-init="member-tooltip" id="js-XFUniqueId10">joan321</a></li>
 						<li class="structItem-startDate"><a href="/t/proba-money-game.310075/" rel="nofollow"><time class="u-dt" dir="auto" datetime="2024-03-24T02:34:07-0700" data-timestamp="1711272847" data-date="Mar 24, 2024" data-time="2:34 AM" data-short="Mar '24" title="Mar 24, 2024 at 2:34 AM">Mar 24, 2024</time></a></li>
-						
+
 							<li><a href="/probability-statistics/">Probability &amp; Statistics</a></li>
-						
+
 					</ul>
 
-					
+
 <ul class="structItem-parts">
 
 </ul>
-				
+
 			</div>
 		</div>
-	
 
-	
+
+
 		<div class="structItem-cell structItem-cell--meta" title="First message reaction score: 0">
 			<dl class="pairs pairs--justified">
 				<dt>Replies</dt>
@@ -2203,76 +2203,76 @@ Can you find n?</div>
 				<dd>803</dd>
 			</dl>
 		</div>
-	
 
-	
+
+
 		<div class="structItem-cell structItem-cell--latest">
-			
+
 				<a href="/t/proba-money-game.310075/latest" rel="nofollow"><time class="structItem-latestDate u-dt" dir="auto" datetime="2024-03-24T09:27:38-0700" data-timestamp="1711297658" data-date="Mar 24, 2024" data-time="9:27 AM" data-short="Mar '24" title="Mar 24, 2024 at 9:27 AM">Mar 24, 2024</time></a>
 				<div class="structItem-minor">
-					
+
 						<a href="/u/mrtwhs.157392/" class="username " dir="auto" data-user-id="157392" data-xf-init="member-tooltip" id="js-XFUniqueId11">mrtwhs</a>
-					
+
 				</div>
-			
+
 		</div>
-	
+
 
 	</div>
 
-						
-							
 
-	
+
+
+
 
 	<div class="structItem structItem--thread js-trendingThreadItem js-inlineModContainer js-threadListItem-302151" data-author="Zephyr1779">
 
-	
+
 		<div class="structItem-cell structItem-cell--icon">
 			<div class="structItem-iconContainer">
 				<a href="/u/zephyr1779.151562/" class="avatar avatar--s avatar--default avatar--default--dynamic" data-user-id="151562" data-xf-init="member-tooltip" style="background-color: #3333cc; color: #c2c2f0" id="js-XFUniqueId12">
-			<span class="avatar-u151562-s" role="img" aria-label="Zephyr1779">Z</span> 
+			<span class="avatar-u151562-s" role="img" aria-label="Zephyr1779">Z</span>
 		</a>
-				
+
 			</div>
 		</div>
-	
 
-	
+
+
 		<div class="structItem-cell structItem-cell--main" data-xf-init="touch-proxy">
-			
+
 
 			<div class="structItem-title">
-				
-				
+
+
 				<a href="/t/planning-on-studying-math-for-the-college-entrance-exam-i-need-a-little-help-in-organizing-how-i-should-study.302151/" class="" data-tp-primary="on" data-xf-init="preview-tooltip" data-preview-url="/t/planning-on-studying-math-for-the-college-entrance-exam-i-need-a-little-help-in-organizing-how-i-should-study.302151/preview" id="js-XFUniqueId30">
 					Planning on studying math for the college entrance exam, I need a little help in organizing how I should study
 				</a>
 			</div>
 
 			<div class="structItem-minor">
-				
 
-				
-					
+
+
+
 <ul class="structItem-parts">
 						<li><a href="/u/zephyr1779.151562/" class="username " dir="auto" data-user-id="151562" data-xf-init="member-tooltip" id="js-XFUniqueId13">Zephyr1779</a></li>
 						<li class="structItem-startDate"><a href="/t/planning-on-studying-math-for-the-college-entrance-exam-i-need-a-little-help-in-organizing-how-i-should-study.302151/" rel="nofollow"><time class="u-dt" dir="auto" datetime="2022-07-15T10:55:30-0700" data-timestamp="1657907730" data-date="Jul 15, 2022" data-time="10:55 AM" data-short="Jul '22" title="Jul 15, 2022 at 10:55 AM">Jul 15, 2022</time></a></li>
-						
+
 							<li><a href="/general-math/">General Math</a></li>
-						
+
 					</ul>
 
-					
+
 <ul class="structItem-parts">
 
 </ul>
-				
+
 			</div>
 		</div>
-	
 
-	
+
+
 		<div class="structItem-cell structItem-cell--meta" title="First message reaction score: 0">
 			<dl class="pairs pairs--justified">
 				<dt>Replies</dt>
@@ -2283,76 +2283,76 @@ Can you find n?</div>
 				<dd>1K</dd>
 			</dl>
 		</div>
-	
 
-	
+
+
 		<div class="structItem-cell structItem-cell--latest">
-			
+
 				<a href="/t/planning-on-studying-math-for-the-college-entrance-exam-i-need-a-little-help-in-organizing-how-i-should-study.302151/latest" rel="nofollow"><time class="structItem-latestDate u-dt" dir="auto" datetime="2022-08-01T08:31:19-0700" data-timestamp="1659367879" data-date="Aug 1, 2022" data-time="8:31 AM" data-short="Aug '22" title="Aug 1, 2022 at 8:31 AM">Aug 1, 2022</time></a>
 				<div class="structItem-minor">
-					
+
 						<a href="/u/ramanujanfromaustralia.152146/" class="username " dir="auto" data-user-id="152146" data-xf-init="member-tooltip" id="js-XFUniqueId14">RamanujanFromAustralia</a>
-					
+
 				</div>
-			
+
 		</div>
-	
+
 
 	</div>
 
-						
-							
 
-	
+
+
+
 
 	<div class="structItem structItem--thread js-trendingThreadItem js-inlineModContainer js-threadListItem-289331" data-author="BlazonGhost">
 
-	
+
 		<div class="structItem-cell structItem-cell--icon">
 			<div class="structItem-iconContainer">
 				<a href="/u/blazonghost.137380/" class="avatar avatar--s avatar--default avatar--default--dynamic" data-user-id="137380" data-xf-init="member-tooltip" style="background-color: #336666; color: #88c3c3" id="js-XFUniqueId15">
-			<span class="avatar-u137380-s" role="img" aria-label="BlazonGhost">B</span> 
+			<span class="avatar-u137380-s" role="img" aria-label="BlazonGhost">B</span>
 		</a>
-				
+
 			</div>
 		</div>
-	
 
-	
+
+
 		<div class="structItem-cell structItem-cell--main" data-xf-init="touch-proxy">
-			
+
 
 			<div class="structItem-title">
-				
-				
+
+
 				<a href="/t/objective-quantity-system-of-equations.289331/" class="" data-tp-primary="on" data-xf-init="preview-tooltip" data-preview-url="/t/objective-quantity-system-of-equations.289331/preview" id="js-XFUniqueId31">
 					Objective Quantity &amp; System of equations
 				</a>
 			</div>
 
 			<div class="structItem-minor">
-				
 
-				
-					
+
+
+
 <ul class="structItem-parts">
 						<li><a href="/u/blazonghost.137380/" class="username " dir="auto" data-user-id="137380" data-xf-init="member-tooltip" id="js-XFUniqueId16">BlazonGhost</a></li>
 						<li class="structItem-startDate"><a href="/t/objective-quantity-system-of-equations.289331/" rel="nofollow"><time class="u-dt" dir="auto" datetime="2021-03-01T14:24:36-0800" data-timestamp="1614637476" data-date="Mar 1, 2021" data-time="2:24 PM" data-short="Mar '21" title="Mar 1, 2021 at 2:24 PM">Mar 1, 2021</time></a></li>
-						
+
 							<li><a href="/algebra/">Algebra</a></li>
-						
+
 					</ul>
 
-					
+
 <ul class="structItem-parts">
 
 </ul>
-				
+
 			</div>
 		</div>
-	
 
-	
+
+
 		<div class="structItem-cell structItem-cell--meta" title="First message reaction score: 0">
 			<dl class="pairs pairs--justified">
 				<dt>Replies</dt>
@@ -2363,27 +2363,27 @@ Can you find n?</div>
 				<dd>1K</dd>
 			</dl>
 		</div>
-	
 
-	
+
+
 		<div class="structItem-cell structItem-cell--latest">
-			
+
 				<a href="/t/objective-quantity-system-of-equations.289331/latest" rel="nofollow"><time class="structItem-latestDate u-dt" dir="auto" datetime="2021-03-02T08:08:17-0800" data-timestamp="1614701297" data-date="Mar 2, 2021" data-time="8:08 AM" data-short="Mar '21" title="Mar 2, 2021 at 8:08 AM">Mar 2, 2021</time></a>
 				<div class="structItem-minor">
-					
+
 						<a href="/u/frick.127133/" class="username " dir="auto" data-user-id="127133" data-xf-init="member-tooltip" id="js-XFUniqueId17">frick</a>
-					
+
 				</div>
-			
+
 		</div>
-	
+
 
 	</div>
 
-						
+
 					</div>
 				</div>
-			
+
 		</div>
 	</div>
 
@@ -2391,15 +2391,6 @@ Can you find n?</div>
 
 
 <div class="blockMessage blockMessage--none">
-	
-
-	
-
-	
-
-</div>
-
-
 
 
 
@@ -2407,18 +2398,27 @@ Can you find n?</div>
 
 
 </div>
-					
+
+
+
+
+
+
+
+
+</div>
+
 				</div>
 
-				
+
 					<div class="p-body-sidebar">
-						
-						
+
+
 							<div class="block">
 		<div class="block-container" data-widget-id="51" data-widget-key="register_cta_public" data-widget-definition="html">
-			
+
 				<h3 class="block-minorHeader">Register CTA</h3>
-			
+
 			<div class="block-body block-row">
 				<strong>Register on Math Help Forum!</strong> This sidebar will go away, and you will see fewer ads.
 <a class="button--cta button button--icon button--icon--write rippleButton" href="/register/" rel="nofollow">
@@ -2431,25 +2431,25 @@ Can you find n?</div>
 
 	<div class="block" data-widget-id="50" data-widget-key="p_recent" data-widget-definition="new_posts">
 		<div class="block-container">
-			
+
 				<h3 class="block-minorHeader">
 					<a href="/community/">Recent Discussions</a>
 				</h3>
 				<ul class="block-body">
-					
-						
+
+
 							<li class="block-row">
-								
+
 	<div class="contentRow">
 		<div class="contentRow-figure">
 			<a href="/u/vinod.58312/" class="avatar avatar--xxs" data-user-id="58312" data-xf-init="member-tooltip" id="js-XFUniqueId18">
-			<img src="/data/avatars/s/58/58312.jpg?1647242087" alt="Vinod" class="avatar-u58312-s" width="48" height="48"> 
+			<img src="/data/avatars/s/58/58312.jpg?1647242087" alt="Vinod" class="avatar-u58312-s" width="48" height="48">
 		</a>
 		</div>
 		<div class="contentRow-main contentRow-main--close">
-			
+
 				<a href="/t/electric-direct-current-model-nonlinear-programming-model.311382/post-1002409">Electric direct current model (Nonlinear programming model)</a>
-			
+
 
 			<div class="contentRow-minor contentRow-minor--hideLinks">
 				<ul class="listInline listInline--bullet">
@@ -2464,19 +2464,19 @@ Can you find n?</div>
 	</div>
 
 							</li>
-						
+
 							<li class="block-row">
-								
+
 	<div class="contentRow">
 		<div class="contentRow-figure">
 			<a href="/u/zzephod.63243/" class="avatar avatar--xxs" data-user-id="63243" data-xf-init="member-tooltip" id="js-XFUniqueId19">
-			<img src="/data/avatars/s/63/63243.jpg?1763025761" alt="zzephod" class="avatar-u63243-s" width="48" height="48"> 
+			<img src="/data/avatars/s/63/63243.jpg?1763025761" alt="zzephod" class="avatar-u63243-s" width="48" height="48">
 		</a>
 		</div>
 		<div class="contentRow-main contentRow-main--close">
-			
+
 				<a href="/t/ivpusing-u-x.311385/post-1002404">IVPusing u(x)</a>
-			
+
 
 			<div class="contentRow-minor contentRow-minor--hideLinks">
 				<ul class="listInline listInline--bullet">
@@ -2491,19 +2491,19 @@ Can you find n?</div>
 	</div>
 
 							</li>
-						
+
 							<li class="block-row">
-								
+
 	<div class="contentRow">
 		<div class="contentRow-figure">
 			<a href="/u/jcbptrk.162584/" class="avatar avatar--xxs avatar--default avatar--default--dynamic" data-user-id="162584" data-xf-init="member-tooltip" style="background-color: #335214; color: #8cd147" id="js-XFUniqueId20">
-			<span class="avatar-u162584-s" role="img" aria-label="jcbptrk">J</span> 
+			<span class="avatar-u162584-s" role="img" aria-label="jcbptrk">J</span>
 		</a>
 		</div>
 		<div class="contentRow-main contentRow-main--close">
-			
+
 				<a href="/t/has-anyone-tried-algeprime.311384/post-1002394">Has Anyone tried AlgePrime</a>
-			
+
 
 			<div class="contentRow-minor contentRow-minor--hideLinks">
 				<ul class="listInline listInline--bullet">
@@ -2518,19 +2518,19 @@ Can you find n?</div>
 	</div>
 
 							</li>
-						
+
 							<li class="block-row">
-								
+
 	<div class="contentRow">
 		<div class="contentRow-figure">
 			<a href="/u/jcbptrk.162584/" class="avatar avatar--xxs avatar--default avatar--default--dynamic" data-user-id="162584" data-xf-init="member-tooltip" style="background-color: #335214; color: #8cd147" id="js-XFUniqueId21">
-			<span class="avatar-u162584-s" role="img" aria-label="jcbptrk">J</span> 
+			<span class="avatar-u162584-s" role="img" aria-label="jcbptrk">J</span>
 		</a>
 		</div>
 		<div class="contentRow-main contentRow-main--close">
-			
+
 				<a href="/t/hello-everyone.311383/post-1002393">Hello Everyone</a>
-			
+
 
 			<div class="contentRow-minor contentRow-minor--hideLinks">
 				<ul class="listInline listInline--bullet">
@@ -2545,19 +2545,19 @@ Can you find n?</div>
 	</div>
 
 							</li>
-						
+
 							<li class="block-row">
-								
+
 	<div class="contentRow">
 		<div class="contentRow-figure">
 			<a href="/u/zexuo.126112/" class="avatar avatar--xxs avatar--default avatar--default--dynamic" data-user-id="126112" data-xf-init="member-tooltip" style="background-color: #adebcc; color: #2eb873" id="js-XFUniqueId22">
-			<span class="avatar-u126112-s" role="img" aria-label="Zexuo">Z</span> 
+			<span class="avatar-u126112-s" role="img" aria-label="Zexuo">Z</span>
 		</a>
 		</div>
 		<div class="contentRow-main contentRow-main--close">
-			
+
 				<a href="/t/turning-nested-integral-into-a-2d-surface-integral.311380/post-1002390">Turning nested integral into a 2D surface integral</a>
-			
+
 
 			<div class="contentRow-minor contentRow-minor--hideLinks">
 				<ul class="listInline listInline--bullet">
@@ -2572,10 +2572,10 @@ Can you find n?</div>
 	</div>
 
 							</li>
-						
-					
+
+
 				</ul>
-			
+
 		</div>
 	</div>
 
@@ -2586,13 +2586,13 @@ Can you find n?</div>
 				<a href="/trending/" rel="nofollow">Trending Discussions</a>
 			</h3>
 			<ul class="block-body">
-				
+
 					<li class="block-row">
-						
+
 	<div class="contentRow">
 		<div class="contentRow-figure">
 			<a href="/u/vinod.58312/" class="avatar avatar--xxs" data-user-id="58312" data-xf-init="member-tooltip" id="js-XFUniqueId23">
-			<img src="/data/avatars/s/58/58312.jpg?1647242087" alt="Vinod" class="avatar-u58312-s" width="48" height="48"> 
+			<img src="/data/avatars/s/58/58312.jpg?1647242087" alt="Vinod" class="avatar-u58312-s" width="48" height="48">
 		</a>
 		</div>
 		<div class="contentRow-main contentRow-main--close">
@@ -2612,13 +2612,13 @@ Can you find n?</div>
 	</div>
 
 					</li>
-				
+
 					<li class="block-row">
-						
+
 	<div class="contentRow">
 		<div class="contentRow-figure">
 			<a href="/u/bigwave.33122/" class="avatar avatar--xxs" data-user-id="33122" data-xf-init="member-tooltip" id="js-XFUniqueId24">
-			<img src="/data/avatars/s/33/33122.jpg?1571646844" alt="bigwave" class="avatar-u33122-s" width="48" height="48"> 
+			<img src="/data/avatars/s/33/33122.jpg?1571646844" alt="bigwave" class="avatar-u33122-s" width="48" height="48">
 		</a>
 		</div>
 		<div class="contentRow-main contentRow-main--close">
@@ -2638,13 +2638,13 @@ Can you find n?</div>
 	</div>
 
 					</li>
-				
+
 					<li class="block-row">
-						
+
 	<div class="contentRow">
 		<div class="contentRow-figure">
 			<a href="/u/jcbptrk.162584/" class="avatar avatar--xxs avatar--default avatar--default--dynamic" data-user-id="162584" data-xf-init="member-tooltip" style="background-color: #335214; color: #8cd147" id="js-XFUniqueId25">
-			<span class="avatar-u162584-s" role="img" aria-label="jcbptrk">J</span> 
+			<span class="avatar-u162584-s" role="img" aria-label="jcbptrk">J</span>
 		</a>
 		</div>
 		<div class="contentRow-main contentRow-main--close">
@@ -2664,29 +2664,29 @@ Can you find n?</div>
 	</div>
 
 					</li>
-				
+
 			</ul>
 		</div>
 	</div>
-						
-						
+
+
 					</div>
-				
+
 			</div>
 
-			
-			
-	
+
+
+
 		<ul class="p-breadcrumbs p-breadcrumbs--bottom" itemscope="" itemtype="https://schema.org/BreadcrumbList">
-			
-				
 
-				
-				
 
-				
-					
-					
+
+
+
+
+
+
+
 	<li itemprop="itemListElement" itemscope="" itemtype="https://schema.org/ListItem">
 		<a href="/" itemprop="item">
 			<span itemprop="name">Home</span>
@@ -2694,11 +2694,11 @@ Can you find n?</div>
 		<meta itemprop="position" content="1">
 	</li>
 
-				
 
-				
-					
-					
+
+
+
+
 	<li itemprop="itemListElement" itemscope="" itemtype="https://schema.org/ListItem">
 		<a href="/community/" itemprop="item">
 			<span itemprop="name">Forums</span>
@@ -2706,10 +2706,10 @@ Can you find n?</div>
 		<meta itemprop="position" content="2">
 	</li>
 
-				
-				
-					
-					
+
+
+
+
 	<li itemprop="itemListElement" itemscope="" itemtype="https://schema.org/ListItem">
 		<a href="/high-school-math/" itemprop="item">
 			<span itemprop="name">High School Math</span>
@@ -2717,9 +2717,9 @@ Can you find n?</div>
 		<meta itemprop="position" content="3">
 	</li>
 
-				
-					
-					
+
+
+
 	<li itemprop="itemListElement" itemscope="" itemtype="https://schema.org/ListItem">
 		<a href="/algebra/" itemprop="item">
 			<span itemprop="name">Algebra</span>
@@ -2727,12 +2727,12 @@ Can you find n?</div>
 		<meta itemprop="position" content="4">
 	</li>
 
-				
-			
-		</ul>
-	
 
-			
+
+		</ul>
+
+
+
 		</div>
 	</div>
 
@@ -2740,7 +2740,7 @@ Can you find n?</div>
 		<div class="p-footer-inner">
 
 			<div class="p-footer-row">
-				
+
 				<div class="p-footer-row-opposite">
 					<ul class="p-footer-linkList">
 						<li><a href="/">Home</a></li>
@@ -2753,14 +2753,14 @@ Can you find n?</div>
 					Copyright © 2008-2026 Math Help Forum. All rights reserved.<br>
 					<a href="/terms/" rel="nofollow">Terms of Service</a> • <a href="/privacy/" rel="nofollow">Privacy Policy</a>
 				</div>
-			
+
 		</div>
 	</footer>
 </div> <!-- closing p-pageWrapper -->
 
 <div class="u-bottomFixer js-bottomFixTarget">
-	
-	
+
+
 </div>
 
 <div class="u-navButtons js-navButtons">
@@ -2774,7 +2774,6 @@ Can you find n?</div>
 		<input type="text" name="_xfClientLoadTime" value="" id="_xfClientLoadTime" title="_xfClientLoadTime" tabindex="-1">
 	</form>
 
-	
 
 
 
@@ -2782,10 +2781,11 @@ Can you find n?</div>
 
 
 
-	
-	
-		
-		
+
+
+
+
+
 			<script type="application/ld+json">
 				{
     "@context": "https://schema.org",
@@ -2834,8 +2834,8 @@ Can you find n?</div>
     }
 }
 			</script>
-		
-	
+
+
 
 
 	<script type="text/javascript" async="" src="https://btloader.com/tag?o=5698917485248512&amp;upapi=true&amp;domain=mathhelpforum.com"></script>

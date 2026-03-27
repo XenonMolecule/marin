@@ -140,10 +140,16 @@ _FRAMEWORK_URLS = [
 ALL_CODE_URLS = _STACKEXCHANGE_URLS + _LANG_DOC_URLS + _TUTORIAL_URLS + _FRAMEWORK_URLS
 
 RECENT_CC_CRAWL_INDICES = [
-    "CC-MAIN-2026-08", "CC-MAIN-2026-04",
-    "CC-MAIN-2025-51", "CC-MAIN-2025-47", "CC-MAIN-2025-43",
-    "CC-MAIN-2025-38", "CC-MAIN-2025-33", "CC-MAIN-2025-30",
-    "CC-MAIN-2024-51", "CC-MAIN-2024-46",
+    "CC-MAIN-2026-08",
+    "CC-MAIN-2026-04",
+    "CC-MAIN-2025-51",
+    "CC-MAIN-2025-47",
+    "CC-MAIN-2025-43",
+    "CC-MAIN-2025-38",
+    "CC-MAIN-2025-33",
+    "CC-MAIN-2025-30",
+    "CC-MAIN-2024-51",
+    "CC-MAIN-2024-46",
 ]
 
 # ---------------------------------------------------------------------------

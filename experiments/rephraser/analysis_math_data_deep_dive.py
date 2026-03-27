@@ -101,7 +101,7 @@ def classify_extraction_structure(text: str) -> str:
         # Check if answer section has actual content
         answer_match = _QRA_ANSWER.search(text)
         if answer_match:
-            after_answer = text[answer_match.end():].strip()
+            after_answer = text[answer_match.end() :].strip()
             if len(after_answer) < 10 or "not provided" in after_answer.lower():
                 return "qa_missing_answer"
         return "qa_complete"
@@ -237,9 +237,7 @@ def analyze_data_source(glob_path: str, data_type: str) -> tuple[dict, dict]:
     total_docs = 0
     total_errors = 0
 
-    classify_fn = (
-        classify_extraction_structure if data_type == "extraction" else classify_resiliparse_structure
-    )
+    classify_fn = classify_extraction_structure if data_type == "extraction" else classify_resiliparse_structure
 
     logger.info(f"Analyzing {data_type} data from: {glob_path}")
     file_list = fsspec.open_files(glob_path)
@@ -290,15 +288,17 @@ def analyze_data_source(glob_path: str, data_type: str) -> tuple[dict, dict]:
                     bucket = f"{domain}::{tier}"
                     sample_counts[bucket] += 1
                     if len(samples[bucket]) < MAX_SAMPLES_PER_BUCKET:
-                        samples[bucket].append({
-                            "url": url,
-                            "domain": domain,
-                            "structure": structure,
-                            "quality_tier": tier,
-                            "indicators": indicators,
-                            "text_preview": text[:2000],
-                            "text_length": len(text),
-                        })
+                        samples[bucket].append(
+                            {
+                                "url": url,
+                                "domain": domain,
+                                "structure": structure,
+                                "quality_tier": tier,
+                                "indicators": indicators,
+                                "text_preview": text[:2000],
+                                "text_length": len(text),
+                            }
+                        )
                     else:
                         j = rng.randint(0, sample_counts[bucket] - 1)
                         if j < MAX_SAMPLES_PER_BUCKET:
@@ -320,8 +320,7 @@ def analyze_data_source(glob_path: str, data_type: str) -> tuple[dict, dict]:
             logger.info(f"  Processed {file_idx + 1}/{len(file_list)} files, {total_docs} docs so far")
 
     logger.info(
-        f"Done analyzing {data_type}: {total_docs} docs across {len(domain_stats)} domains "
-        f"({total_errors} errors)"
+        f"Done analyzing {data_type}: {total_docs} docs across {len(domain_stats)} domains " f"({total_errors} errors)"
     )
     return dict(domain_stats), dict(samples)
 
@@ -517,8 +516,10 @@ def generate_v1_report(
             for doc in docs[:2]:
                 if high_shown >= 5:
                     break
-                lines.append(f"**Domain**: {doc['domain']} | **Structure**: {doc['structure']} | "
-                           f"**Length**: {doc['text_length']:,} chars")
+                lines.append(
+                    f"**Domain**: {doc['domain']} | **Structure**: {doc['structure']} | "
+                    f"**Length**: {doc['text_length']:,} chars"
+                )
                 lines.append(f"**URL**: {doc['url']}")
                 lines.append("```")
                 lines.append(doc["text_preview"][:500])
@@ -537,8 +538,10 @@ def generate_v1_report(
             for doc in docs[:2]:
                 if low_shown >= 5:
                     break
-                lines.append(f"**Domain**: {doc['domain']} | **Structure**: {doc['structure']} | "
-                           f"**Length**: {doc['text_length']:,} chars")
+                lines.append(
+                    f"**Domain**: {doc['domain']} | **Structure**: {doc['structure']} | "
+                    f"**Length**: {doc['text_length']:,} chars"
+                )
                 lines.append(f"**URL**: {doc['url']}")
                 lines.append("```")
                 lines.append(doc["text_preview"][:500])
@@ -562,9 +565,7 @@ def generate_v1_report(
     lines.append("")
     lines.append("| Rank | Domain | Docs | Chars | % of Total |")
     lines.append("|-----:|--------|-----:|------:|-----------:|")
-    for rank, (domain, ds) in enumerate(
-        sorted(extraction_stats.items(), key=lambda x: -x[1].total_chars)[:10], 1
-    ):
+    for rank, (domain, ds) in enumerate(sorted(extraction_stats.items(), key=lambda x: -x[1].total_chars)[:10], 1):
         pct = 100 * ds.total_chars / max(total_chars, 1)
         lines.append(f"| {rank} | {domain} | {ds.count:,} | {ds.total_chars:,} | {pct:.1f}% |")
     lines.append("")

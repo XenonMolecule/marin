@@ -112,8 +112,7 @@ def _build_domain_filter(patterns: list[str], match_type: str) -> str:
             if "/" in p:
                 host, path = p.split("/", 1)
                 conditions.append(
-                    f"(url_host_name = {_sql_quote(host)} "
-                    f"AND url_path LIKE {_sql_quote('/' + path + '%')})"
+                    f"(url_host_name = {_sql_quote(host)} " f"AND url_path LIKE {_sql_quote('/' + path + '%')})"
                 )
             else:
                 conditions.append(f"url_host_name = {_sql_quote(p)}")
@@ -147,8 +146,7 @@ def _query_single_crawl(
     if mime_filter:
         # Substring match to handle "text/html; charset=utf-8" etc.
         mime_conditions = " OR ".join(
-            f"LOWER(content_mime_detected) LIKE {_sql_quote('%' + m.lower() + '%')}"
-            for m in mime_filter
+            f"LOWER(content_mime_detected) LIKE {_sql_quote('%' + m.lower() + '%')}" for m in mime_filter
         )
         mime_clause = f"AND ({mime_conditions})"
 
@@ -299,9 +297,7 @@ def query_cdx_columnar(config: CDXQueryConfig):
     if not crawls_to_query:
         logger.info("All crawls cached, skipping queries")
     else:
-        logger.info(
-            f"Querying {len(crawls_to_query)} crawls with {max_workers} parallel workers"
-        )
+        logger.info(f"Querying {len(crawls_to_query)} crawls with {max_workers} parallel workers")
 
         completed = 0
         failed = 0
@@ -333,10 +329,7 @@ def query_cdx_columnar(config: CDXQueryConfig):
                 except Exception as e:
                     with _progress_lock:
                         failed += 1
-                    logger.warning(
-                        f"[{completed + failed}/{len(crawls_to_query)}] {crawl_id}: "
-                        f"query failed: {e}"
-                    )
+                    logger.warning(f"[{completed + failed}/{len(crawls_to_query)}] {crawl_id}: " f"query failed: {e}")
 
         if failed:
             logger.warning(f"{failed} crawls failed (will be retried on next run)")

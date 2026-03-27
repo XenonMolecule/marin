@@ -111,54 +111,54 @@ CRAWL_INDICES = [
 # Domain match sources
 DOMAIN_SOURCES = [
     # === Modern large (>5k in 2025) ===
-    UrlPattern("geogebra.org", "domain"),              # 72k modern, 104k in 2018
-    UrlPattern("symbolab.com", "domain"),               # 43k modern
-    UrlPattern("khanacademy.org", "domain"),             # 35k modern, 83k in 2016
-    UrlPattern("splashlearn.com", "domain"),             # 24k modern (K-5)
-    UrlPattern("varsitytutors.com", "domain"),           # 21k modern (K-12/SAT)
-    UrlPattern("mathcentre.ac.uk", "domain"),            # 8.1k modern (UK university)
-    UrlPattern("openstax.org", "domain"),                # 7.6k modern (OER textbooks)
-    UrlPattern("purplemath.com", "domain"),              # 7.4k modern (algebra-precalc)
-    UrlPattern("mathway.com", "domain"),                 # 7.3k modern (solver)
-    UrlPattern("sparknotes.com", "domain"),              # 7.2k modern (study guides)
-    UrlPattern("mathisfunforum.com", "domain"),          # 3.1k modern (K-12 Q&A)
-    UrlPattern("onlinemathlearning.com", "domain"),      # 3.3k modern (K-12 tutorials)
-    UrlPattern("savemyexams.com", "domain"),             # 2.7k modern (exam prep)
-    UrlPattern("softschools.com", "domain"),             # 1.9k modern (K-8)
-    UrlPattern("illustrativemathematics.org", "domain"), # 1.5k modern (K-12 curriculum)
-    UrlPattern("desmos.com", "domain"),                  # 1.2k modern (graphing)
-    UrlPattern("math-only-math.com", "domain"),          # 1.1k modern, 3k in 2016
-    UrlPattern("brilliant.org", "domain"),               # 1k modern (HS-university)
-    UrlPattern("helpingwithmath.com", "domain"),         # 919 modern (K-8)
-    UrlPattern("math-drills.com", "domain"),             # 4.7k modern (worksheets)
-    UrlPattern("mathplanet.com", "domain"),              # 149 modern (HS structured)
-    UrlPattern("mathsisfun.com", "domain"),              # 4.2k in 2013, clean HTML
-    UrlPattern("coolmath.com", "domain"),                # 348 modern (K-8)
+    UrlPattern("geogebra.org", "domain"),  # 72k modern, 104k in 2018
+    UrlPattern("symbolab.com", "domain"),  # 43k modern
+    UrlPattern("khanacademy.org", "domain"),  # 35k modern, 83k in 2016
+    UrlPattern("splashlearn.com", "domain"),  # 24k modern (K-5)
+    UrlPattern("varsitytutors.com", "domain"),  # 21k modern (K-12/SAT)
+    UrlPattern("mathcentre.ac.uk", "domain"),  # 8.1k modern (UK university)
+    UrlPattern("openstax.org", "domain"),  # 7.6k modern (OER textbooks)
+    UrlPattern("purplemath.com", "domain"),  # 7.4k modern (algebra-precalc)
+    UrlPattern("mathway.com", "domain"),  # 7.3k modern (solver)
+    UrlPattern("sparknotes.com", "domain"),  # 7.2k modern (study guides)
+    UrlPattern("mathisfunforum.com", "domain"),  # 3.1k modern (K-12 Q&A)
+    UrlPattern("onlinemathlearning.com", "domain"),  # 3.3k modern (K-12 tutorials)
+    UrlPattern("savemyexams.com", "domain"),  # 2.7k modern (exam prep)
+    UrlPattern("softschools.com", "domain"),  # 1.9k modern (K-8)
+    UrlPattern("illustrativemathematics.org", "domain"),  # 1.5k modern (K-12 curriculum)
+    UrlPattern("desmos.com", "domain"),  # 1.2k modern (graphing)
+    UrlPattern("math-only-math.com", "domain"),  # 1.1k modern, 3k in 2016
+    UrlPattern("brilliant.org", "domain"),  # 1k modern (HS-university)
+    UrlPattern("helpingwithmath.com", "domain"),  # 919 modern (K-8)
+    UrlPattern("math-drills.com", "domain"),  # 4.7k modern (worksheets)
+    UrlPattern("mathplanet.com", "domain"),  # 149 modern (HS structured)
+    UrlPattern("mathsisfun.com", "domain"),  # 4.2k in 2013, clean HTML
+    UrlPattern("coolmath.com", "domain"),  # 348 modern (K-8)
     # === Historical goldmines (best in 2013/2016) ===
-    UrlPattern("mathhelpforum.com", "domain"),           # 506k in 2016!
-    UrlPattern("mathforum.org", "domain"),               # 389k in 2013
-    UrlPattern("jiskha.com", "domain"),                  # 258k in 2013
-    UrlPattern("brainly.com", "domain"),                 # 203k in 2016
-    UrlPattern("mathoverflow.net", "domain"),            # 202k in 2013
-    UrlPattern("brainmass.com", "domain"),               # 114k in 2016
-    UrlPattern("algebrahelp.com", "domain"),             # 58k in 2016
-    UrlPattern("physicsforums.com", "domain"),           # 53k in 2013-2018
-    UrlPattern("cliffsnotes.com", "domain"),             # 43k in 2013
-    UrlPattern("aaamath.com", "domain"),                 # 8.4k in 2016 (K-8)
-    UrlPattern("homeschoolmath.net", "domain"),          # 2.2k in 2016 (K-8)
-    UrlPattern("mathgoodies.com", "domain"),             # 3.4k in 2013
-    UrlPattern("mathwarehouse.com", "domain"),           # 3.3k in 2018
-    UrlPattern("engageny.org", "domain"),                # 4.8k in 2018 (K-12 curriculum)
+    UrlPattern("mathhelpforum.com", "domain"),  # 506k in 2016!
+    UrlPattern("mathforum.org", "domain"),  # 389k in 2013
+    UrlPattern("jiskha.com", "domain"),  # 258k in 2013
+    UrlPattern("brainly.com", "domain"),  # 203k in 2016
+    UrlPattern("mathoverflow.net", "domain"),  # 202k in 2013
+    UrlPattern("brainmass.com", "domain"),  # 114k in 2016
+    UrlPattern("algebrahelp.com", "domain"),  # 58k in 2016
+    UrlPattern("physicsforums.com", "domain"),  # 53k in 2013-2018
+    UrlPattern("cliffsnotes.com", "domain"),  # 43k in 2013
+    UrlPattern("aaamath.com", "domain"),  # 8.4k in 2016 (K-8)
+    UrlPattern("homeschoolmath.net", "domain"),  # 2.2k in 2016 (K-8)
+    UrlPattern("mathgoodies.com", "domain"),  # 3.4k in 2013
+    UrlPattern("mathwarehouse.com", "domain"),  # 3.3k in 2018
+    UrlPattern("engageny.org", "domain"),  # 4.8k in 2018 (K-12 curriculum)
 ]
 
 # Host match sources (require exact hostname match)
 HOST_SOURCES = [
-    UrlPattern("math.libretexts.org", "host"),           # 7.4k modern (OER textbooks)
-    UrlPattern("forums.wolfram.com", "host"),            # 4.5k modern (Mathematica Q&A)
-    UrlPattern("nrich.maths.org", "host"),               # 1.4k modern (UK enrichment)
-    UrlPattern("tutorial.math.lamar.edu", "host"),       # 818 modern (Paul's Online Notes)
-    UrlPattern("math.stackexchange.com", "host"),        # 148k in 2013
-    UrlPattern("physics.stackexchange.com", "host"),     # 574 in 2018
+    UrlPattern("math.libretexts.org", "host"),  # 7.4k modern (OER textbooks)
+    UrlPattern("forums.wolfram.com", "host"),  # 4.5k modern (Mathematica Q&A)
+    UrlPattern("nrich.maths.org", "host"),  # 1.4k modern (UK enrichment)
+    UrlPattern("tutorial.math.lamar.edu", "host"),  # 818 modern (Paul's Online Notes)
+    UrlPattern("math.stackexchange.com", "host"),  # 148k in 2013
+    UrlPattern("physics.stackexchange.com", "host"),  # 574 in 2018
 ]
 
 # ---------------------------------------------------------------------------

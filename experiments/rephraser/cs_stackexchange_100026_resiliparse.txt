@@ -82,7 +82,7 @@ if (len(list) is 0):
 if (number < list[0]):
     return 0
 if(countCoinsList[i]<8)
-     countCoinsList[i]+=1 
+     countCoinsList[i]+=1
      tmp1= change(list, (number - list[i]),countCoinsList,totCount+1)
 
  tmp2= change(list[i+1:], number,countCoinsList,totCount)

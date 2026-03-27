@@ -35,15 +35,62 @@ RESILIPARSE = "gs://marin-us-central1/processed/medical_resiliparse_text-9b0736"
 OUTPUT_PATH = "gs://marin-us-central1/scratch/medical_data_analysis.json"
 
 MEDICAL_KEYWORDS = [
-    "diagnosis", "treatment", "symptoms", "medication", "drug", "dose", "dosage",
-    "patient", "clinical", "therapy", "surgery", "condition", "disease", "disorder",
-    "blood", "pain", "doctor", "nurse", "hospital", "prescription", "side effects",
-    "chronic", "acute", "infection", "cancer", "diabetes", "heart", "lung",
-    "liver", "kidney", "brain", "bone", "muscle", "nerve", "vitamin",
-    "antibiotic", "vaccine", "allergy", "inflammation", "biopsy", "MRI",
-    "cholesterol", "blood pressure", "glucose", "insulin", "hormone",
-    "nursing", "NCLEX", "pharmacology", "anatomy", "physiology",
-    "cardiology", "neurology", "pediatrics", "orthopedic", "radiology",
+    "diagnosis",
+    "treatment",
+    "symptoms",
+    "medication",
+    "drug",
+    "dose",
+    "dosage",
+    "patient",
+    "clinical",
+    "therapy",
+    "surgery",
+    "condition",
+    "disease",
+    "disorder",
+    "blood",
+    "pain",
+    "doctor",
+    "nurse",
+    "hospital",
+    "prescription",
+    "side effects",
+    "chronic",
+    "acute",
+    "infection",
+    "cancer",
+    "diabetes",
+    "heart",
+    "lung",
+    "liver",
+    "kidney",
+    "brain",
+    "bone",
+    "muscle",
+    "nerve",
+    "vitamin",
+    "antibiotic",
+    "vaccine",
+    "allergy",
+    "inflammation",
+    "biopsy",
+    "MRI",
+    "cholesterol",
+    "blood pressure",
+    "glucose",
+    "insulin",
+    "hormone",
+    "nursing",
+    "NCLEX",
+    "pharmacology",
+    "anatomy",
+    "physiology",
+    "cardiology",
+    "neurology",
+    "pediatrics",
+    "orthopedic",
+    "radiology",
 ]
 
 
@@ -134,17 +181,21 @@ def main():
     raw_shards = list_shards(EXTRACTION_RAW)
     logger.info(f"  Found {len(raw_shards)} raw extraction shards")
 
-    domain_analysis = defaultdict(lambda: {
-        "total": 0, "filtered": 0, "kept": 0,
-        "filter_reasons": Counter(),
-        "kept_med_densities": [],
-        "filtered_med_densities": [],
-        "kept_text_lens": [],
-        "filtered_resili_lens": [],
-        "kept_resili_lens": [],
-        "filtered_extract_lens": [],
-        "kept_extract_lens": [],
-    })
+    domain_analysis = defaultdict(
+        lambda: {
+            "total": 0,
+            "filtered": 0,
+            "kept": 0,
+            "filter_reasons": Counter(),
+            "kept_med_densities": [],
+            "filtered_med_densities": [],
+            "kept_text_lens": [],
+            "filtered_resili_lens": [],
+            "kept_resili_lens": [],
+            "filtered_extract_lens": [],
+            "kept_extract_lens": [],
+        }
+    )
 
     raw_total = 0
     raw_filtered = 0
@@ -162,10 +213,10 @@ def main():
             # Parse think/output
             if "</think>" in text and "<think>" in text:
                 actual = text.split("</think>")[-1].strip()
-                think = text[text.index("<think>") + 7:text.index("</think>")]
+                think = text[text.index("<think>") + 7 : text.index("</think>")]
             elif "</think>" in text:
                 actual = text.split("</think>")[-1].strip()
-                think = text[:text.index("</think>")]
+                think = text[: text.index("</think>")]
             else:
                 actual = text
                 think = ""

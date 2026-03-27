@@ -68,9 +68,7 @@ def _cdx_get(url: str, params: dict) -> requests.Response | None:
             if resp.status_code in RETRYABLE_STATUS_CODES:
                 if attempt < MAX_RETRIES:
                     wait = RETRY_BACKOFF * attempt
-                    logger.warning(
-                        f"  HTTP {resp.status_code}, retrying in {wait}s (attempt {attempt}/{MAX_RETRIES})"
-                    )
+                    logger.warning(f"  HTTP {resp.status_code}, retrying in {wait}s (attempt {attempt}/{MAX_RETRIES})")
                     time.sleep(wait)
                     continue
                 else:
@@ -196,9 +194,7 @@ def probe_page0(crawl_id: str, url_pattern: str, match_type: str) -> tuple[int, 
     return raw, filtered
 
 
-def probe_source(
-    url_pattern: str, match_type: str, crawl_indices: list[str]
-) -> dict:
+def probe_source(url_pattern: str, match_type: str, crawl_indices: list[str]) -> dict:
     """Probe a single source across all crawl indices.
 
     Returns a dict with per-crawl results and summary statistics.

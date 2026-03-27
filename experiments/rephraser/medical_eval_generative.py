@@ -27,16 +27,22 @@ EVAL_ENGINE_KWARGS = {"max_model_len": 4096, "max_gen_toks": 256}
 MMLU_GENERATIVE_EVALS = [
     EvalTaskConfig(name="mmlu_anatomy_generative", num_fewshot=5, task_alias="mmlu_anatomy_gen_5shot"),
     EvalTaskConfig(
-        name="mmlu_clinical_knowledge_generative", num_fewshot=5, task_alias="mmlu_clinical_knowledge_gen_5shot",
+        name="mmlu_clinical_knowledge_generative",
+        num_fewshot=5,
+        task_alias="mmlu_clinical_knowledge_gen_5shot",
     ),
     EvalTaskConfig(name="mmlu_college_medicine_generative", num_fewshot=5, task_alias="mmlu_college_medicine_gen_5shot"),
     EvalTaskConfig(name="mmlu_medical_genetics_generative", num_fewshot=5, task_alias="mmlu_medical_genetics_gen_5shot"),
     EvalTaskConfig(
-        name="mmlu_professional_medicine_generative", num_fewshot=5, task_alias="mmlu_professional_medicine_gen_5shot",
+        name="mmlu_professional_medicine_generative",
+        num_fewshot=5,
+        task_alias="mmlu_professional_medicine_gen_5shot",
     ),
     EvalTaskConfig(name="mmlu_college_biology_generative", num_fewshot=5, task_alias="mmlu_college_biology_gen_5shot"),
     EvalTaskConfig(
-        name="mmlu_high_school_biology_generative", num_fewshot=5, task_alias="mmlu_high_school_biology_gen_5shot",
+        name="mmlu_high_school_biology_generative",
+        num_fewshot=5,
+        task_alias="mmlu_high_school_biology_gen_5shot",
     ),
 ]
 

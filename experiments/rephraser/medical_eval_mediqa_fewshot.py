@@ -21,12 +21,8 @@ MEDIQA_2SHOT = [
 
 MODELS = {
     "baseline": "Qwen/Qwen3-0.6B",
-    "resili-best": (
-        "gs://marin-us-east5/checkpoints/medical-resili-p1-lr7e-6_bs64-qwen3-0.6b-24b1e7/hf/step-9282"
-    ),
-    "extract-best": (
-        "gs://marin-us-east5/checkpoints/medical-extract-p1-lr5e-6_bs32-qwen3-0.6b-c967ff/hf/step-3573"
-    ),
+    "resili-best": "gs://marin-us-east5/checkpoints/medical-resili-p1-lr7e-6_bs64-qwen3-0.6b-24b1e7/hf/step-9282",
+    "extract-best": "gs://marin-us-east5/checkpoints/medical-extract-p1-lr5e-6_bs32-qwen3-0.6b-c967ff/hf/step-3573",
 }
 
 all_steps: list[ExecutorStep] = []

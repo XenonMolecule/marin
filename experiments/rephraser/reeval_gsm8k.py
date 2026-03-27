@@ -32,7 +32,9 @@ GSM8K_ENGINE_KWARGS = {"max_model_len": 4096, "max_gen_toks": 1024}
 CHECKPOINTS = {
     "reeval8-baseline": "gs://marin-us-central1/exp2166-scaling-ladder-nemotron-validation-optimal-1e+20-9563f0/hf",
     "reeval8-gsm8k-plaintext-sft": "gs://marin-us-central1/checkpoints/gsm8k-plaintext-sft-1e20-qwen3-a40a32/hf",
-    "reeval8-qra-plaintext-sft": "gs://marin-us-central1/checkpoints/mathhelpforum-qra-plaintext-sft-1e20-qwen3-8b0030/hf",
+    "reeval8-qra-plaintext-sft": (
+        "gs://marin-us-central1/checkpoints/mathhelpforum-qra-plaintext-sft-1e20-qwen3-8b0030/hf"
+    ),
     "reeval8-resiliparse-sft": "gs://marin-us-central1/checkpoints/mathhelpforum-resiliparse-sft-1e20-qwen3-56a96f/hf",
 }
 

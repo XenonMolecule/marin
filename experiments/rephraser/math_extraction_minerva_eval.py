@@ -52,16 +52,13 @@ EVAL_RESOURCE = ResourceConfig.with_tpu("v5p-8")
 MODELS = {
     "minerva-baseline-qwen3-0.6b-base": "Qwen/Qwen3-0.6B-Base",
     "minerva-math-v2-default-qwen3-0.6b-base": (
-        "gs://marin-us-central1/checkpoints/"
-        "math_multi_v2-extract-unified-qwen3-0.6b-base-sft-47198e/hf"
+        "gs://marin-us-central1/checkpoints/" "math_multi_v2-extract-unified-qwen3-0.6b-base-sft-47198e/hf"
     ),
     "minerva-math-v2-lowreg-qwen3-0.6b-base": (
-        "gs://marin-us-central1/checkpoints/"
-        "math-v2-lowreg-qwen3-0.6b-base-4343be/hf"
+        "gs://marin-us-central1/checkpoints/" "math-v2-lowreg-qwen3-0.6b-base-4343be/hf"
     ),
     "minerva-math-v2-highreg-qwen3-0.6b-base": (
-        "gs://marin-us-central1/checkpoints/"
-        "math-v2-highreg-qwen3-0.6b-base-d22f28/hf"
+        "gs://marin-us-central1/checkpoints/" "math-v2-highreg-qwen3-0.6b-base-d22f28/hf"
     ),
 }
 

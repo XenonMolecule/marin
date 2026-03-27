@@ -252,7 +252,7 @@ def separate_paren_groups(paren_string: str) -> List[str]:
                 stack = []
     if stack:
         result.append(''.join(stack))
-    return result 
+    return result
 ```
 
 ---
@@ -320,7 +320,7 @@ Here's the implementation of the `parse_music` function:
             beats.append(2)
         elif note == '.|':
             beats.append(1)
-    return beats 
+    return beats
 ```
 
 **Resiliparse Output (FAIL):**
@@ -388,7 +388,7 @@ def has_close_elements(numbers: List[float], threshold: float) -> bool:
                 if distance < threshold:
                     return True
 
-    return False 
+    return False
 ```
 
 **Resiliparse Output (PASS):**
@@ -400,7 +400,7 @@ def has_close_elements(numbers: List[float], threshold: float) -> bool:
                 if distance < threshold:
                     return True
 
-    return False 
+    return False
 ```
 
 ---
@@ -456,7 +456,7 @@ def below_zero(operations: List[int]) -> bool:
         balance += op
         if balance < 0:
             return True
-    return False 
+    return False
 ```
 
 **Resiliparse Output (PASS):**
@@ -466,7 +466,7 @@ def below_zero(operations: List[int]) -> bool:
         balance += op
         if balance < 0:
             return True
-    return False 
+    return False
 ```
 
 ---
@@ -619,7 +619,7 @@ assert decode_shift(encode_shift("Nunc eget sapien vel sapien tincidunt tincidun
     """
     takes as input string encoded with encode_shift function. Returns decoded string.
     """
-    return decode_shift(s) 
+    return decode_shift(s)
 ```
 
 ---
@@ -670,7 +670,7 @@ def sum_product(numbers: List[int]) -> Tuple[int, int]:
     if not numbers:
         return 0, 1
     else:
-        return sum(numbers), reduce(lambda x, y: x * y, numbers) 
+        return sum(numbers), reduce(lambda x, y: x * y, numbers)
 ```
 
 **Resiliparse Output (FAIL):**
@@ -678,7 +678,7 @@ def sum_product(numbers: List[int]) -> Tuple[int, int]:
     if not numbers:
         return 0, 1
     else:
-        return sum(numbers), reduce(lambda x, y: x * y, numbers) 
+        return sum(numbers), reduce(lambda x, y: x * y, numbers)
 ```
 
 ---
@@ -853,7 +853,7 @@ def find_zero(xs: list):
     x = 0
     while poly(xs, x) != 0:
         x += 0.0001
-    return round(x, 2) 
+    return round(x, 2)
 ```
 
 **Resiliparse Output (PASS):**
@@ -871,7 +871,7 @@ def find_zero(xs: list):
             b = mid
         else:
             a = mid
-    return a 
+    return a
 ```
 
 ---

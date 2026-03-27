@@ -50,16 +50,13 @@ EVAL_RESOURCE = ResourceConfig.with_tpu("v5p-8")
 # ---------------------------------------------------------------------------
 MODELS = {
     "minerva-math-resili-default-qwen3-0.6b-base": (
-        "gs://marin-us-central1/checkpoints/"
-        "math_multi_v2-resiliparse-qwen3-0.6b-base-sft-66e234/hf"
+        "gs://marin-us-central1/checkpoints/" "math_multi_v2-resiliparse-qwen3-0.6b-base-sft-66e234/hf"
     ),
     "minerva-math-resili-lowreg-qwen3-0.6b-base": (
-        "gs://marin-us-central1/checkpoints/"
-        "math-resili-lowreg-qwen3-0.6b-base-b8490f/hf"
+        "gs://marin-us-central1/checkpoints/" "math-resili-lowreg-qwen3-0.6b-base-b8490f/hf"
     ),
     "minerva-math-resili-highreg-qwen3-0.6b-base": (
-        "gs://marin-us-central1/checkpoints/"
-        "math-resili-highreg-qwen3-0.6b-base-0f1235/hf"
+        "gs://marin-us-central1/checkpoints/" "math-resili-highreg-qwen3-0.6b-base-0f1235/hf"
     ),
 }
 

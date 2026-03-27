@@ -1,3 +1,6 @@
+# Copyright 2025 The Marin Authors
+# SPDX-License-Identifier: Apache-2.0
+
 """Empirical CDX API rate limit test.
 
 Tests increasing levels of concurrency against the CDX API to find
@@ -93,7 +96,9 @@ def main():
         return
 
     print()
-    print(f"{'Conc':>5} {'Total':>6} {'OK':>5} {'Fail':>5} {'Wall(s)':>8} {'QPS':>6} {'p50ms':>7} {'p90ms':>7} {'max_ms':>7} {'Errors'}")
+    print(
+        f"{'Conc':>5} {'Total':>6} {'OK':>5} {'Fail':>5} {'Wall(s)':>8} {'QPS':>6} {'p50ms':>7} {'p90ms':>7} {'max_ms':>7} {'Errors'}"
+    )
     print("-" * 90)
 
     configs = [
@@ -135,7 +140,13 @@ def main():
             resp = requests.get(CDX_INDEX_URL, params=heavy_params, timeout=60)
             elapsed = time.monotonic() - t0
             lines = len(resp.text.strip().split("\n")) if resp.status_code == 200 else 0
-            return {"id": request_id, "status": resp.status_code, "elapsed": elapsed, "ok": resp.status_code == 200, "lines": lines}
+            return {
+                "id": request_id,
+                "status": resp.status_code,
+                "elapsed": elapsed,
+                "ok": resp.status_code == 200,
+                "lines": lines,
+            }
         except Exception as e:
             return {"id": request_id, "status": str(e)[:80], "elapsed": time.monotonic() - t0, "ok": False, "lines": 0}
 

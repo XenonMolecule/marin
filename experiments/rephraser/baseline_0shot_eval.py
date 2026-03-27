@@ -21,9 +21,13 @@ from marin.execution.executor import executor_main
 MATH_EVALS_0SHOT = [
     EvalTaskConfig(name="gsm8k_cot", num_fewshot=0, task_alias="gsm8k_cot_0shot"),
     EvalTaskConfig(name="hendrycks_math_algebra", num_fewshot=0, task_alias="hendrycks_math_algebra_0shot"),
-    EvalTaskConfig(name="hendrycks_math_counting_and_prob", num_fewshot=0, task_alias="hendrycks_math_counting_and_prob_0shot"),
+    EvalTaskConfig(
+        name="hendrycks_math_counting_and_prob", num_fewshot=0, task_alias="hendrycks_math_counting_and_prob_0shot"
+    ),
     EvalTaskConfig(name="hendrycks_math_geometry", num_fewshot=0, task_alias="hendrycks_math_geometry_0shot"),
-    EvalTaskConfig(name="hendrycks_math_intermediate_algebra", num_fewshot=0, task_alias="hendrycks_math_intermediate_algebra_0shot"),
+    EvalTaskConfig(
+        name="hendrycks_math_intermediate_algebra", num_fewshot=0, task_alias="hendrycks_math_intermediate_algebra_0shot"
+    ),
     EvalTaskConfig(name="hendrycks_math_num_theory", num_fewshot=0, task_alias="hendrycks_math_num_theory_0shot"),
     EvalTaskConfig(name="hendrycks_math_prealgebra", num_fewshot=0, task_alias="hendrycks_math_prealgebra_0shot"),
     EvalTaskConfig(name="hendrycks_math_precalc", num_fewshot=0, task_alias="hendrycks_math_precalc_0shot"),

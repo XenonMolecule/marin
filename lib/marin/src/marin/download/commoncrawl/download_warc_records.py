@@ -89,7 +89,9 @@ def _download_single_record(cdx_entry: dict, session: requests.Session) -> dict 
                     time.sleep(delay)
                     continue
                 else:
-                    logger.warning(f"Rate limited ({resp.status_code}) on {filename} after {MAX_DOWNLOAD_RETRIES} attempts")
+                    logger.warning(
+                        f"Rate limited ({resp.status_code}) on {filename} after {MAX_DOWNLOAD_RETRIES} attempts"
+                    )
                     return None
             resp.raise_for_status()
             break
