@@ -1,4 +1,4 @@
-# Copyright 2025 The Levanter Authors
+# Copyright The Levanter Authors
 # SPDX-License-Identifier: Apache-2.0
 
 import abc
@@ -16,12 +16,12 @@ import urllib.parse
 import warnings
 from dataclasses import dataclass
 from functools import cached_property
-from typing import Callable, Generic, Optional, Tuple, Type, TypeVar, Union, cast
+from typing import TYPE_CHECKING, Callable, Generic, Optional, Tuple, Type, TypeVar, Union, cast
 
 import draccus
 import equinox as eqx
-import fsspec
 import haliax
+from iris.marin_fs import url_to_fs
 import huggingface_hub
 import humanfriendly
 import jax
@@ -65,17 +65,17 @@ from transformers import (  # noqa: E402  # noqa: E402
     AutoConfig,
     AutoModel,
     AutoModelForCausalLM,
-    AutoProcessor,
     AutoTokenizer,
-    FeatureExtractionMixin,
     PreTrainedTokenizer,
     PreTrainedTokenizerBase,
     PreTrainedTokenizerFast,
-    ProcessorMixin,
 )
 from transformers import PretrainedConfig as HfConfig  # noqa: E402
 from transformers.dynamic_module_utils import get_class_from_dynamic_module  # noqa: E402
 from transformers.models.auto.auto_factory import _get_model_class  # noqa: E402
+
+if TYPE_CHECKING:
+    from transformers import FeatureExtractionMixin, ProcessorMixin
 
 DEFAULT_MAX_SHARD_SIZE = int(5e9)
 
@@ -116,6 +116,63 @@ PYTORCH_MODEL = "pytorch_model.bin"
 SAFE_TENSORS_MODEL = "model.safetensors"
 PYTORCH_WEIGHTS_INDEX_NAME = "pytorch_model.bin.index.json"
 SAFE_TENSORS_INDEX_NAME = "model.safetensors.index.json"
+
+GenerationConfigDict = dict[str, int | list[int]]
+
+
+def build_generation_config(
+    tokenizer: "PreTrainedTokenizerBase",
+    eos_token_ids: list[int] | None,
+) -> GenerationConfigDict | None:
+    """Build a validated generation_config dict from explicit EOS token IDs.
+
+    The returned dict is suitable for writing as ``generation_config.json``
+    alongside an HF checkpoint.  It tells inference tools like vLLM which
+    tokens should stop generation (e.g. both ``<|end_of_text|>`` and
+    ``<|eot_id|>`` for chat models).
+
+    Normalization guarantees:
+    - Output ``eos_token_id`` is always sorted and deduplicated.
+    - The tokenizer's own ``eos_token_id`` is auto-added if not already present.
+
+    Args:
+        tokenizer: The tokenizer that will be saved with the checkpoint.
+        eos_token_ids: Explicit list of EOS token IDs, or ``None`` to skip.
+
+    Returns:
+        A config dict ready for JSON serialization, or ``None`` if
+        *eos_token_ids* is ``None``.
+
+    Raises:
+        ValueError: If the list is empty, contains non-ints, or contains
+            IDs outside the tokenizer's vocabulary range.
+    """
+    if eos_token_ids is None:
+        return None
+
+    if not eos_token_ids:
+        raise ValueError("hf_generation_eos_token_ids must be non-empty when set")
+
+    vocab_size = len(tokenizer)
+    for tid in eos_token_ids:
+        if not isinstance(tid, int):
+            raise ValueError(f"hf_generation_eos_token_ids contains non-int: {tid!r}")
+        if not (0 <= tid < vocab_size):
+            raise ValueError(f"Token ID {tid} out of range [0, {vocab_size})")
+
+    ids = set(eos_token_ids)
+
+    tok_eos = tokenizer.eos_token_id
+    if tok_eos is None:
+        logger.warning("Tokenizer has no eos_token_id; generation config will use only the provided IDs")
+    elif tok_eos not in ids:
+        logger.info("Auto-adding tokenizer eos_token_id=%d to generation config", tok_eos)
+        ids.add(tok_eos)
+
+    gen_config: GenerationConfigDict = {"eos_token_id": sorted(ids)}
+    if tokenizer.bos_token_id is not None:
+        gen_config["bos_token_id"] = tokenizer.bos_token_id
+    return gen_config
 
 
 @dataclass(frozen=True)
@@ -259,7 +316,7 @@ def _load_torch(path, dtype, fs: AbstractFileSystem | None = None):
 def _load_safe_tensors(path, dtype, fs: AbstractFileSystem | None = None):
     """Stream a safetensors shard from remote storage and return JAX arrays."""
     if fs is None:
-        fs, stripped = fsspec.core.url_to_fs(path, asynchronous=True)
+        fs, stripped = url_to_fs(path, asynchronous=True)
         path = stripped
     else:
         try:
@@ -340,7 +397,7 @@ class HFCheckpointConverter(Generic[LevConfig]):
     tokenizer: PreTrainedTokenizerFast | PreTrainedTokenizer
     "The tokenizer to use. If None, will be inferred from the reference_checkpoint"
 
-    feature_extractor: Optional[FeatureExtractionMixin] = None
+    feature_extractor: Optional["FeatureExtractionMixin"] = None
     "The non-text preprocessor to use for multi-modality."
 
     config_overrides: Optional[dict] = None
@@ -359,7 +416,7 @@ class HFCheckpointConverter(Generic[LevConfig]):
         reference_checkpoint: Optional[Union[RepoRef, str]] = None,
         HfConfigClass: Optional[Union[str, Type]] = None,
         tokenizer: Optional[Union[str, PreTrainedTokenizer, PreTrainedTokenizerFast]] = None,
-        feature_extractor: Optional[FeatureExtractionMixin] = None,
+        feature_extractor: Optional["FeatureExtractionMixin"] = None,
         config_overrides: Optional[dict] = None,
         trust_remote_code: bool = False,
         ignore_prefix: Optional[str] = None,
@@ -410,7 +467,7 @@ class HFCheckpointConverter(Generic[LevConfig]):
         self,
         reference_checkpoint: Optional[Union[RepoRef, str]] = None,
         tokenizer: Optional[Union[str, PreTrainedTokenizerBase]] = None,
-        feature_extractor: Optional[FeatureExtractionMixin] = None,
+        feature_extractor: Optional["FeatureExtractionMixin"] = None,
         trust_remote_code: Optional[bool] = None,
     ) -> "HFCheckpointConverter":
         replacements: dict = {}
@@ -674,7 +731,7 @@ class HFCheckpointConverter(Generic[LevConfig]):
         final_state_dict = {}
 
         fs: AbstractFileSystem
-        fs, path = fsspec.core.url_to_fs(url)
+        fs, path = url_to_fs(url)
 
         shard_files, loader = self._locate_shard_files(fs, path)
 
@@ -881,6 +938,7 @@ class HFCheckpointConverter(Generic[LevConfig]):
         max_shard_size: int = DEFAULT_MAX_SHARD_SIZE,
         save_feature_extractor: bool = False,
         dtype: Optional[jnp.dtype] = None,
+        generation_config: Optional[GenerationConfigDict] = None,
         **hf_upload_kwargs,
     ):
         """
@@ -1055,6 +1113,13 @@ class HFCheckpointConverter(Generic[LevConfig]):
             with open(os.path.join(local_path, "config.json"), "w") as f:
                 json.dump(dict_config, f, cls=ConfigJSONEncoder)
 
+            if generation_config is not None:
+                logger.info(
+                    "Writing generation_config.json with eos_token_id=%s", generation_config.get("eos_token_id")
+                )
+                with open(os.path.join(local_path, "generation_config.json"), "w") as f:
+                    json.dump(generation_config, f)
+
             if index is not None:
                 with open(os.path.join(local_path, SAFE_TENSORS_INDEX_NAME), "w") as f:
                     json.dump(index, f)
@@ -1149,6 +1214,7 @@ def save_hf_checkpoint_callback(
     converter: HFCheckpointConverter,
     upload_to_hf: Union[bool, str, RepoRef] = False,
     save_dtype: Optional[jnp.dtype] = None,
+    generation_config: Optional[GenerationConfigDict] = None,
     **hf_upload_kwargs,
 ):
     """
@@ -1176,6 +1242,7 @@ def save_hf_checkpoint_callback(
             os.path.join(base_path, f"step-{step.step}"),
             upload_to_hf=upload_to_hf,
             dtype=save_dtype,
+            generation_config=generation_config,
             **my_upload_kwargs,
         )
 
@@ -1235,8 +1302,12 @@ def load_tokenizer(model_name_or_path, revision=None, local_cache_dir=None, trus
         )
 
 
-def load_processor(model_name_or_path, revision=None, local_cache_dir=None, trust_remote_code=True) -> ProcessorMixin:
+def load_processor(
+    model_name_or_path, revision=None, local_cache_dir=None, trust_remote_code=True
+) -> "ProcessorMixin":
     """Like AutoProcessor.from_pretrained, but works with gs:// paths or anything on fsspec"""
+    from transformers import AutoProcessor
+
     with _patch_hf_hub_download():
         return _hf_hub_retry(
             lambda: AutoProcessor.from_pretrained(
@@ -1442,7 +1513,7 @@ def _patch_hf_hub_download():
                 revision = "main"
 
             if repo_id and filename and _is_url_like(repo_id):
-                fs, path = fsspec.core.url_to_fs(repo_id)
+                fs, path = url_to_fs(repo_id)
                 remote_path = os.path.join(path, filename)
                 # local_path = os.path.join(tmpdir, filename)
                 local_path = os.path.join(

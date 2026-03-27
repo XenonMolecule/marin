@@ -61,7 +61,7 @@ from experiments.evals.task_configs import CORE_TASKS, convert_to_levanter_task_
 from experiments.llama import llama3_tokenizer
 from experiments.pretraining_datasets import NEMOTRON_WEIGHTS, tokenize_nemotron
 from experiments.pretraining_datasets.dclm import dclm_components_llama3
-from marin.download.commoncrawl.download_warc import WarcDownloadConfig, download_and_extract_warcs
+from marin.datakit.download.commoncrawl.download_warc import WarcDownloadConfig, download_and_extract_warcs
 from marin.execution.executor import (
     ExecutorStep,
     ensure_versioned,

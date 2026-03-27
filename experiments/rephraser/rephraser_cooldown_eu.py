@@ -24,7 +24,7 @@ from fray.cluster import ResourceConfig
 from levanter.data.text import TextLmDatasetFormat
 
 from experiments.llama import llama3_tokenizer
-from marin.download.commoncrawl.download_warc import WarcDownloadConfig, download_and_extract_warcs
+from marin.datakit.download.commoncrawl.download_warc import WarcDownloadConfig, download_and_extract_warcs
 from marin.execution.executor import ExecutorStep, ensure_versioned, executor_main, this_output_path, versioned
 from marin.generation.inference_v2 import InferenceV2Config, run_inference_v2
 from marin.processing.tokenize import TokenizeConfig, tokenize

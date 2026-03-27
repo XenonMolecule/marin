@@ -13,8 +13,8 @@ Launch:
 """
 
 from fray.cluster import ResourceConfig
-from marin.download.commoncrawl.cdx_query import CDXQueryConfig, query_cdx
-from marin.download.commoncrawl.download_warc_records import (
+from marin.datakit.download.commoncrawl.cdx_query import CDXQueryConfig, query_cdx
+from marin.datakit.download.commoncrawl.download_warc_records import (
     WarcRecordDownloadConfig,
     download_warc_records,
 )

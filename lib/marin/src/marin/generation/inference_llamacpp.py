@@ -444,7 +444,6 @@ def run_inference_llamacpp(config: LlamaCppInferenceConfig) -> None:
     """
     from fray.v2 import ResourceConfig
     from zephyr import Dataset, ZephyrContext, load_file, load_jsonl
-    from zephyr.plan import ExecutionHint
 
     if config.input_format == "parquet":
         loader = load_file
@@ -484,9 +483,10 @@ def run_inference_llamacpp(config: LlamaCppInferenceConfig) -> None:
                     cpu=config.cpu_per_worker,
                     ram=config.ram_per_worker,
                 ),
+                chunk_size=config.records_per_shard,
             ) as ctx:
                 ctx.put("config", config)
-                output_files = list(ctx.execute(ds, hints=ExecutionHint(chunk_size=config.records_per_shard)))
+                output_files = list(ctx.execute(ds))
             break
         except Exception as e:
             if attempt < max_retries:

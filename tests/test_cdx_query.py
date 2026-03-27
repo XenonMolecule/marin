@@ -9,7 +9,7 @@ import tempfile
 
 import pytest
 
-from marin.download.commoncrawl.cdx_query import (
+from marin.datakit.download.commoncrawl.cdx_query import (
     CDXQueryConfig,
     _load_progress,
     _progress_key,
@@ -375,7 +375,7 @@ class TestCdxQueryIntegration:
 class TestWarcDownloadIntegration:
     def test_download_single_warc_record(self):
         """Download a single WARC record using a real CDX entry for example.com."""
-        from marin.download.commoncrawl.download_warc_records import _download_single_record
+        from marin.datakit.download.commoncrawl.download_warc_records import _download_single_record
 
         # First get a real CDX entry
         records = query_single_index(
