@@ -91,12 +91,23 @@ def _is_post_boundary(line: str) -> bool:
     # ## headings that look like post boundaries
     if content.startswith("## "):
         heading = content[3:].strip().lower()
-        if any(heading.startswith(p) for p in (
-            "question", "answer", "post by", "reply by",
-            "original post", "original question",
-            "post 1", "post 2", "post 3", "post 4", "post 5",
-            "post #",
-        )):
+        if any(
+            heading.startswith(p)
+            for p in (
+                "question",
+                "answer",
+                "post by",
+                "reply by",
+                "original post",
+                "original question",
+                "post 1",
+                "post 2",
+                "post 3",
+                "post 4",
+                "post 5",
+                "post #",
+            )
+        ):
             return True
 
     # Bold post markers

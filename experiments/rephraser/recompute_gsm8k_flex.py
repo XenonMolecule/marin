@@ -114,7 +114,9 @@ def _gcloud_ls(pattern: str) -> list[str]:
     """List GCS paths matching a pattern using gcloud CLI."""
     result = subprocess.run(
         ["gcloud", "storage", "ls", pattern],
-        capture_output=True, text=True, timeout=30,
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
     if result.returncode != 0:
         return []
@@ -125,7 +127,9 @@ def _gcloud_cat(path: str) -> str | None:
     """Read a GCS file using gcloud CLI."""
     result = subprocess.run(
         ["gcloud", "storage", "cat", path],
-        capture_output=True, text=True, timeout=60,
+        capture_output=True,
+        text=True,
+        timeout=60,
     )
     if result.returncode != 0:
         return None
@@ -198,13 +202,7 @@ def print_table(title: str, conditions: dict, bucket: str):
     print(f"\n{'=' * 95}")
     print(f"  {title}")
     print(f"{'=' * 95}")
-    print(
-        f"{'Condition':<40s} "
-        f"{'Strict':>10s} "
-        f"{'Flex':>10s} "
-        f"{'Corrected':>10s} "
-        f"{'Flex→Corr':>10s}"
-    )
+    print(f"{'Condition':<40s} " f"{'Strict':>10s} " f"{'Flex':>10s} " f"{'Corrected':>10s} " f"{'Flex→Corr':>10s}")
     print("-" * 85)
 
     for name, (dir_pattern, task_alias) in conditions.items():

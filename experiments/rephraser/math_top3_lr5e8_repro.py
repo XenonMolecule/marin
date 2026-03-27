@@ -52,7 +52,10 @@ TOP_3 = (
 )
 
 hp = TrainHyperparams(
-    batch_size=64, learning_rate=5e-8, weight_decay=0.1, warmup=0.03,
+    batch_size=64,
+    learning_rate=5e-8,
+    weight_decay=0.1,
+    warmup=0.03,
 )
 
 # ---------------------------------------------------------------------------

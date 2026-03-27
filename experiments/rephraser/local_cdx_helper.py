@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright 2025 The Marin Authors
+# SPDX-License-Identifier: Apache-2.0
+
 """Local CDX query helper — runs queries from your Mac and uploads progress files.
 
 Queries the CDX API for (domain, crawl_id) pairs and uploads results directly
@@ -25,10 +28,16 @@ from marin.download.commoncrawl.cdx_query import (
 PROGRESS_BASE = "gs://marin-us-central1/cdx/code_host-283157/.progress"
 
 CRAWL_INDICES = [
-    "CC-MAIN-2026-08", "CC-MAIN-2026-04",
-    "CC-MAIN-2025-51", "CC-MAIN-2025-47", "CC-MAIN-2025-43",
-    "CC-MAIN-2025-38", "CC-MAIN-2025-33", "CC-MAIN-2025-30",
-    "CC-MAIN-2024-51", "CC-MAIN-2024-46",
+    "CC-MAIN-2026-08",
+    "CC-MAIN-2026-04",
+    "CC-MAIN-2025-51",
+    "CC-MAIN-2025-47",
+    "CC-MAIN-2025-43",
+    "CC-MAIN-2025-38",
+    "CC-MAIN-2025-33",
+    "CC-MAIN-2025-30",
+    "CC-MAIN-2024-51",
+    "CC-MAIN-2024-46",
 ]
 
 # Domains to query, ordered so we start with those the remote job will hit LAST
@@ -52,7 +61,9 @@ def check_exists(domain: str, crawl_id: str) -> bool:
     dest = f"{PROGRESS_BASE}/{key}.json"
     result = subprocess.run(
         ["gcloud", "storage", "ls", dest],
-        capture_output=True, text=True, timeout=10,
+        capture_output=True,
+        text=True,
+        timeout=10,
     )
     return result.returncode == 0
 
@@ -66,7 +77,9 @@ def upload_progress(domain: str, crawl_id: str, records: list[dict]) -> None:
         tmp_path = f.name
     subprocess.run(
         ["gcloud", "storage", "cp", tmp_path, dest],
-        capture_output=True, text=True, timeout=30,
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
 
 
@@ -105,14 +118,16 @@ def main():
 
                 # Upload
                 upload_progress(domain, crawl_id, filtered)
-                print(f" -> UPLOADED")
+                print(" -> UPLOADED")
                 total_queried += 1
                 total_records += len(filtered)
 
             except Exception as e:
                 print(f" FAILED: {e}")
 
-        print(f"  Domain done. Running totals: {total_queried} queried, {total_skipped} skipped, {total_records} records")
+        print(
+            f"  Domain done. Running totals: {total_queried} queried, {total_skipped} skipped, {total_records} records"
+        )
 
     print(f"\n{'='*60}")
     print(f"DONE: {total_queried} queried, {total_skipped} skipped, {total_records} total records")

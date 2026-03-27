@@ -1,9 +1,13 @@
+# Copyright 2025 The Marin Authors
+# SPDX-License-Identifier: Apache-2.0
+
 """Analyze token lengths of input, reasoning, and output in rephraser dataset."""
 
 import re
 import numpy as np
 import tiktoken
 from datasets import load_dataset
+
 
 def parse_message(messages):
     """Parse a chat message list into input, reasoning, and output token counts."""
@@ -70,10 +74,14 @@ def main():
     print("\n=== Token Length Statistics ===")
     for name, arr in [("Input", input_lens), ("Reasoning", reasoning_lens), ("Output", output_lens)]:
         print(f"\n{name}:")
-        print(f"  mean={arr.mean():.1f}  median={np.median(arr):.1f}  "
-              f"std={arr.std():.1f}  min={arr.min():.0f}  max={arr.max():.0f}")
-        print(f"  p5={np.percentile(arr, 5):.0f}  p25={np.percentile(arr, 25):.0f}  "
-              f"p75={np.percentile(arr, 75):.0f}  p95={np.percentile(arr, 95):.0f}")
+        print(
+            f"  mean={arr.mean():.1f}  median={np.median(arr):.1f}  "
+            f"std={arr.std():.1f}  min={arr.min():.0f}  max={arr.max():.0f}"
+        )
+        print(
+            f"  p5={np.percentile(arr, 5):.0f}  p25={np.percentile(arr, 25):.0f}  "
+            f"p75={np.percentile(arr, 75):.0f}  p95={np.percentile(arr, 95):.0f}"
+        )
 
     # Ratios
     print("\n=== Ratios ===")
@@ -84,19 +92,25 @@ def main():
     if mask_input.any():
         ratio_reas_inp = reasoning_lens[mask_input] / input_lens[mask_input]
         print(f"\nReasoning / Input (n={mask_input.sum()}):")
-        print(f"  mean={ratio_reas_inp.mean():.2f}  median={np.median(ratio_reas_inp):.2f}  "
-              f"std={ratio_reas_inp.std():.2f}")
+        print(
+            f"  mean={ratio_reas_inp.mean():.2f}  median={np.median(ratio_reas_inp):.2f}  "
+            f"std={ratio_reas_inp.std():.2f}"
+        )
 
         ratio_out_inp = output_lens[mask_input] / input_lens[mask_input]
         print(f"\nOutput / Input (n={mask_input.sum()}):")
-        print(f"  mean={ratio_out_inp.mean():.2f}  median={np.median(ratio_out_inp):.2f}  "
-              f"std={ratio_out_inp.std():.2f}")
+        print(
+            f"  mean={ratio_out_inp.mean():.2f}  median={np.median(ratio_out_inp):.2f}  "
+            f"std={ratio_out_inp.std():.2f}"
+        )
 
     if mask_reasoning.any():
         ratio_out_reas = output_lens[mask_reasoning] / reasoning_lens[mask_reasoning]
         print(f"\nOutput / Reasoning (n={mask_reasoning.sum()}):")
-        print(f"  mean={ratio_out_reas.mean():.2f}  median={np.median(ratio_out_reas):.2f}  "
-              f"std={ratio_out_reas.std():.2f}")
+        print(
+            f"  mean={ratio_out_reas.mean():.2f}  median={np.median(ratio_out_reas):.2f}  "
+            f"std={ratio_out_reas.std():.2f}"
+        )
 
     # Correlations
     print("\n=== Pearson Correlations ===")
@@ -113,7 +127,9 @@ def main():
     print("\n=== Reasoning & Output by Input Length Quintile ===")
     if len(input_lens) >= 5:
         quintiles = np.percentile(input_lens, [0, 20, 40, 60, 80, 100])
-        print(f"{'Quintile':>10} {'Input Range':>20} {'N':>5} {'Avg Reasoning':>15} {'Avg Output':>12} {'Reas/Inp':>10} {'Out/Inp':>10}")
+        print(
+            f"{'Quintile':>10} {'Input Range':>20} {'N':>5} {'Avg Reasoning':>15} {'Avg Output':>12} {'Reas/Inp':>10} {'Out/Inp':>10}"
+        )
         for i in range(5):
             lo, hi = quintiles[i], quintiles[i + 1]
             if i < 4:
@@ -124,8 +140,10 @@ def main():
                 avg_r = reasoning_lens[mask].mean()
                 avg_o = output_lens[mask].mean()
                 avg_i = input_lens[mask].mean()
-                print(f"{'Q' + str(i+1):>10} {f'[{lo:.0f}, {hi:.0f})':>20} {mask.sum():>5} "
-                      f"{avg_r:>15.1f} {avg_o:>12.1f} {avg_r/avg_i:>10.2f} {avg_o/avg_i:>10.2f}")
+                print(
+                    f"{'Q' + str(i+1):>10} {f'[{lo:.0f}, {hi:.0f})':>20} {mask.sum():>5} "
+                    f"{avg_r:>15.1f} {avg_o:>12.1f} {avg_r/avg_i:>10.2f} {avg_o/avg_i:>10.2f}"
+                )
 
     # Bucketed analysis: output length by reasoning length quintiles
     print("\n=== Output by Reasoning Length Quintile ===")
@@ -144,13 +162,17 @@ def main():
             if mask.any():
                 avg_o = o_vals[mask].mean()
                 avg_r = r_vals[mask].mean()
-                print(f"{'Q' + str(i+1):>10} {f'[{lo:.0f}, {hi:.0f})':>20} {mask.sum():>5} "
-                      f"{avg_o:>12.1f} {avg_o/avg_r:>10.2f}")
+                print(
+                    f"{'Q' + str(i+1):>10} {f'[{lo:.0f}, {hi:.0f})':>20} {mask.sum():>5} "
+                    f"{avg_o:>12.1f} {avg_o/avg_r:>10.2f}"
+                )
 
     # How many have no reasoning?
     no_reasoning = (reasoning_lens == 0).sum()
-    print(f"\n=== Messages with no reasoning: {no_reasoning}/{len(reasoning_lens)} "
-          f"({100*no_reasoning/len(reasoning_lens):.1f}%) ===")
+    print(
+        f"\n=== Messages with no reasoning: {no_reasoning}/{len(reasoning_lens)} "
+        f"({100*no_reasoning/len(reasoning_lens):.1f}%) ==="
+    )
 
 
 if __name__ == "__main__":

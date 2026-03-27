@@ -143,9 +143,7 @@ def consolidate_mathhelpforum(config: ConsolidateConfig):
         .flat_map(load_jsonl)
         .reshard(config.num_output_shards)
         .map_shard(_filter_nonempty)
-        .write_jsonl(
-            f"{config.output_path}/data-{{shard:05d}}-of-{config.num_output_shards:05d}.jsonl.gz"
-        )
+        .write_jsonl(f"{config.output_path}/data-{{shard:05d}}-of-{config.num_output_shards:05d}.jsonl.gz")
     )
 
     with ZephyrContext(name="consolidate-mathhelpforum") as ctx:
@@ -170,10 +168,7 @@ def consolidate_mathhelpforum(config: ConsolidateConfig):
     with fsspec.open(f"{config.output_path}/consolidation_stats.json", "w") as f:
         json.dump(stats, f, indent=2)
 
-    logger.info(
-        f"Consolidation complete: {config.num_output_shards} shards, "
-        f"{non_empty_shards} non-empty"
-    )
+    logger.info(f"Consolidation complete: {config.num_output_shards} shards, " f"{non_empty_shards} non-empty")
 
 
 consolidate_step = ExecutorStep(

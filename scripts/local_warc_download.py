@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright 2025 The Marin Authors
+# SPDX-License-Identifier: Apache-2.0
+
 """Local WARC downloader — runs on your laptop to bypass Common Crawl cloud rate limits.
 
 Processes shards in REVERSE order (499 → 0) so it complements the cluster job
@@ -32,7 +35,6 @@ import io
 import json
 import logging
 import os
-import re
 import time
 
 import requests
@@ -175,10 +177,7 @@ def main():
     completed = 0
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.workers) as pool:
-        futures = {
-            pool.submit(process_shard, idx, entries, args.output): idx
-            for idx, entries in shards
-        }
+        futures = {pool.submit(process_shard, idx, entries, args.output): idx for idx, entries in shards}
         for future in concurrent.futures.as_completed(futures):
             idx = futures[future]
             try:
@@ -188,7 +187,9 @@ def main():
                     total_fail += fail
                 completed += 1
                 if completed % 10 == 0:
-                    logger.info(f"Progress: {completed}/{len(shards)} shards done, {total_ok} records ok, {total_fail} failed")
+                    logger.info(
+                        f"Progress: {completed}/{len(shards)} shards done, {total_ok} records ok, {total_fail} failed"
+                    )
             except Exception as e:
                 logger.error(f"Shard {idx} raised exception: {e}")
 

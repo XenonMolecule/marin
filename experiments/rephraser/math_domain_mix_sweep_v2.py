@@ -157,7 +157,8 @@ MIXES = [
     DomainMix(
         name="top3_plus_best5",
         description="top3 + MSE + khanacademy + varsitytutors + openstax + brilliant (predicted optimal)",
-        allowed_domains=TOP_3 + (
+        allowed_domains=TOP_3
+        + (
             "math.stackexchange.com",
             "khanacademy.org",
             "varsitytutors.com",

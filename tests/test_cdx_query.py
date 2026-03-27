@@ -24,9 +24,15 @@ from marin.download.commoncrawl.cdx_query import (
 # ---------------------------------------------------------------------------
 # Test data
 # ---------------------------------------------------------------------------
-def _make_cdx_record(url="http://example.com/page1", status="200", mime="text/html",
-                     timestamp="20240101120000", filename="crawl-data/CC-MAIN-2024-01/warc.gz",
-                     offset="1000", length="5000"):
+def _make_cdx_record(
+    url="http://example.com/page1",
+    status="200",
+    mime="text/html",
+    timestamp="20240101120000",
+    filename="crawl-data/CC-MAIN-2024-01/warc.gz",
+    offset="1000",
+    length="5000",
+):
     return {
         "url": url,
         "status": status,

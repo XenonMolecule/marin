@@ -71,26 +71,47 @@ TOP_3 = (
 HP_CONFIGS: dict[str, TrainHyperparams] = {
     # Core LR ladder at bs=64
     "lr3e-7_bs64": TrainHyperparams(
-        batch_size=64, learning_rate=3e-7, weight_decay=0.1, warmup=0.03,
+        batch_size=64,
+        learning_rate=3e-7,
+        weight_decay=0.1,
+        warmup=0.03,
     ),
     "lr2e-7_bs64": TrainHyperparams(
-        batch_size=64, learning_rate=2e-7, weight_decay=0.1, warmup=0.03,
+        batch_size=64,
+        learning_rate=2e-7,
+        weight_decay=0.1,
+        warmup=0.03,
     ),
     "lr1e-7_bs64": TrainHyperparams(
-        batch_size=64, learning_rate=1e-7, weight_decay=0.1, warmup=0.03,
+        batch_size=64,
+        learning_rate=1e-7,
+        weight_decay=0.1,
+        warmup=0.03,
     ),
     "lr5e-8_bs64": TrainHyperparams(
-        batch_size=64, learning_rate=5e-8, weight_decay=0.1, warmup=0.03,
+        batch_size=64,
+        learning_rate=5e-8,
+        weight_decay=0.1,
+        warmup=0.03,
     ),
     "lr2e-8_bs64": TrainHyperparams(
-        batch_size=64, learning_rate=2e-8, weight_decay=0.1, warmup=0.03,
+        batch_size=64,
+        learning_rate=2e-8,
+        weight_decay=0.1,
+        warmup=0.03,
     ),
     # BS variation at promising LRs
     "lr2e-7_bs16": TrainHyperparams(
-        batch_size=16, learning_rate=2e-7, weight_decay=0.1, warmup=0.03,
+        batch_size=16,
+        learning_rate=2e-7,
+        weight_decay=0.1,
+        warmup=0.03,
     ),
     "lr1e-7_bs16": TrainHyperparams(
-        batch_size=16, learning_rate=1e-7, weight_decay=0.1, warmup=0.03,
+        batch_size=16,
+        learning_rate=1e-7,
+        weight_decay=0.1,
+        warmup=0.03,
     ),
 }
 

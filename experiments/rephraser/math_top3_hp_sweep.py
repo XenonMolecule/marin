@@ -99,19 +99,34 @@ for lr in _CORE_LRS:
 
 # WD/warmup variation at promising LR/BS combos
 HP_CONFIGS["lr5e-7_bs64_wd01"] = TrainHyperparams(
-    batch_size=64, learning_rate=5e-7, weight_decay=0.01, warmup=0.03,
+    batch_size=64,
+    learning_rate=5e-7,
+    weight_decay=0.01,
+    warmup=0.03,
 )
 HP_CONFIGS["lr5e-7_bs64_wd05"] = TrainHyperparams(
-    batch_size=64, learning_rate=5e-7, weight_decay=0.05, warmup=0.03,
+    batch_size=64,
+    learning_rate=5e-7,
+    weight_decay=0.05,
+    warmup=0.03,
 )
 HP_CONFIGS["code-best-resili"] = TrainHyperparams(
-    batch_size=32, learning_rate=1e-6, weight_decay=0.01, warmup=0.03,
+    batch_size=32,
+    learning_rate=1e-6,
+    weight_decay=0.01,
+    warmup=0.03,
 )
 HP_CONFIGS["code-best-extract"] = TrainHyperparams(
-    batch_size=32, learning_rate=2e-6, weight_decay=0.05, warmup=0.0,
+    batch_size=32,
+    learning_rate=2e-6,
+    weight_decay=0.05,
+    warmup=0.0,
 )
 HP_CONFIGS["code-default"] = TrainHyperparams(
-    batch_size=64, learning_rate=2e-5, weight_decay=0.01, warmup=0.03,
+    batch_size=64,
+    learning_rate=2e-5,
+    weight_decay=0.01,
+    warmup=0.03,
 )
 
 # ---------------------------------------------------------------------------

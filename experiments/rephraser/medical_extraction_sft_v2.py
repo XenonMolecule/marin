@@ -104,23 +104,23 @@ CRAWL_INDICES = [
 # Grand total: ~2.85M estimated HTML 200 records
 DOMAIN_SOURCES = [
     # === Medical Q&A forums — highest extraction value ===
-    UrlPattern("healthboards.com", "domain"),       # 688k total, best 350k in 2016-44
-    UrlPattern("allnurses.com", "domain"),           # 527k total, best 455k in 2016-44
-    UrlPattern("medhelp.org", "domain"),              # 452k total, best 374k in 2016-44
-    UrlPattern("healthunlocked.com", "domain"),      # 156k total, best 156k in 2016-44
-    UrlPattern("patient.info", "domain"),             # 30k total, best 21k in 2025-47
+    UrlPattern("healthboards.com", "domain"),  # 688k total, best 350k in 2016-44
+    UrlPattern("allnurses.com", "domain"),  # 527k total, best 455k in 2016-44
+    UrlPattern("medhelp.org", "domain"),  # 452k total, best 374k in 2016-44
+    UrlPattern("healthunlocked.com", "domain"),  # 156k total, best 156k in 2016-44
+    UrlPattern("patient.info", "domain"),  # 30k total, best 21k in 2025-47
     # === Medical reference — large, well-structured ===
-    UrlPattern("webmd.com", "domain"),                # 360k total, best 231k in 2013-48
-    UrlPattern("mayoclinic.org", "domain"),           # 273k total, best 219k in 2016-44
-    UrlPattern("drugs.com", "domain"),                # 129k total, best 78k in 2016-44
-    UrlPattern("clevelandclinic.org", "domain"),      # 35k total, best 20k in 2025-47
-    UrlPattern("medlineplus.gov", "domain"),          # 31k total, best 27k in 2016-44
-    UrlPattern("merckmanuals.com", "domain"),         # 9k total, best 9k in 2013-48
+    UrlPattern("webmd.com", "domain"),  # 360k total, best 231k in 2013-48
+    UrlPattern("mayoclinic.org", "domain"),  # 273k total, best 219k in 2016-44
+    UrlPattern("drugs.com", "domain"),  # 129k total, best 78k in 2016-44
+    UrlPattern("clevelandclinic.org", "domain"),  # 35k total, best 20k in 2025-47
+    UrlPattern("medlineplus.gov", "domain"),  # 31k total, best 27k in 2016-44
+    UrlPattern("merckmanuals.com", "domain"),  # 9k total, best 9k in 2013-48
 ]
 
 HOST_SOURCES = [
     UrlPattern("forums.studentdoctor.net", "host"),  # 37k total, best 25k in 2013-48
-    UrlPattern("ncbi.nlm.nih.gov", "host"),          # 120k total, best 48k in 2013-48
+    UrlPattern("ncbi.nlm.nih.gov", "host"),  # 120k total, best 48k in 2013-48
 ]
 
 # ---------------------------------------------------------------------------
@@ -130,16 +130,22 @@ MEDICAL_EVALS = [
     # Generative MMLU medical subtasks (5-shot) — avoids vLLM TPU loglikelihood bug
     EvalTaskConfig(name="mmlu_anatomy_generative", num_fewshot=5, task_alias="mmlu_anatomy_gen_5shot"),
     EvalTaskConfig(
-        name="mmlu_clinical_knowledge_generative", num_fewshot=5, task_alias="mmlu_clinical_knowledge_gen_5shot",
+        name="mmlu_clinical_knowledge_generative",
+        num_fewshot=5,
+        task_alias="mmlu_clinical_knowledge_gen_5shot",
     ),
     EvalTaskConfig(name="mmlu_college_medicine_generative", num_fewshot=5, task_alias="mmlu_college_medicine_gen_5shot"),
     EvalTaskConfig(name="mmlu_medical_genetics_generative", num_fewshot=5, task_alias="mmlu_medical_genetics_gen_5shot"),
     EvalTaskConfig(
-        name="mmlu_professional_medicine_generative", num_fewshot=5, task_alias="mmlu_professional_medicine_gen_5shot",
+        name="mmlu_professional_medicine_generative",
+        num_fewshot=5,
+        task_alias="mmlu_professional_medicine_gen_5shot",
     ),
     EvalTaskConfig(name="mmlu_college_biology_generative", num_fewshot=5, task_alias="mmlu_college_biology_gen_5shot"),
     EvalTaskConfig(
-        name="mmlu_high_school_biology_generative", num_fewshot=5, task_alias="mmlu_high_school_biology_gen_5shot",
+        name="mmlu_high_school_biology_generative",
+        num_fewshot=5,
+        task_alias="mmlu_high_school_biology_gen_5shot",
     ),
     # mediqa_qa2019_lite — generative medical QA (ROUGE), custom task in experiments/rephraser/custom_tasks/
     EvalTaskConfig(name="mediqa_qa2019_lite", num_fewshot=0, task_alias="mediqa_qa2019_lite_0shot"),

@@ -24,9 +24,7 @@ from fray.cluster import ResourceConfig
 from experiments.evals.evals import default_eval
 from marin.execution.executor import executor_main
 
-MODEL_PATH = (
-    "gs://marin-us-central1/short-cooldown-rephraser-d7d976d3-v2-eebec0/hf/step-4999"
-)
+MODEL_PATH = "gs://marin-us-central1/short-cooldown-rephraser-d7d976d3-v2-eebec0/hf/step-4999"
 
 if __name__ == "__main__":
     eval_step = default_eval(

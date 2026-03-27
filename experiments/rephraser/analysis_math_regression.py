@@ -1,3 +1,6 @@
+# Copyright 2025 The Marin Authors
+# SPDX-License-Identifier: Apache-2.0
+
 """Comprehensive analysis of math SFT regression: why does math training hurt math eval?
 
 Run: .venv/bin/python3 experiments/rephraser/analysis_math_regression.py
@@ -7,7 +10,6 @@ Reads locally-downloaded eval samples and training data from /tmp/math_regressio
 
 import gzip
 import json
-import os
 import re
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -94,27 +96,31 @@ def find_changes(baseline: dict, sft: dict, metric: str = "exact_match"):
         s_correct = s.get(metric, 0)
 
         if b_correct == 1 and s_correct == 0:
-            regressions.append({
-                "doc_id": doc_id,
-                "problem": get_problem(b),
-                "level": get_level(b),
-                "gold": get_gold(b),
-                "baseline_resp": get_response(b),
-                "sft_resp": get_response(s),
-                "baseline_filtered": b.get("filtered_resps", [""])[0] if b.get("filtered_resps") else "",
-                "sft_filtered": s.get("filtered_resps", [""])[0] if s.get("filtered_resps") else "",
-            })
+            regressions.append(
+                {
+                    "doc_id": doc_id,
+                    "problem": get_problem(b),
+                    "level": get_level(b),
+                    "gold": get_gold(b),
+                    "baseline_resp": get_response(b),
+                    "sft_resp": get_response(s),
+                    "baseline_filtered": b.get("filtered_resps", [""])[0] if b.get("filtered_resps") else "",
+                    "sft_filtered": s.get("filtered_resps", [""])[0] if s.get("filtered_resps") else "",
+                }
+            )
         elif b_correct == 0 and s_correct == 1:
-            improvements.append({
-                "doc_id": doc_id,
-                "problem": get_problem(b),
-                "level": get_level(b),
-                "gold": get_gold(b),
-                "baseline_resp": get_response(b),
-                "sft_resp": get_response(s),
-                "baseline_filtered": b.get("filtered_resps", [""])[0] if b.get("filtered_resps") else "",
-                "sft_filtered": s.get("filtered_resps", [""])[0] if s.get("filtered_resps") else "",
-            })
+            improvements.append(
+                {
+                    "doc_id": doc_id,
+                    "problem": get_problem(b),
+                    "level": get_level(b),
+                    "gold": get_gold(b),
+                    "baseline_resp": get_response(b),
+                    "sft_resp": get_response(s),
+                    "baseline_filtered": b.get("filtered_resps", [""])[0] if b.get("filtered_resps") else "",
+                    "sft_filtered": s.get("filtered_resps", [""])[0] if s.get("filtered_resps") else "",
+                }
+            )
 
     return regressions, improvements
 
@@ -244,10 +250,13 @@ def audit_training_doc(text: str) -> dict:
         "has_latex": bool(re.search(r"\$[^$]+\$", text)),
         "has_display_math": bool(re.search(r"\$\$[^$]+\$\$", text)),
         "has_html_artifacts": bool(re.search(r"<(?:div|span|table|script|style|a href)", text)),
-        "has_meta_commentary": bool(re.search(
-            r"(?:the user asked|let me help|I'll solve|let me solve|as requested)",
-            text, re.IGNORECASE,
-        )),
+        "has_meta_commentary": bool(
+            re.search(
+                r"(?:the user asked|let me help|I'll solve|let me solve|as requested)",
+                text,
+                re.IGNORECASE,
+            )
+        ),
         "has_no_useful_content": "[NO_USEFUL_CONTENT]" in text,
         "has_think_tags": "<think>" in text,
         "has_dspy_markers": "[[ ##" in text,
@@ -358,7 +367,7 @@ def run_full_analysis():
         sweep_path = MODELS["sweep_best"] / f"{task}.jsonl"
 
         if not baseline_path.exists() or not sweep_path.exists():
-            print(f"  SKIP: missing files")
+            print("  SKIP: missing files")
             continue
 
         baseline = load_samples(baseline_path)
@@ -385,13 +394,13 @@ def run_full_analysis():
             reg["category"] = cat
             categories[cat] += 1
 
-        print(f"\n  Failure mode breakdown:")
+        print("\n  Failure mode breakdown:")
         for cat, count in categories.most_common():
             print(f"    {cat:25s}: {count:4d} ({100 * count / len(regressions):.1f}%)")
 
         # Per-difficulty analysis (MATH tasks only, not GSM8K)
         if task != "gsm8k":
-            print(f"\n  Per-difficulty accuracy:")
+            print("\n  Per-difficulty accuracy:")
             b_levels = accuracy_by_level(baseline, metric)
             s_levels = accuracy_by_level(sweep, metric)
             for level in sorted(set(list(b_levels.keys()) + list(s_levels.keys()))):
@@ -399,7 +408,9 @@ def run_full_analysis():
                 sc, st = s_levels.get(level, (0, 0))
                 b_pct = 100 * bc / bt if bt else 0
                 s_pct = 100 * sc / st if st else 0
-                print(f"    {level:15s}: baseline={b_pct:5.1f}% ({bc}/{bt})  SFT={s_pct:5.1f}% ({sc}/{st})  Δ={s_pct - b_pct:+.1f}pp")
+                print(
+                    f"    {level:15s}: baseline={b_pct:5.1f}% ({bc}/{bt})  SFT={s_pct:5.1f}% ({sc}/{st})  Δ={s_pct - b_pct:+.1f}pp"
+                )
 
         results[task] = {
             "regressions": regressions,
@@ -428,17 +439,25 @@ def run_full_analysis():
         audits.append(audit)
         structure_counts[audit["structure"]] += 1
 
-    print(f"\nStructure classification:")
+    print("\nStructure classification:")
     for struct, count in structure_counts.most_common():
         print(f"  {struct:20s}: {count:4d} ({100 * count / len(training_docs):.1f}%)")
 
     # Quality metrics
     n = len(audits)
-    print(f"\nQuality metrics:")
-    print(f"  Has LaTeX:           {sum(a['has_latex'] for a in audits):4d} ({100 * sum(a['has_latex'] for a in audits) / n:.1f}%)")
-    print(f"  Has display math:    {sum(a['has_display_math'] for a in audits):4d} ({100 * sum(a['has_display_math'] for a in audits) / n:.1f}%)")
-    print(f"  Has HTML artifacts:  {sum(a['has_html_artifacts'] for a in audits):4d} ({100 * sum(a['has_html_artifacts'] for a in audits) / n:.1f}%)")
-    print(f"  Has meta-commentary: {sum(a['has_meta_commentary'] for a in audits):4d} ({100 * sum(a['has_meta_commentary'] for a in audits) / n:.1f}%)")
+    print("\nQuality metrics:")
+    print(
+        f"  Has LaTeX:           {sum(a['has_latex'] for a in audits):4d} ({100 * sum(a['has_latex'] for a in audits) / n:.1f}%)"
+    )
+    print(
+        f"  Has display math:    {sum(a['has_display_math'] for a in audits):4d} ({100 * sum(a['has_display_math'] for a in audits) / n:.1f}%)"
+    )
+    print(
+        f"  Has HTML artifacts:  {sum(a['has_html_artifacts'] for a in audits):4d} ({100 * sum(a['has_html_artifacts'] for a in audits) / n:.1f}%)"
+    )
+    print(
+        f"  Has meta-commentary: {sum(a['has_meta_commentary'] for a in audits):4d} ({100 * sum(a['has_meta_commentary'] for a in audits) / n:.1f}%)"
+    )
     print(f"  Has [NO_USEFUL]:     {sum(a['has_no_useful_content'] for a in audits):4d}")
     print(f"  Has <think> tags:    {sum(a['has_think_tags'] for a in audits):4d}")
     print(f"  Has DSPy markers:    {sum(a['has_dspy_markers'] for a in audits):4d}")
@@ -446,7 +465,7 @@ def run_full_analysis():
     # Length distribution
     lengths = [a["length"] for a in audits]
     lengths.sort()
-    print(f"\n  Length distribution:")
+    print("\n  Length distribution:")
     print(f"    Mean:   {sum(lengths) / n:,.0f} chars")
     print(f"    Median: {lengths[n // 2]:,d} chars")
     print(f"    p10:    {lengths[int(n * 0.1)]:,d} chars")
@@ -472,7 +491,7 @@ def run_full_analysis():
         domain = match.group(1) if match else "unknown"
         domain_counts[domain] += 1
 
-    print(f"\n  Top 15 source domains:")
+    print("\n  Top 15 source domains:")
     for domain, count in domain_counts.most_common(15):
         print(f"    {domain:35s}: {count:4d} ({100 * count / len(training_docs):.1f}%)")
 
@@ -491,9 +510,11 @@ def run_full_analysis():
                 continue
             samples = load_samples(path)
             stats = generation_stats(samples)
-            print(f"  {model_name:15s}: mean_len={stats['mean_len']:.0f}  median={stats['median_len']:.0f}  p95={stats['p95_len']:.0f}  "
-                  f"boxed={stats['pct_boxed']:.1f}%  extract_fmt={stats['pct_extraction_fmt']:.1f}%  "
-                  f"repetition={stats['pct_repetition']:.1f}%  truncated={stats['pct_truncated']:.1f}%")
+            print(
+                f"  {model_name:15s}: mean_len={stats['mean_len']:.0f}  median={stats['median_len']:.0f}  p95={stats['p95_len']:.0f}  "
+                f"boxed={stats['pct_boxed']:.1f}%  extract_fmt={stats['pct_extraction_fmt']:.1f}%  "
+                f"repetition={stats['pct_repetition']:.1f}%  truncated={stats['pct_truncated']:.1f}%"
+            )
 
         # Unique n-gram analysis
         for model_name in ["baseline", "sweep_best"]:
@@ -504,7 +525,9 @@ def run_full_analysis():
             ratios = [unique_ngram_ratio(get_response(s)) for s in samples.values()]
             mean_ratio = sum(ratios) / len(ratios)
             low_diversity = sum(1 for r in ratios if r < 0.5)
-            print(f"  {model_name:15s}: mean_4gram_diversity={mean_ratio:.3f}  low_diversity(<0.5)={low_diversity} ({100*low_diversity/len(ratios):.1f}%)")
+            print(
+                f"  {model_name:15s}: mean_4gram_diversity={mean_ratio:.3f}  low_diversity(<0.5)={low_diversity} ({100*low_diversity/len(ratios):.1f}%)"
+            )
 
     # -----------------------------------------------------------------------
     # Print detailed examples for the report
@@ -527,7 +550,13 @@ def run_full_analysis():
             by_category[reg.get("category", "unknown")].append(reg)
 
         shown = 0
-        for cat in ["wrong_computation", "repetition_loop", "truncation", "extraction_artifacts", "incomplete_reasoning"]:
+        for cat in [
+            "wrong_computation",
+            "repetition_loop",
+            "truncation",
+            "extraction_artifacts",
+            "incomplete_reasoning",
+        ]:
             if cat not in by_category or shown >= 8:
                 break
             examples = by_category[cat][:2]
@@ -539,9 +568,9 @@ def run_full_analysis():
                 print(f"Gold: {ex['gold']}")
                 print(f"Baseline answer (extracted): {str(ex['baseline_filtered'])[:200]}")
                 print(f"SFT answer (extracted): {str(ex['sft_filtered'])[:200]}")
-                print(f"--- Baseline response (first 500 chars) ---")
+                print("--- Baseline response (first 500 chars) ---")
                 print(ex["baseline_resp"][:500])
-                print(f"--- SFT response (first 500 chars) ---")
+                print("--- SFT response (first 500 chars) ---")
                 print(ex["sft_resp"][:500])
                 shown += 1
 
@@ -552,9 +581,9 @@ def run_full_analysis():
             print(f"Gold: {imp['gold']}")
             print(f"Baseline answer (extracted): {str(imp['baseline_filtered'])[:200]}")
             print(f"SFT answer (extracted): {str(imp['sft_filtered'])[:200]}")
-            print(f"--- Baseline response (first 400 chars) ---")
+            print("--- Baseline response (first 400 chars) ---")
             print(imp["baseline_resp"][:400])
-            print(f"--- SFT response (first 400 chars) ---")
+            print("--- SFT response (first 400 chars) ---")
             print(imp["sft_resp"][:400])
 
     # -----------------------------------------------------------------------
@@ -599,7 +628,9 @@ def run_full_analysis():
             reason = "Tutorial with no equations"
 
         if is_bad and bad_count < 8:
-            print(f"\n[BAD #{bad_count + 1}] Reason: {reason} | url={doc.get('url', 'N/A')[:80]} | len={audit['length']}")
+            print(
+                f"\n[BAD #{bad_count + 1}] Reason: {reason} | url={doc.get('url', 'N/A')[:80]} | len={audit['length']}"
+            )
             print(text[:800])
             print("..." if len(text) > 800 else "")
             bad_count += 1
@@ -624,7 +655,7 @@ def run_full_analysis():
                 print(prompt[:2000])
 
     # Compare with training format
-    print(f"\n--- Training data format (first Q/R/A doc, first 1000 chars) ---")
+    print("\n--- Training data format (first Q/R/A doc, first 1000 chars) ---")
     for doc, audit in zip(training_docs, audits):
         if audit["structure"] == "qa_complete":
             print(doc["text"][:1000])

@@ -1,3 +1,6 @@
+# Copyright 2025 The Marin Authors
+# SPDX-License-Identifier: Apache-2.0
+
 """Quick script to fetch a URL and extract text with resiliparse."""
 
 import sys
@@ -22,7 +25,7 @@ def fetch_with_retries(url, max_retries=MAX_RETRIES):
             print(f"Success! ({resp.status_code})")
             return resp.text
         except (requests.RequestException, requests.HTTPError) as e:
-            wait = BACKOFF * (2 ** attempt)
+            wait = BACKOFF * (2**attempt)
             print(f"  Failed: {e}")
             if attempt < max_retries - 1:
                 print(f"  Retrying in {wait}s...")
