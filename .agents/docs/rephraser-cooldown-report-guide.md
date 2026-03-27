@@ -26,17 +26,19 @@ during cooldown improves downstream lm-eval benchmarks.
 
 ### Where experiments live in code
 
-| Experiment | Script | Budget |
-|---|---|---|
-| Rephraser v2 (25 WARCs) | `rephraser_cooldown.py` | 2.56B tokens (9,759 steps) |
-| Rephraser 150 WARCs | `rephraser_cooldown_150warc_train*.py` | 2.56B tokens (9,759 steps) |
-| DCLM 100M baseline | `dclm_cooldown.py` | 2.56B tokens (9,759 steps) |
-| DCLM filtered | `dclm_filtered_cooldown.py` | 2.56B tokens (9,759 steps) |
-| Short rephraser | `short_cooldown/rephraser.py` | 1.31B tokens (5,000 steps) |
-| Short DCLM | `short_cooldown/dclm.py` | 1.31B tokens (5,000 steps) |
-| Short nemotron-only | `short_cooldown/nemotron_only.py` | 1.31B tokens (5,000 steps) |
-| Baseline pre-cooldown | `scaling_1e20_baseline_eval.py` | Eval only (step 35,000) |
-| Baseline post-cooldown | `scaling_1e20_final_eval.py` | Eval only (step 44,758) |
+| Experiment | Script | Budget | Rephraser Data |
+|---|---|---|---|
+| Rephraser v2 (25 WARCs) | `rephraser_cooldown.py` | 2.56B tokens (9,759 steps) | `0b5b27` (46M, 1.8% mixin) |
+| Rephraser 150 WARCs | `rephraser_cooldown_150warc_train*.py` | 2.56B tokens (9,759 steps) | `02c17e` (362M, 12.4% mixin) |
+| DCLM 300M baseline | `dclm_cooldown.py` | 2.56B tokens (9,759 steps) | N/A (DCLM data) |
+| DCLM filtered | `dclm_filtered_cooldown.py` | 2.56B tokens (9,759 steps) | N/A (DCLM data) |
+| Short rephraser 150W | `short_cooldown/rephraser_east1d.py` | 1.31B tokens (5,000 steps) | `02c17e` (362M, 26.6% mixin) |
+| Short DCLM | `short_cooldown/dclm.py` | 1.31B tokens (5,000 steps) | N/A (DCLM data) |
+| Short nemotron-only | `short_cooldown/nemotron_only.py` | 1.31B tokens (5,000 steps) | None |
+| Baseline pre-cooldown | `scaling_1e20_baseline_eval.py` | Eval only (step 35,000) | N/A |
+| Baseline post-cooldown | `scaling_1e20_final_eval.py` | Eval only (step 44,758) | N/A |
+
+**Note**: There is no valid short 25-WARC run. The original short rephraser (`ff008c`) was bugged (70.4% mixin due to token count bug).
 
 ### Where outputs live on GCS
 
@@ -54,7 +56,7 @@ Key output directories (us-central1 examples):
 ```
 gs://marin-us-central1/cooldown-rephraser-d7d976d3-v2-{hash}/       # Rephraser v2
 gs://marin-us-central1/cooldown-rephraser-d7d976d3-150warc-{hash}/   # 150 WARCs
-gs://marin-us-central1/cooldown-dclm-100m-{hash}/                    # DCLM 100M
+gs://marin-us-central1/cooldown-dclm-100m-{hash}/                    # DCLM 300M
 gs://marin-us-central1/cooldown-dclm-filtered-v1-{hash}/             # DCLM filtered
 gs://marin-us-central1/short-cooldown-rephraser-d7d976d3-{hash}/     # Short rephraser
 gs://marin-us-central1/short-cooldown-dclm-{hash}/                   # Short DCLM
@@ -62,6 +64,62 @@ gs://marin-us-central1/short-cooldown-nemotron-only-{hash}/          # Short nem
 ```
 
 **Note**: Multiple hashes may exist for the same experiment if it was re-run (e.g. after a bug fix). Check `.executor_status` to find successful runs.
+
+### Completed run registry (verified SUCCESS)
+
+#### 150-WARC Rephraser Cooldown (full, 9,759 steps)
+
+| Cluster | GCS Path | Final Step | HF Export | Executor Status | W&B | Notes |
+|---|---|---|---|---|---|---|
+| us-central1 | `gs://marin-us-central1/cooldown-rephraser-d7d976d3-150warc-v2-f8aa0b/` | step-9758 | `hf/step-9758` | SUCCESS | `cooldown-rephraser-d7d976d3-150warc-v2-f8aa0b` | Clean run, 0 restarts, v5p-8, inline lm-eval succeeded |
+| us-east1 | `gs://marin-us-east1/cooldown-rephraser-d7d976d3-150warc-v2-f8aa0b/` | step-9758 | `hf/step-9758` | SUCCESS | `cooldown-rephraser-d7d976d3-150warc-v2-f8aa0b` | 5 restarts due to v6e-32 preemption, inline lm-eval may have failed on multi-host |
+
+- **Script**: `experiments/rephraser/rephraser_cooldown_150warc_train_central1.py` (central1) / `rephraser_cooldown_150warc_train_east1d.py` (east1)
+- **Step name**: `cooldown-rephraser-d7d976d3-150warc-v2` (hash: `f8aa0b`)
+- **Tokenized data**: rephraser at `tokenized/rephraser_spec_d7d976d3_cooldown-02c17e`, nemotron at `tokenized/nemotron_cooldown_1e20-666089`
+- **Final loss**: ~2.66-2.69
+- **Training time**: ~7.5 hours on v5p-8 (central1)
+
+#### Short Rephraser 150W Cooldown (5,000 steps)
+
+| Cluster | GCS Path | Final Step | HF Export | Executor Status | Notes |
+|---|---|---|---|---|---|
+| us-central1 | `gs://marin-us-central1/short-cooldown-rephraser-d7d976d3-v2-eebec0/` | step-4999 | `hf/step-4999` | SUCCESS (training on east1, HF copied to central1) | HF export is 5.17 GB (2 safetensors shards) |
+| us-east1 | `gs://marin-us-east1/short-cooldown-rephraser-d7d976d3-v2-eebec0/` | step-4999 | `hf/step-4999` | FAILED (lm-eval crash on multi-host v6e-32) | Training complete, HF export exists, but executor marked FAILED due to lm-eval |
+
+- **Script**: `experiments/rephraser/short_cooldown/rephraser_east1d.py` (east1) / `short_cooldown/eval_rephraser.py` (eval on central1)
+- **Step name**: `short-cooldown-rephraser-d7d976d3-v2` (hash: `eebec0`)
+- **Rephraser data**: `02c17e` (362M tokens from ~150 WARCs, 26.6% mixin)
+- **HF model size**: 5.17 GB (bf16, 2 safetensors shards)
+- **Note**: Despite the step name containing `-v2` (not `-150warc`), this run uses the 150-WARC tokenized data (`02c17e`). There is no valid short 25-WARC run.
+
+#### Standalone Eval Runs
+
+| Eval Target | GCS Results Path | Status |
+|---|---|---|
+| Pre-cooldown (step-35000) | `gs://marin-us-central1/evaluation/lm_evaluation_harness_levanter/lmeval_debug_hf/scaling-1e20-step-35000-662640/` | SUCCESS |
+| Post-cooldown (step-44758) | `gs://marin-us-central1/evaluation/lm_evaluation_harness_levanter/lmeval_debug_hf_step-44758-8a20e0/` | SUCCESS |
+| Short rephraser 150W (step-4999) | `gs://marin-us-central1/evaluation/lm_evaluation_harness_levanter/lmeval_debug_hf_step-4999-8b06e2/` | SUCCESS |
+| DCLM filtered (step-9758) | `gs://marin-us-central1/evaluation/lm_evaluation_harness_levanter/lmeval_debug_hf_step-9758-c460fa/` | SUCCESS |
+| 150-WARC (step-9758) | Inline with training run on central1 (WandB only) | SUCCESS |
+
+**Note**: The pre-cooldown eval is in a nested subdirectory (`lmeval_debug_hf/scaling-1e20-step-35000-662640/`) due to the HF export step name containing a slash.
+
+#### Failed / Dead Clusters
+
+| Cluster | Issue | Date |
+|---|---|---|
+| eu-west4-a | Persistent TPU HAL init error on node 10.164.1.112; all v6e-32 allocations fail | 2026-03-04 |
+| us-east5-a | Severe v5p-8 preemption pressure; zero training progress across 4+ restarts | 2026-03-04 |
+
+### Multi-host lm-eval limitation
+
+lm-eval harness **does not work on multi-host TPUs** (e.g. v6e-32 with 8 VMs). Symptoms:
+- HuggingFace API rate limiting (429 errors) from 8 nodes hitting the API simultaneously
+- `TypeError: 'NoneType' object is not iterable` during task loading
+- `ValueError: device_put's first argument must be a fully addressable array`
+
+**Workaround**: Run eval separately on single-host TPUs (v5p-8) using `default_eval()` from `experiments/evals/evals.py`, or rely on inline lm-eval only when training on single-host TPUs.
 
 ### Checking run status
 ```bash
@@ -124,12 +182,27 @@ tokenized/nemotron_cooldown_1e20_short_1b-{hash}
 
 ### Known token counts (reference)
 
-| Dataset | Path suffix | Tokens |
-|---|---|---|
-| Nemotron cooldown (2.56B) | `nemotron_cooldown_1e20-666089` | 2,558,263,296 |
-| Nemotron short (1B) | `nemotron_cooldown_1e20_short_1b-413400` | 1,000,079,360 |
-| Rephraser (25 WARCs) | `rephraser_spec_d7d976d3_cooldown-02c17e` | 362,242,311 |
-| DCLM 100M baseline | `dclm_baseline_100m-211afe` | 307,051,596 |
+| Dataset | Path suffix | Tokens | Notes |
+|---|---|---|---|
+| Nemotron cooldown (2.56B) | `nemotron_cooldown_1e20-666089` | 2,558,263,296 | Full cooldown base data |
+| Nemotron short (1B) | `nemotron_cooldown_1e20_short_1b-413400` | 1,000,079,360 | Short cooldown base data |
+| Rephraser 150W (d7d976d3) | `rephraser_spec_d7d976d3_cooldown-02c17e` | 362,242,311 | From ~150 WARCs |
+| Rephraser 25W (d7d976d3) | `rephraser_spec_d7d976d3_cooldown-0b5b27` | 45,904,757 | From ~25 WARCs |
+| DCLM 300M baseline | `dclm_baseline_100m-211afe` | 307,051,596 | |
+| DCLM filtered | `dclm_filtered_warcs_llama3-406c6b` | 5,671,922 | Extremely aggressive filtering |
+
+**IMPORTANT — 25W vs 150W tokenized data**:
+There are TWO different rephraser tokenized datasets with the same spec hash (`d7d976d3`):
+- `0b5b27` = 46M tokens from ~25 WARCs (used by Rephraser v2 25W full cooldown)
+- `02c17e` = 362M tokens from ~150 WARCs (used by Rephraser 150W full cooldown AND Short Rephraser)
+
+The 150-WARC training scripts (`rephraser_cooldown_150warc_train_*.py`) and the short
+rephraser v2 scripts (`short_cooldown/rephraser_east1d.py` etc.) all **hardcode** the
+`02c17e` path. The original `rephraser_cooldown.py` pipeline dynamically resolves to
+`0b5b27` based on the pipeline config at the time it was run.
+
+Always verify which tokenized hash a run actually used by checking the WandB tags
+(`rephraser-tokens=...`) or the executor step config.
 
 ### Verifying token counts (IMPORTANT)
 
@@ -196,16 +269,23 @@ for run in runs:
 
 **WandB metric format**: `lm_eval/{task_alias}/{metric}`
 
-Example metrics:
+Example metrics (primary — use these first):
+```
+lm_eval/hellaswag_0shot/choice_prob_norm
+lm_eval/arc_challenge/choice_prob_norm
+lm_eval/piqa/choice_prob_norm
+lm_eval/winogrande/choice_prob_norm
+lm_eval/boolq/choice_prob_norm
+```
+
+Example metrics (secondary — for reference):
 ```
 lm_eval/hellaswag_0shot/acc_norm
 lm_eval/arc_challenge/acc_norm
-lm_eval/piqa/acc_norm
-lm_eval/winogrande/acc
 lm_eval/lambada_openai/acc
 ```
 
-**Primary metric**: `acc_norm` (choice_prob_norm) where available, `acc` otherwise.
+**Primary metric**: `choice_prob_norm` (NOT `acc_norm` — these are different metrics!).
 
 **WandB tags to filter by**:
 - `rephraser-cooldown` — all rephraser cooldown runs
@@ -238,15 +318,16 @@ gcloud storage ls gs://marin-us-central1/evaluation/lm_evaluation_harness_levant
 # => lmeval_debug_hf_step-44758-8a20e0/
 ```
 
-**Reading results**:
+**Reading results** (primary metric — choice_prob_norm):
 ```bash
 gcloud storage cat "gs://marin-us-central1/evaluation/.../results.json" | python3 -c "
 import sys, json
 d = json.load(sys.stdin)
 for task, metrics in d['results'].items():
+    cpn = metrics.get('choice_prob_norm,none', 'N/A')
     acc = metrics.get('acc,none', 'N/A')
     acc_norm = metrics.get('acc_norm,none', 'N/A')
-    print(f'{task}: acc={acc}, acc_norm={acc_norm}')
+    print(f'{task}: choice_prob_norm={cpn}, acc={acc}, acc_norm={acc_norm}')
 "
 ```
 
@@ -398,24 +479,79 @@ echo '{"total_tokens": <N>, "total_elements": 0}' | \
 
 From `experiments/evals/task_configs.py`:
 
-| Task | Shots | Metric to report |
-|---|---|---|
-| agieval_lsat_ar | 3 | acc_norm |
-| arc_easy | 10 | acc_norm |
-| arc_challenge | 10 | acc_norm |
-| boolq | 10 | acc |
-| commonsense_qa | 10 | acc |
-| copa | 0 | acc |
-| hellaswag_0shot | 0 | acc_norm |
-| hellaswag_10shot | 10 | acc_norm |
-| lambada_openai | 0 | acc |
-| openbookqa | 0 | acc_norm |
-| piqa | 10 | acc_norm |
-| wsc273 | 0 | acc |
-| winogrande | 0 | acc |
+| Task | Shots | choice_prob_norm available? | Fallback metric |
+|---|---|---|---|
+| agieval_lsat_ar | 3 | NO | acc_norm |
+| arc_easy | 10 | YES | acc_norm |
+| arc_challenge | 10 | YES | acc_norm |
+| boolq | 10 | YES | acc |
+| commonsense_qa | 10 | YES | acc |
+| copa | 0 | YES | acc |
+| hellaswag_0shot | 0 | YES | acc_norm |
+| hellaswag_10shot | 10 | YES | acc_norm |
+| lambada_openai | 0 | NO | acc |
+| openbookqa | 0 | YES | acc_norm |
+| piqa | 10 | YES | acc_norm |
+| wsc273 | 0 | YES | acc |
+| winogrande | 0 | YES | acc |
 
-**Primary metric**: `acc_norm` (choice_prob_norm) where available, `acc` otherwise.
-Tasks without `acc_norm`: boolq, commonsense_qa, copa, lambada_openai, winogrande, wsc273.
+### Metrics (IMPORTANT — read this)
+
+**Primary metric**: `choice_prob_norm`. This is the metric we care about most.
+
+**`choice_prob_norm` is NOT the same as `acc_norm`!**
+- `acc_norm` = length-normalized accuracy (normalizes by number of tokens in each choice)
+- `choice_prob_norm` = probability-normalized accuracy (normalizes by the probability of each choice)
+
+In GCS `results.json`, the key is `choice_prob_norm,none`.
+In WandB, the key is `lm_eval/{task}/choice_prob_norm`.
+
+`choice_prob_norm` is available for 11 of 13 CORE_TASKS. The two exceptions:
+- `agieval_lsat_ar` — use `acc_norm` instead
+- `lambada_openai` — use `acc` instead
+
+When producing the report, always create a dedicated `choice_prob_norm` table as the PRIMARY table, with `acc`/`acc_norm` tables as secondary reference.
+
+---
+
+## Exact Data Source Paths (Verified 2026-03-04)
+
+These are the exact paths to retrieve every number in the COOLDOWN_REPORT.
+
+### GCS Standalone Eval Results (results.json)
+
+| Condition | Full GCS Path |
+|---|---|
+| Pre-cooldown (step-35000) | `gs://marin-us-central1/evaluation/lm_evaluation_harness_levanter/lmeval_debug_hf/scaling-1e20-step-35000-662640/results.json` |
+| Post-cooldown (step-44758) | `gs://marin-us-central1/evaluation/lm_evaluation_harness_levanter/lmeval_debug_hf_step-44758-8a20e0/results.json` |
+| DCLM Filtered (step-9758) | `gs://marin-us-central1/evaluation/lm_evaluation_harness_levanter/lmeval_debug_hf_step-9758-c460fa/results.json` |
+| Short Rephraser v2 (step-4999) | `gs://marin-us-central1/evaluation/lm_evaluation_harness_levanter/lmeval_debug_hf_step-4999-8b06e2/results.json` |
+
+**Note**: The pre-cooldown eval is in a nested subdirectory (`lmeval_debug_hf/scaling-1e20-step-35000-662640/`) because the HF export step name contains a slash.
+
+### WandB In-Training Eval Results
+
+| Condition | WandB Run Name (display_name filter) | Rephraser Data | Metric Key Pattern |
+|---|---|---|---|
+| Rephraser v2 (25W) | `cooldown-rephraser-d7d976d3-v2-1cdc5a` | `0b5b27` (46M) | `lm_eval/{task}/choice_prob_norm` |
+| DCLM 300M v2 | `cooldown-dclm-100m-v2-32bcbc` | N/A | `lm_eval/{task}/choice_prob_norm` |
+| Rephraser 150W v2 | `cooldown-rephraser-d7d976d3-150warc-v2-f8aa0b` | `02c17e` (362M) | `lm_eval/{task}/choice_prob_norm` |
+| Short DCLM | `short-cooldown-dclm-49e19a` | N/A | `lm_eval/{task}/choice_prob_norm` |
+| Short Nemotron-only | `short-cooldown-nemotron-only-391eeb` | None | `lm_eval/{task}/choice_prob_norm` |
+
+**WandB project**: `marin-community/marin`
+
+### Validation Perplexity (eval_metrics.jsonl)
+
+| Condition | Full GCS Path |
+|---|---|
+| Rephraser v2 (25W) | `gs://marin-us-central1/cooldown-rephraser-d7d976d3-v2-1cdc5a/checkpoints/eval_metrics.jsonl` |
+| DCLM 300M v2 | `gs://marin-us-central1/cooldown-dclm-100m-v2-32bcbc/checkpoints/eval_metrics.jsonl` |
+| DCLM Filtered | `gs://marin-us-central1/cooldown-dclm-filtered-v1-54cdb7/checkpoints/eval_metrics.jsonl` |
+| Rephraser 150W v2 | `gs://marin-us-central1/cooldown-rephraser-d7d976d3-150warc-v2-f8aa0b/checkpoints/eval_metrics.jsonl` |
+| Short Rephraser 150W | `gs://marin-us-east1/short-cooldown-rephraser-d7d976d3-v2-eebec0/checkpoints/eval_metrics.jsonl` |
+| Short DCLM | `gs://marin-us-central1/short-cooldown-dclm-49e19a/checkpoints/eval_metrics.jsonl` |
+| Short Nemotron-only | `gs://marin-us-central1/short-cooldown-nemotron-only-391eeb/checkpoints/eval_metrics.jsonl` |
 
 ---
 

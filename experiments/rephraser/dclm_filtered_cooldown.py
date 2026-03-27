@@ -34,13 +34,11 @@ from fray.cluster import ResourceConfig
 from haliax.partitioning import ResourceAxis
 from levanter.checkpoint import CheckpointerConfig
 from levanter.data.text import DatasetComponent, LmDataConfig, TextLmDatasetFormat
-from levanter.main import train_lm
 from levanter.main.train_lm import TrainLmConfig
 from levanter.tracker.wandb import WandbConfig
 from levanter.trainer import TrainerConfig
 from levanter.utils.mesh import MeshConfig
 
-from experiments.evals.task_configs import CORE_TASKS, convert_to_levanter_task_config
 from experiments.llama import llama3_tokenizer
 from marin.download.download_url import (
     DownloadUrlToGcsConfig,
@@ -77,9 +75,7 @@ from experiments.rephraser.rephraser_cooldown import (
 
 # The original checkpoint lives on us-central1. We copy it to whichever cluster
 # we're running on and override the path here.
-CHECKPOINT_PATH = _CHECKPOINT_PATH_CENTRAL1.replace(
-    "gs://marin-us-central1/", "gs://marin-us-east1/"
-)
+CHECKPOINT_PATH = _CHECKPOINT_PATH_CENTRAL1.replace("gs://marin-us-central1/", "gs://marin-us-east1/")
 
 logger = logging.getLogger(__name__)
 

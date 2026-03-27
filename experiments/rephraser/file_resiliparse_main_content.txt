@@ -1,0 +1,38 @@
+arithmetic problem
+
+  • Thread starter sri340
+  • Start date
+  • Tags
+    arithmetic problem
+  • Discussion Starter
+On the first day, Nabil put $1 in a big box. Then, each succeeding day, he added to the box exactly twice as many dollars as he did on the previous day. On which day will Nabil have more than $1000 in his box for the first time?
+
+(A) 8th day (B) 9th day (C) 10th day (D) 11th day (E) 1000th day
+
+ 
+On the first day, Nabil put $1 in a big box. Then, each succeeding day, he added to the box exactly twice as many dollars as he did on the previous day. On which day will Nabil have more than $1000 in his box for the first time?
+
+(A) 8th day (B) 9th day (C) 10th day (D) 11th day (E) 1000th day
+
+Sum S = 1 + 2 + 4 + ..........
+
+It is geometric series.
+
+S = a(r^n - 1)/(r-1)
+
+Here a is the first term r is the common ratio and n is the number of days.
+
+S, a and r is given.
+
+Can you find n?
+ 
+
+Register CTA
+
+Register on Math Help Forum! This sidebar will go away, and you will see fewer ads.
+
+Trending Discussions
+
+  • IVPusing u(x)
+  • Has Anyone tried AlgePrime
+Back

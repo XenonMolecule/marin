@@ -59,8 +59,7 @@ COOLDOWN_1B_PATH = "gs://marin-us-central1/tokenized/nemotron_cooldown_1e20_shor
 EXTRA_300M_PATH = "gs://marin-us-central1/tokenized/nemotron_cooldown_1e20_short_extra_300m-3102d5"
 
 CHECKPOINT_PATH = (
-    "gs://marin-us-central1/exp2166-scaling-ladder-nemotron-validation-optimal-1e+20-9563f0"
-    "/checkpoints/step-35000"
+    "gs://marin-us-central1/exp2166-scaling-ladder-nemotron-validation-optimal-1e+20-9563f0" "/checkpoints/step-35000"
 )
 
 # Patch the module-level checkpoint so the optimizer picks it up.
@@ -101,8 +100,7 @@ extra_nemotron_component = DatasetComponent(
 # Validation sets
 validation_steps = default_validation_sets(tokenizer=llama3_tokenizer)
 validation_component_configs = {
-    name: step_to_lm_mixture_component(step, include_raw_paths=False)
-    for name, step in validation_steps.items()
+    name: step_to_lm_mixture_component(step, include_raw_paths=False) for name, step in validation_steps.items()
 }
 
 

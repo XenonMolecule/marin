@@ -1,0 +1,8 @@
+{
+  "job_id": "ray-run-michaelryan-code_extraction_sft_v2_base-20260314-075644",
+  "cluster": "us-central1",
+  "experiment": "experiments/rephraser/code_extraction_sft_v2.py",
+  "restart_count": 1,
+  "env_vars": "-e WANDB_API_KEY $WANDB_API_KEY -e HF_TOKEN $HF_TOKEN",
+  "notes": "Code extraction SFT v2 with plain text prompt on instruct model (Qwen3-0.6B). Fixes format contamination from v1 (no code fences, no /* */ comments). Branches: baseline, plaintext extraction, resiliparse."
+}

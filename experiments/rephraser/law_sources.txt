@@ -1,0 +1,199 @@
+# Law sources for extraction — candidates for Common Crawl CDX validation
+# Probing needed across CC-MAIN-2013-48, CC-MAIN-2016-44, CC-MAIN-2018-47, CC-MAIN-2024-46, CC-MAIN-2025-47
+#
+# Format: domain match_type  # estimated_volume description
+# Record counts = estimated; run probe_domain_sources.py to validate
+#
+# Prioritize legal Q&A forums and case law (high extraction value)
+
+
+# ==================================================================
+# TIER 1: LARGE LEGAL Q&A / ENCYCLOPEDIAS
+# ==================================================================
+
+avvo.com domain                   # 1.18M+ lawyer answers. Legal Q&A by topic.
+                                  # Criminal, family, immigration, employment law.
+                                  # Not blocked by CCBot. Huge volume expected.
+justia.com domain                 # Legal encyclopedia, case law, statutes, regulations.
+                                  # US law comprehensive reference. Not blocked.
+nolo.com domain                   # Legal guides for consumers. Plain-language law.
+                                  # Contracts, wills, business, IP, real estate.
+findlaw.com domain                # Legal information + lawyer directory. Thomson Reuters.
+                                  # Case summaries, legal articles, state laws.
+law.cornell.edu domain            # Cornell LII — Legal Information Institute.
+                                  # US Code, CFR, Supreme Court opinions. Authoritative.
+                                  # Free access legal reference.
+
+# ==================================================================
+# TIER 1: COURT OPINIONS & CASE LAW
+# ==================================================================
+
+casetext.com domain               # Case law search. Check if paywalled in modern crawls.
+                                  # May have historical open content.
+courtlistener.com domain          # Free Law Project. Open-access court opinions.
+                                  # Federal and state court opinions, oral arguments.
+scholar.google.com host           # Google Scholar case law. Check CDX availability.
+                                  # May not be well-crawled by CC.
+law.justia.com host               # Justia case law section specifically.
+                                  # Supreme Court, federal circuit, state cases.
+supreme.justia.com host           # Supreme Court opinions on Justia.
+oyez.org domain                   # Supreme Court case summaries and oral arguments.
+                                  # Educational, well-structured case information.
+
+# ==================================================================
+# TIER 2: LEGAL FORUMS & Q&A
+# ==================================================================
+
+law.stackexchange.com host        # Legal Q&A (Stack Exchange). Blocked in modern crawls.
+                                  # Check historical: 2013-48, 2016-44.
+freeadvice.com domain             # Legal Q&A forum. Consumer legal questions.
+                                  # Lawyer-answered questions across practice areas.
+lawguru.com domain                # Legal Q&A. Free legal answers.
+                                  # Check if still active and crawled.
+lawyers.com domain                # Martindale-Hubbell lawyer directory + legal articles.
+                                  # Check CCBot status and content type.
+legalbeagles.info domain          # UK legal advice forum. Consumer rights, debt, housing.
+                                  # English-language, different jurisdiction perspective.
+legalzoom.com domain              # Legal services + educational articles.
+                                  # Business law, estate planning, IP guides.
+rocketlawyer.com domain           # Legal services + articles. Check if content is paywalled.
+thelaw.com domain                 # UK legal information and forums.
+                                  # Check if still active.
+moneysavingexpert.com domain      # UK consumer advice — large legal/rights section.
+                                  # Very active forums. May need URL prefix filtering.
+
+# ==================================================================
+# TIER 2: LEGAL EDUCATION & REFERENCE
+# ==================================================================
+
+lawschool.westlaw.com host        # Westlaw legal education. Likely paywalled.
+law.onecle.com host               # Legal encyclopedia. US Code annotations.
+uslegal.com domain                # Legal definitions and encyclopedias.
+                                  # State-specific legal information.
+legalmatch.com domain             # Legal articles + lawyer matching.
+                                  # Practice area guides and legal definitions.
+law.com domain                    # ALM legal news and analysis.
+                                  # Check if behind paywall.
+abajournal.com domain             # ABA Journal — legal news, commentary.
+                                  # Authoritative legal profession publication.
+lawreview.org domain              # Various law review articles. Check availability.
+ssrn.com domain                   # Social Science Research Network — legal papers.
+                                  # Check if legal section is accessible.
+wex.lii.cornell.edu host         # Wex legal encyclopedia (Cornell LII wiki).
+                                  # Plain-language legal definitions and explanations.
+
+# ==================================================================
+# TIER 2: SPECIALTY LEGAL SITES
+# ==================================================================
+
+# -- Immigration --
+visajourney.com domain            # Immigration forum. Visa applications, green cards.
+                                  # Active community with case timelines.
+trackitt.com domain               # Immigration case tracker + forums.
+immigrationforum.com domain       # Immigration discussion forum.
+murthy.com domain                 # Immigration law firm with legal articles.
+
+# -- Family Law --
+divorcenet.com domain             # Divorce legal guides. State-specific info.
+familylawselfhelpcenter.org domain # Family law self-help. Court forms, procedures.
+custodyxchange.com domain         # Custody and parenting time resources.
+
+# -- Employment Law --
+nolo.com/legal-encyclopedia/employment-law host  # Nolo employment law section specifically.
+workplacefairness.org domain      # Employment rights information.
+                                  # Discrimination, wages, wrongful termination.
+
+# -- Criminal Law --
+criminaldefenselawyer.com domain  # Criminal law guides. Nolo sister site.
+                                  # Charges, defenses, procedures by state.
+
+# -- Real Estate / Landlord-Tenant --
+landlordology.com domain          # Landlord legal guides. State-specific laws.
+thebalancemoney.com domain        # Personal finance + legal guides. Large site.
+                                  # Check for legal content volume specifically.
+
+# ==================================================================
+# TIER 3: SMALLER / NICHE LEGAL SOURCES
+# ==================================================================
+
+scotusblog.com domain             # Supreme Court blog. Case analysis, opinions.
+                                  # High quality but focused on SCOTUS.
+volokh.com domain                 # Legal commentary blog. Constitutional law focus.
+lawfaremedia.org domain           # National security law blog. Policy + legal analysis.
+constitution.congress.gov domain  # US Constitution annotated. Government source.
+uscourts.gov domain               # US federal courts information.
+                                  # Court procedures, educational resources.
+law.duke.edu domain               # Duke Law resources. Check what's publicly accessible.
+law.harvard.edu domain            # Harvard Law resources. Check what's public.
+law.stanford.edu domain           # Stanford Law resources. Check what's public.
+legal-dictionary.thefreedictionary.com host  # Legal definitions from Free Dictionary.
+                                             # Quick reference, may be small.
+lawshelf.com domain               # Legal education videos and articles.
+                                  # Check if free or paywalled.
+publiclegal.com domain            # US legal information. Government resources.
+
+# ==================================================================
+# TIER 3: INTERNATIONAL / UK LAW
+# ==================================================================
+
+legislation.gov.uk domain         # UK legislation database. Statutes, regulations.
+                                  # Government site, well-structured.
+bailii.org domain                 # British & Irish Legal Information Institute.
+                                  # Case law, legislation. Open access.
+lawteacher.net domain             # UK law study resources. Essays, case notes.
+                                  # Student-oriented legal education.
+e-lawresources.co.uk domain       # UK law cases and study resources.
+inbrief.co.uk domain              # UK legal guides for consumers.
+citizensadvice.org.uk domain      # Citizens Advice — UK consumer/legal rights.
+                                  # Very practical legal information.
+
+
+# ==================================================================
+# HISTORICAL CRAWLS ONLY (blocked/defunct in modern crawls)
+# ==================================================================
+
+law.stackexchange.com host        # Stack Exchange — blocked modern. Check 2013-48, 2016-44.
+
+
+# ==================================================================
+# NOT VIABLE (expected)
+# ==================================================================
+
+# westlaw.com domain              # Thomson Reuters — fully paywalled
+# lexisnexis.com domain           # RELX — fully paywalled
+# hein.org domain                 # HeinOnline — law journals, paywalled
+# bloomberglaw.com domain         # Bloomberg — fully paywalled
+
+
+# ==================================================================
+# KEY CRAWL INDICES (expected best crawls for law)
+# ==================================================================
+#
+# Legal Q&A forums likely peaked in 2013-2016 crawls.
+# Case law sites (courtlistener, justia) may be consistently available.
+# Government sites (cornell LII, uscourts) available across all crawls.
+#
+# CC-MAIN-2013-48:  Early forum content, Stack Exchange law topics
+# CC-MAIN-2016-44:  Peak forum era, avvo growth period
+# CC-MAIN-2018-47:  Last chance for some forums before blocking
+# CC-MAIN-2024-46:  Modern reference sites, avvo (if still open)
+# CC-MAIN-2025-47:  Latest crawl
+#
+# Avvo.com is likely the single richest legal Q&A source (like mathhelpforum for math).
+
+
+# ==================================================================
+# PROBING NOTES
+# ==================================================================
+#
+# Run: uv run python experiments/rephraser/probe_domain_sources.py \
+#          --source_file experiments/rephraser/law_sources.txt \
+#          --output experiments/rephraser/law_sources_probed.json
+#
+# After probing, reorganize tiers based on actual CDX record counts.
+# Key considerations:
+# - Legal Q&A (avvo, freeadvice) has highest extraction value
+# - Case law (courtlistener, justia) is structured but may need
+#   different extraction prompts than Q&A forums
+# - Government legal sites are very large — may need sampling
+# - UK sites add jurisdictional diversity (common law tradition)

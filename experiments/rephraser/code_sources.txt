@@ -1,0 +1,58 @@
+# Code-heavy sources for extraction testing
+# Validated against Common Crawl CDX API (CC-MAIN-2024-10)
+# Format: url_pattern match_type
+
+# Stack Exchange / Q&A
+stackoverflow.com host
+codereview.stackexchange.com host
+codegolf.stackexchange.com host
+cs.stackexchange.com host
+cstheory.stackexchange.com host
+math.stackexchange.com host
+stats.stackexchange.com host
+physics.stackexchange.com host
+unix.stackexchange.com host
+askubuntu.com host
+softwareengineering.stackexchange.com host
+dsp.stackexchange.com host
+ai.stackexchange.com host
+datascience.stackexchange.com host
+electronics.stackexchange.com host
+crypto.stackexchange.com host
+security.stackexchange.com host
+tex.stackexchange.com host
+mathematica.stackexchange.com host
+mathoverflow.net host
+
+# Language docs
+docs.python.org host
+doc.rust-lang.org host
+pkg.go.dev host
+en.cppreference.com host
+kotlinlang.org/docs prefix
+docs.scala-lang.org host
+docs.julialang.org host
+hexdocs.pm host
+www.php.net/manual prefix
+ruby-doc.org host
+docs.rs host
+
+# Code tutorials / references
+rosettacode.org host
+www.geeksforgeeks.org host
+realpython.com host
+www.w3schools.com host
+www.tutorialspoint.com host
+
+# Framework / API docs
+developer.mozilla.org host
+www.tensorflow.org host
+api.flutter.dev host
+doc.qt.io host
+huggingface.co/docs prefix
+llvm.org/docs prefix
+gcc.gnu.org/onlinedocs prefix
+www.boost.org/doc prefix
+www.typescriptlang.org/docs/handbook prefix
+readthedocs.io domain
+devdocs.io host

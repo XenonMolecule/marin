@@ -1,7 +1,18 @@
 {
-  "job_id": "ray-run-michaelryan-rephraser_east1d-20260304-013842",
+  "job_id": "ray-run-michaelryan-rephraser_east1d-20260304-080523",
   "cluster": "us-east1",
   "experiment": "experiments/rephraser/short_cooldown/rephraser_east1d.py",
-  "restart_count": 0,
-  "description": "Short rephraser cooldown on east1-d v6e-32, fresh start"
+  "restart_count": 2,
+  "status": "TRAINING_COMPLETE_HARNESS_FAILING",
+  "description": "Training complete at step-4999. HF model and perplexity evals done. lm_eval harness consistently fails with JAX device_put ValueError on multi-slice TPU.",
+  "checkpoint": "gs://marin-us-east1/short-cooldown-rephraser-d7d976d3-v2-eebec0/checkpoints/step-4999/",
+  "hf_model": "gs://marin-us-east1/short-cooldown-rephraser-d7d976d3-v2-eebec0/hf/step-4999/",
+  "wandb_run": "https://wandb.ai/marin-community/marin/runs/short-cooldown-rephraser-d7d976d3-v2-eebec0",
+  "failure_mode": "ValueError: device_put first argument must be a fully addressable array - occurs during lm_eval harness on multi-slice TPU. Fails consistently across 3 restarts.",
+  "previous_job_ids": [
+    "ray-run-michaelryan-rephraser_east1d-20260304-013842",
+    "ray-run-michaelryan-rephraser_east1d-20260304-044438",
+    "ray-run-michaelryan-rephraser_east1d-20260304-080523"
+  ],
+  "recommendation": "Training is complete. The lm_eval harness has a systematic bug on multi-slice TPU (device_put ValueError). Options: (1) Fix the multi-slice eval harness code, (2) Run harness eval separately on a single-slice config, (3) Accept perplexity-only evals."
 }

@@ -553,6 +553,17 @@ INSTRUCTION_DATASET_NAME_TO_CONFIG = {
         name="MichaelR207/rephraser_late_check_0225",
         splits=["train"],
     ),
+    "openai/gsm8k": InstructionDatasetConfig(
+        hf_dataset_id="openai/gsm8k",
+        revision="cc7b047",
+        adapter=instruction_response_adapter(
+            instruction_column="question",
+            response_column="answer",
+        ),
+        metadata_columns=[],
+        name="openai/gsm8k",
+        splits=["train", "test"],
+    ),
 }
 
 for split_name in SMOLTALK2_SPLITS:

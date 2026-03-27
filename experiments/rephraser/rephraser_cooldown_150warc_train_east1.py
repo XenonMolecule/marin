@@ -62,17 +62,12 @@ logger = logging.getLogger(__name__)
 # Paths to already-processed data on us-east1
 # ---------------------------------------------------------------------------
 
-REPHRASER_TOKENIZED_PATH = (
-    "gs://marin-us-east1/tokenized/rephraser_spec_d7d976d3_cooldown-02c17e"
-)
+REPHRASER_TOKENIZED_PATH = "gs://marin-us-east1/tokenized/rephraser_spec_d7d976d3_cooldown-02c17e"
 
-COOLDOWN_TOKENIZED_PATH = (
-    "gs://marin-us-east1/tokenized/nemotron_cooldown_1e20-666089"
-)
+COOLDOWN_TOKENIZED_PATH = "gs://marin-us-east1/tokenized/nemotron_cooldown_1e20-666089"
 
 CHECKPOINT_PATH = (
-    "gs://marin-us-east1/exp2166-scaling-ladder-nemotron-validation-optimal-1e+20-9563f0"
-    "/checkpoints/step-35000"
+    "gs://marin-us-east1/exp2166-scaling-ladder-nemotron-validation-optimal-1e+20-9563f0" "/checkpoints/step-35000"
 )
 cooldown_module.CHECKPOINT_PATH = CHECKPOINT_PATH
 
@@ -109,8 +104,7 @@ rephraser_component = DatasetComponent(
 # Validation sets
 validation_steps = default_validation_sets(tokenizer=llama3_tokenizer)
 validation_component_configs = {
-    name: step_to_lm_mixture_component(step, include_raw_paths=False)
-    for name, step in validation_steps.items()
+    name: step_to_lm_mixture_component(step, include_raw_paths=False) for name, step in validation_steps.items()
 }
 
 

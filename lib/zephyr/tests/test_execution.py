@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 from fray.v2 import ResourceConfig
 from zephyr.dataset import Dataset
-from zephyr.execution import ZephyrContext, zephyr_worker_ctx
+from zephyr.execution import WorkerState, ZephyrContext, zephyr_worker_ctx
 
 
 def test_simple_map(zephyr_ctx):
@@ -263,6 +263,127 @@ def test_fatal_errors_fail_fast(fray_client, tmp_path):
 
         # Should fail fast — well under the 30s heartbeat timeout
         assert elapsed < 15.0, f"Took {elapsed:.1f}s, expected fast failure"
+
+
+def test_worker_error_requeues_to_healthy_worker(tmp_path):
+    """When one worker fails, its shard is re-queued to another healthy worker."""
+    from zephyr.execution import Shard, ShardTask, TaskResult, ZephyrCoordinator
+
+    coord = ZephyrCoordinator()
+    coord.set_chunk_config(str(tmp_path / "chunks"), "test-exec")
+    coord.set_shared_data({})
+
+    tasks = [
+        ShardTask(shard_idx=i, total_shards=3, chunk_size=100, shard=Shard(chunks=[]), operations=[], stage_name="test")
+        for i in range(3)
+    ]
+    coord.start_stage("test", tasks)
+
+    # Register two workers
+    coord.register_worker("worker-A", None)
+    coord.register_worker("worker-B", None)
+
+    # Worker A pulls shard 0
+    pulled_a = coord.pull_task("worker-A")
+    assert pulled_a is not None and pulled_a != "SHUTDOWN"
+    task_a, attempt_a, _ = pulled_a
+    assert task_a.shard_idx == 0
+
+    # Worker B pulls shard 1
+    pulled_b = coord.pull_task("worker-B")
+    assert pulled_b is not None and pulled_b != "SHUTDOWN"
+    task_b, attempt_b, _ = pulled_b
+    assert task_b.shard_idx == 1
+
+    # Worker A fails on shard 0
+    coord.report_error("worker-A", 0, "TPU device busy")
+
+    # Worker A is now DEAD — should not get new tasks
+    assert coord._worker_states["worker-A"] == WorkerState.DEAD
+    assert coord.pull_task("worker-A") is None
+
+    # No fatal error — worker B is still alive
+    assert coord.get_fatal_error() is None
+
+    # Shard 0 was re-queued at end of queue (after shard 2)
+    coord.report_result("worker-B", 1, attempt_b, TaskResult(chunks=[]))
+
+    # Worker B picks up shard 2 first (it was ahead of re-queued shard 0)
+    pulled_b2 = coord.pull_task("worker-B")
+    assert pulled_b2 is not None and pulled_b2 != "SHUTDOWN"
+    task_b2, attempt_b2, _ = pulled_b2
+    assert task_b2.shard_idx == 2
+    coord.report_result("worker-B", 2, attempt_b2, TaskResult(chunks=[]))
+
+    # Now worker B picks up the re-queued shard 0
+    pulled_b3 = coord.pull_task("worker-B")
+    assert pulled_b3 is not None and pulled_b3 != "SHUTDOWN"
+    task_b3, attempt_b3, _ = pulled_b3
+    assert task_b3.shard_idx == 0
+    assert attempt_b3 == 1  # Attempt incremented
+    coord.report_result("worker-B", 0, attempt_b3, TaskResult(chunks=[]))
+
+    # All 3 shards completed despite worker A dying
+    assert coord._completed_shards == 3
+    assert coord.get_fatal_error() is None
+
+
+def test_all_workers_dead_is_fatal(tmp_path):
+    """When all workers die, report_error sets a fatal error."""
+    from zephyr.execution import Shard, ShardTask, ZephyrCoordinator
+
+    coord = ZephyrCoordinator()
+    coord.set_chunk_config(str(tmp_path / "chunks"), "test-exec")
+    coord.set_shared_data({})
+
+    tasks = [
+        ShardTask(shard_idx=0, total_shards=1, chunk_size=100, shard=Shard(chunks=[]), operations=[], stage_name="test")
+    ]
+    coord.start_stage("test", tasks)
+
+    coord.register_worker("worker-A", None)
+
+    pulled = coord.pull_task("worker-A")
+    assert pulled is not None and pulled != "SHUTDOWN"
+
+    # Single worker dies → all workers dead → fatal
+    coord.report_error("worker-A", 0, "ValueError: bad value")
+
+    assert coord.get_fatal_error() is not None
+    assert "All workers are dead" in coord.get_fatal_error()
+    assert "ValueError" in coord.get_fatal_error()
+
+
+def test_shard_exceeds_max_retries_is_fatal(tmp_path):
+    """When a shard fails on max_task_retries different workers, it becomes fatal."""
+    from zephyr.execution import Shard, ShardTask, ZephyrCoordinator
+
+    coord = ZephyrCoordinator(max_task_retries=2)
+    coord.set_chunk_config(str(tmp_path / "chunks"), "test-exec")
+    coord.set_shared_data({})
+
+    tasks = [
+        ShardTask(shard_idx=0, total_shards=1, chunk_size=100, shard=Shard(chunks=[]), operations=[], stage_name="test")
+    ]
+    coord.start_stage("test", tasks)
+
+    # Register 3 workers so all-workers-dead doesn't trigger first
+    coord.register_worker("worker-A", None)
+    coord.register_worker("worker-B", None)
+    coord.register_worker("worker-C", None)
+
+    # Worker A fails on shard 0 (attempt 1/2)
+    pulled = coord.pull_task("worker-A")
+    assert pulled is not None
+    coord.report_error("worker-A", 0, "error 1")
+    assert coord.get_fatal_error() is None  # Still under limit
+
+    # Worker B picks up re-queued shard 0, also fails (attempt 2/2 → fatal)
+    pulled = coord.pull_task("worker-B")
+    assert pulled is not None
+    coord.report_error("worker-B", 0, "error 2")
+    assert coord.get_fatal_error() is not None
+    assert "failed 2 times" in coord.get_fatal_error()
 
 
 def test_chunk_storage_with_join(fray_client, tmp_path):

@@ -1,0 +1,303 @@
+{
+  "job_id": "ray-run-michaelryan-math_top3_low_lr_sweep-20260326-173604",
+  "cluster": "us-central1",
+  "status": "COMPLETE",
+  "last_check": "2026-03-27T06:00Z",
+  "model": "Qwen/Qwen3-0.6B-Base",
+  "purpose": "Push LR below 5e-7 to find diminishing returns. Prior sweep best: lr=5e-7, avg_mv=30.3%",
+  "hp_configs": {
+    "lr3e-7_bs64": {"lr": 3e-7, "bs": 64, "wd": 0.1},
+    "lr2e-7_bs64": {"lr": 2e-7, "bs": 64, "wd": 0.1},
+    "lr1e-7_bs64": {"lr": 1e-7, "bs": 64, "wd": 0.1},
+    "lr5e-8_bs64": {"lr": 5e-8, "bs": 64, "wd": 0.1},
+    "lr2e-8_bs64": {"lr": 2e-8, "bs": 64, "wd": 0.1},
+    "lr2e-7_bs16": {"lr": 2e-7, "bs": 16, "wd": 0.1},
+    "lr1e-7_bs16": {"lr": 1e-7, "bs": 16, "wd": 0.1}
+  },
+  "data_types": ["extract", "resili"],
+  "total_configs": 7,
+  "total_runs": 14,
+  "total_evals": 14,
+  "reference_scores": {
+    "prior_sweep_best": {"config": "lr5e-7_bs64_wd01", "avg_minerva": 30.3, "gsm8k_flex": 60.3},
+    "untrained_baseline": {"avg_minerva": 22.9, "gsm8k_flex": 62.8}
+  },
+  "training_progress": {
+    "extract_lr3e-7_bs64": {
+      "ckpt_hash": "5aa978", "hf_step": 966, "status": "SUCCESS",
+      "eval_hash": "047d53", "eval_status": "COMPLETE", "eval_tasks_done": 8,
+      "results": {
+        "minerva_math_algebra": 0.4987,
+        "minerva_math_prealgebra": 0.5660,
+        "minerva_math_counting_and_prob": 0.2722,
+        "minerva_math_geometry": 0.2693,
+        "minerva_math_intermediate_algebra": 0.1207,
+        "minerva_math_num_theory": 0.2185,
+        "minerva_math_precalc": 0.1410,
+        "gsm8k_platinum_cot_flex": 0.5964,
+        "gsm8k_platinum_cot_strict": 0.5285
+      },
+      "avg_minerva_7tasks": 0.2981
+    },
+    "extract_lr2e-7_bs64": {
+      "ckpt_hash": "b57edb", "hf_step": 966, "status": "SUCCESS",
+      "eval_hash": "0d5cf1", "eval_status": "COMPLETE", "eval_tasks_done": 8,
+      "results": {
+        "minerva_math_algebra": 0.4937,
+        "minerva_math_prealgebra": 0.5488,
+        "minerva_math_counting_and_prob": 0.2616,
+        "minerva_math_geometry": 0.2630,
+        "minerva_math_intermediate_algebra": 0.1218,
+        "minerva_math_num_theory": 0.2241,
+        "minerva_math_precalc": 0.1429,
+        "gsm8k_platinum_cot_flex": 0.6013,
+        "gsm8k_platinum_cot_strict": 0.5194
+      },
+      "avg_minerva_7tasks": 0.2937
+    },
+    "extract_lr1e-7_bs64": {
+      "ckpt_hash": "55c406", "hf_step": 966, "status": "SUCCESS",
+      "eval_hash": "6da3ed", "eval_status": "COMPLETE", "eval_tasks_done": 8,
+      "results": {
+        "minerva_math_algebra": 0.5004,
+        "minerva_math_prealgebra": 0.5189,
+        "minerva_math_counting_and_prob": 0.2764,
+        "minerva_math_geometry": 0.2965,
+        "minerva_math_intermediate_algebra": 0.1207,
+        "minerva_math_num_theory": 0.2167,
+        "minerva_math_precalc": 0.1465,
+        "gsm8k_platinum_cot_flex": 0.6203,
+        "gsm8k_platinum_cot_strict": 0.5732
+      },
+      "avg_minerva_7tasks": 0.2966
+    },
+    "extract_lr5e-8_bs64": {
+      "ckpt_hash": "116b3c", "hf_step": 966, "status": "SUCCESS",
+      "eval_hash": "dec55c", "eval_status": "COMPLETE", "eval_tasks_done": 8,
+      "results": {
+        "minerva_math_algebra": 0.4861,
+        "minerva_math_prealgebra": 0.5281,
+        "minerva_math_counting_and_prob": 0.2616,
+        "minerva_math_geometry": 0.2797,
+        "minerva_math_intermediate_algebra": 0.1185,
+        "minerva_math_num_theory": 0.2278,
+        "minerva_math_precalc": 0.1575,
+        "gsm8k_platinum_cot_flex": 0.6427,
+        "gsm8k_platinum_cot_strict": 0.5831
+      },
+      "avg_minerva_7tasks": 0.2942
+    },
+    "extract_lr2e-8_bs64": {
+      "ckpt_hash": "060a68", "hf_step": 966, "status": "SUCCESS",
+      "eval_hash": "524bbb", "eval_status": "COMPLETE", "eval_tasks_done": 8,
+      "results": {
+        "minerva_math_algebra": 0.4431,
+        "minerva_math_prealgebra": 0.5017,
+        "minerva_math_counting_and_prob": 0.2532,
+        "minerva_math_geometry": 0.2505,
+        "minerva_math_intermediate_algebra": 0.1251,
+        "minerva_math_num_theory": 0.1944,
+        "minerva_math_precalc": 0.1630,
+        "gsm8k_platinum_cot_flex": 0.6311,
+        "gsm8k_platinum_cot_strict": 0.5798
+      },
+      "avg_minerva_7tasks": 0.2759
+    },
+    "extract_lr2e-7_bs16": {
+      "ckpt_hash": "dca1b3", "hf_step": 3865, "status": "SUCCESS",
+      "eval_hash": "b15c35", "eval_status": "COMPLETE", "eval_tasks_done": 8,
+      "results": {
+        "minerva_math_algebra": 0.5063,
+        "minerva_math_prealgebra": 0.5373,
+        "minerva_math_counting_and_prob": 0.2616,
+        "minerva_math_geometry": 0.2944,
+        "minerva_math_intermediate_algebra": 0.1296,
+        "minerva_math_num_theory": 0.2074,
+        "minerva_math_precalc": 0.1465,
+        "gsm8k_platinum_cot_flex": 0.6063,
+        "gsm8k_platinum_cot_strict": 0.5492
+      },
+      "avg_minerva_7tasks": 0.2976
+    },
+    "extract_lr1e-7_bs16": {
+      "ckpt_hash": "98f32d", "hf_step": 3865, "status": "SUCCESS",
+      "eval_hash": "f18038", "eval_status": "COMPLETE", "eval_tasks_done": 8,
+      "results": {
+        "minerva_math_algebra": 0.4979,
+        "minerva_math_prealgebra": 0.5522,
+        "minerva_math_counting_and_prob": 0.2658,
+        "minerva_math_geometry": 0.2777,
+        "minerva_math_intermediate_algebra": 0.1152,
+        "minerva_math_num_theory": 0.22407,
+        "minerva_math_precalc": 0.13736,
+        "gsm8k_platinum_cot_flex": 0.6071,
+        "gsm8k_platinum_cot_strict": 0.5368
+      },
+      "avg_minerva_7tasks": 0.2957
+    },
+    "resili_lr3e-7_bs64": {
+      "ckpt_hash": "18aea6", "hf_step": 1869, "status": "SUCCESS",
+      "eval_hash": "b1b835", "eval_status": "COMPLETE", "eval_tasks_done": 8,
+      "results": {
+        "minerva_math_algebra": 0.3429,
+        "minerva_math_prealgebra": 0.4501,
+        "minerva_math_counting_and_prob": 0.2068,
+        "minerva_math_geometry": 0.2255,
+        "minerva_math_intermediate_algebra": 0.1152,
+        "minerva_math_num_theory": 0.1648,
+        "minerva_math_precalc": 0.1392,
+        "gsm8k_platinum_cot_flex": 0.6121,
+        "gsm8k_platinum_cot_strict": 0.5740
+      },
+      "avg_minerva_7tasks": 0.2349
+    },
+    "resili_lr2e-7_bs64": {
+      "ckpt_hash": "8f94d2", "hf_step": 1869, "status": "SUCCESS",
+      "eval_hash": "ac888d", "eval_status": "COMPLETE", "eval_tasks_done": 8,
+      "results": {
+        "minerva_math_algebra": 0.3530,
+        "minerva_math_prealgebra": 0.4524,
+        "minerva_math_counting_and_prob": 0.2068,
+        "minerva_math_geometry": 0.2255,
+        "minerva_math_intermediate_algebra": 0.10520,
+        "minerva_math_num_theory": 0.15926,
+        "minerva_math_precalc": 0.13553,
+        "gsm8k_platinum_cot_flex": 0.6195,
+        "gsm8k_platinum_cot_strict": 0.5889
+      },
+      "avg_minerva_7tasks": 0.2340
+    },
+    "resili_lr1e-7_bs64": {
+      "ckpt_hash": "241995", "hf_step": 1869, "status": "SUCCESS",
+      "eval_hash": "60a240", "eval_status": "COMPLETE", "eval_tasks_done": 8,
+      "results": {
+        "minerva_math_algebra": 0.3783,
+        "minerva_math_prealgebra": 0.4707,
+        "minerva_math_counting_and_prob": 0.2089,
+        "minerva_math_geometry": 0.2505,
+        "minerva_math_intermediate_algebra": 0.11517,
+        "minerva_math_num_theory": 0.19259,
+        "minerva_math_precalc": 0.15201,
+        "gsm8k_platinum_cot_flex": 0.6261,
+        "gsm8k_platinum_cot_strict": 0.5922
+      },
+      "avg_minerva_7tasks": 0.2526
+    },
+    "resili_lr5e-8_bs64": {
+      "ckpt_hash": "c37878", "hf_step": 1869, "status": "SUCCESS",
+      "eval_hash": "b998ac", "eval_status": "COMPLETE", "eval_tasks_done": 8,
+      "results": {
+        "minerva_math_algebra": 0.3943,
+        "minerva_math_prealgebra": 0.4822,
+        "minerva_math_counting_and_prob": 0.2257,
+        "minerva_math_geometry": 0.2484,
+        "minerva_math_intermediate_algebra": 0.1262,
+        "minerva_math_num_theory": 0.1852,
+        "minerva_math_precalc": 0.1538,
+        "gsm8k_platinum_cot_flex": 0.6344,
+        "gsm8k_platinum_cot_strict": 0.5997
+      },
+      "avg_minerva_7tasks": 0.2594
+    },
+    "resili_lr2e-8_bs64": {
+      "ckpt_hash": "cf95da", "hf_step": 1869, "status": "SUCCESS",
+      "eval_hash": "ba1ffe", "eval_status": "COMPLETE", "eval_tasks_done": 8,
+      "results": {
+        "minerva_math_algebra": 0.4086,
+        "minerva_math_prealgebra": 0.4776,
+        "minerva_math_counting_and_prob": 0.2257,
+        "minerva_math_geometry": 0.2401,
+        "minerva_math_intermediate_algebra": 0.1251,
+        "minerva_math_num_theory": 0.17593,
+        "minerva_math_precalc": 0.16300,
+        "gsm8k_platinum_cot_flex": 0.6203,
+        "gsm8k_platinum_cot_strict": 0.5823
+      },
+      "avg_minerva_7tasks": 0.2594
+    },
+    "resili_lr2e-7_bs16": {
+      "ckpt_hash": "fbcec3", "hf_step": 7476, "status": "SUCCESS",
+      "eval_hash": "f6fec6", "eval_status": "COMPLETE", "eval_tasks_done": 8,
+      "results": {
+        "minerva_math_algebra": 0.3404,
+        "minerva_math_prealgebra": 0.4524,
+        "minerva_math_counting_and_prob": 0.2004,
+        "minerva_math_geometry": 0.2213,
+        "minerva_math_intermediate_algebra": 0.10963,
+        "minerva_math_num_theory": 0.14630,
+        "minerva_math_precalc": 0.15385,
+        "gsm8k_platinum_cot_flex": 0.5964,
+        "gsm8k_platinum_cot_strict": 0.5624
+      },
+      "avg_minerva_7tasks": 0.2320
+    },
+    "resili_lr1e-7_bs16": {
+      "ckpt_hash": "76b3a2", "hf_step": 7476, "status": "SUCCESS",
+      "eval_hash": "4e3b92", "eval_status": "COMPLETE", "eval_tasks_done": 8,
+      "results": {
+        "minerva_math_algebra": 0.3580,
+        "minerva_math_prealgebra": 0.4673,
+        "minerva_math_counting_and_prob": 0.2194,
+        "minerva_math_geometry": 0.2192,
+        "minerva_math_intermediate_algebra": 0.1152,
+        "minerva_math_num_theory": 0.1611,
+        "minerva_math_precalc": 0.1392,
+        "gsm8k_platinum_cot_flex": 0.6137,
+        "gsm8k_platinum_cot_strict": 0.5798
+      },
+      "avg_minerva_7tasks": 0.2399
+    }
+  },
+  "eval_summary": {
+    "total_evals_complete": 14,
+    "total_evals_running": 0,
+    "progress_counts": {
+      "extract-lr3e-7_bs64":  "8/8 COMPLETE (avg_minerva=29.81%, GSM8K_flex=59.64%)",
+      "extract-lr2e-7_bs64":  "8/8 COMPLETE (avg_minerva=29.37%, GSM8K_flex=60.13%)",
+      "extract-lr1e-7_bs64":  "8/8 COMPLETE (avg_minerva=29.66%, GSM8K_flex=62.03%)",
+      "extract-lr5e-8_bs64":  "8/8 COMPLETE (avg_minerva=29.42%, GSM8K_flex=64.27%)",
+      "extract-lr2e-8_bs64":  "8/8 COMPLETE (avg_minerva=27.59%, GSM8K_flex=63.11%)",
+      "extract-lr2e-7_bs16":  "8/8 COMPLETE (avg_minerva=29.76%, GSM8K_flex=60.63%)",
+      "extract-lr1e-7_bs16":  "8/8 COMPLETE (avg_minerva=29.57%, GSM8K_flex=60.71%)",
+      "resili-lr3e-7_bs64":   "8/8 COMPLETE (avg_minerva=23.49%, GSM8K_flex=61.21%)",
+      "resili-lr2e-7_bs64":   "8/8 COMPLETE (avg_minerva=23.40%, GSM8K_flex=61.95%) [NEW THIS CHECK]",
+      "resili-lr1e-7_bs64":   "8/8 COMPLETE (avg_minerva=25.26%, GSM8K_flex=62.61%) [NEW THIS CHECK]",
+      "resili-lr5e-8_bs64":   "8/8 COMPLETE (avg_minerva=25.94%, GSM8K_flex=63.44%)",
+      "resili-lr2e-8_bs64":   "8/8 COMPLETE (avg_minerva=25.94%, GSM8K_flex=62.03%)",
+      "resili-lr2e-7_bs16":   "8/8 COMPLETE (avg_minerva=23.20%, GSM8K_flex=59.64%) [NEW THIS CHECK]",
+      "resili-lr1e-7_bs16":   "8/8 COMPLETE (avg_minerva=23.99%, GSM8K_flex=61.37%)"
+    }
+  },
+  "fully_complete_results_ranked_by_minerva": {
+    "extract_lr3e-7_bs64":  {"avg_minerva": 0.2981, "gsm8k_flex": 0.5964, "gsm8k_strict": 0.5285},
+    "extract_lr2e-7_bs16":  {"avg_minerva": 0.2976, "gsm8k_flex": 0.6063, "gsm8k_strict": 0.5492},
+    "extract_lr1e-7_bs64":  {"avg_minerva": 0.2966, "gsm8k_flex": 0.6203, "gsm8k_strict": 0.5732},
+    "extract_lr1e-7_bs16":  {"avg_minerva": 0.2957, "gsm8k_flex": 0.6071, "gsm8k_strict": 0.5368},
+    "extract_lr5e-8_bs64":  {"avg_minerva": 0.2942, "gsm8k_flex": 0.6427, "gsm8k_strict": 0.5831},
+    "extract_lr2e-7_bs64":  {"avg_minerva": 0.2937, "gsm8k_flex": 0.6013, "gsm8k_strict": 0.5194},
+    "extract_lr2e-8_bs64":  {"avg_minerva": 0.2759, "gsm8k_flex": 0.6311, "gsm8k_strict": 0.5798},
+    "resili_lr5e-8_bs64":   {"avg_minerva": 0.2594, "gsm8k_flex": 0.6344, "gsm8k_strict": 0.5997},
+    "resili_lr2e-8_bs64":   {"avg_minerva": 0.2594, "gsm8k_flex": 0.6203, "gsm8k_strict": 0.5823},
+    "resili_lr1e-7_bs64":   {"avg_minerva": 0.2526, "gsm8k_flex": 0.6261, "gsm8k_strict": 0.5922},
+    "resili_lr1e-7_bs16":   {"avg_minerva": 0.2399, "gsm8k_flex": 0.6137, "gsm8k_strict": 0.5798},
+    "resili_lr3e-7_bs64":   {"avg_minerva": 0.2349, "gsm8k_flex": 0.6121, "gsm8k_strict": 0.5740},
+    "resili_lr2e-7_bs64":   {"avg_minerva": 0.2340, "gsm8k_flex": 0.6195, "gsm8k_strict": 0.5889},
+    "resili_lr2e-7_bs16":   {"avg_minerva": 0.2320, "gsm8k_flex": 0.5964, "gsm8k_strict": 0.5624}
+  },
+  "observations": [
+    "ALL 14/14 EVALS FULLY COMPLETE",
+    "NEW THIS CHECK: resili-lr2e-7_bs64 completed: GSM8K_flex=61.95%, GSM8K_strict=58.89%",
+    "NEW THIS CHECK: resili-lr1e-7_bs64 completed: GSM8K_flex=62.61%, GSM8K_strict=59.22%",
+    "NEW THIS CHECK: resili-lr2e-7_bs16 completed: GSM8K_flex=59.64%, GSM8K_strict=56.24%",
+    "EXTRACT MINERVA PLATEAU: lr3e-7=29.81%, lr2e-7_bs16=29.76%, lr1e-7=29.66%, lr1e-7_bs16=29.57%, lr5e-8=29.42%, lr2e-7=29.37%; all within 1pp except lr2e-8=27.59%",
+    "EXTRACT GSM8K INVERSE TREND: lower LR = better GSM8K. lr5e-8=64.27%, lr2e-8=63.11%, lr1e-7=62.03%, lr1e-7_bs16=60.71%, lr2e-7_bs16=60.63%, lr2e-7=60.13%, lr3e-7=59.64%",
+    "RESILI MINERVA RANKING: lr5e-8=25.94%, lr2e-8=25.94%, lr1e-7=25.26%, lr1e-7_bs16=23.99%, lr3e-7=23.49%, lr2e-7=23.40%, lr2e-7_bs16=23.20%",
+    "RESILI vs EXTRACT GAP: best resili=25.94% vs best extract=29.81% — extract ~4pp better on minerva",
+    "RESILI GSM8K: lr5e-8=63.44%, lr1e-7=62.61%, lr2e-8=62.03%, lr2e-7=61.95%, lr1e-7_bs16=61.37%, lr3e-7=61.21%, lr2e-7_bs16=59.64%",
+    "BEST MINERVA OVERALL: extract_lr3e-7_bs64 at 29.81% (vs prior best 30.3% from lr5e-7 — very close)",
+    "BEST GSM8K/MINERVA BALANCE: extract_lr1e-7_bs64 (29.66% minerva, 62.03% GSM8K) or extract_lr5e-8_bs64 (29.42% minerva, 64.27% GSM8K)",
+    "NOTE: extract configs have plateau in minerva from lr3e-7 down to lr2e-7 — suggests lr3e-7 is on the diminishing-returns edge",
+    "NOTE: prior sweep best lr5e-7 gave 30.3% minerva; this sweep's best 29.81% is slightly below, confirming lr3e-7 is already past peak for extract"
+  ],
+  "notes": "ALL 14/14 EVALS COMPLETE. Sweep fully done. Extract configs plateau around 29-30% minerva from lr3e-7 to lr2e-7; lower LR hurts minerva (27.59% at lr2e-8). Resili consistently ~4pp below extract on minerva. Lower LR benefits GSM8K across both data types."
+}

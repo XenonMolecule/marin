@@ -28,6 +28,7 @@ from typing import Any, Protocol
 import fsspec
 from fray.v2 import ActorHandle, Client, ResourceConfig
 from iris.time_utils import ExponentialBackoff
+from ray.exceptions import GetTimeoutError
 
 from zephyr.dataset import Dataset
 from zephyr.plan import (
@@ -226,7 +227,7 @@ class ZephyrCoordinator:
     receiving a SHUTDOWN signal.
     """
 
-    def __init__(self):
+    def __init__(self, max_task_retries: int = 3):
         # Task management state
         self._task_queue: deque[ShardTask] = deque()
         self._results: dict[int, TaskResult] = {}
@@ -242,6 +243,7 @@ class ZephyrCoordinator:
         self._fatal_error: str | None = None
         self._chunk_prefix: str = ""
         self._execution_id: str = ""
+        self._max_task_retries: int = max_task_retries
 
         # Worker management state (workers self-register via register_worker)
         self._worker_handles: dict[str, ActorHandle] = {}
@@ -335,7 +337,7 @@ class ZephyrCoordinator:
             len(self._worker_handles),
         )
 
-    def _check_worker_heartbeats(self, timeout: float = 30.0) -> None:
+    def _check_worker_heartbeats(self, timeout: float = 120.0) -> None:
         """Internal heartbeat check (called with lock held)."""
         now = time.monotonic()
         for worker_id, last in list(self._last_seen.items()):
@@ -344,7 +346,9 @@ class ZephyrCoordinator:
                 self._worker_states[worker_id] = WorkerState.FAILED
                 task_and_attempt = self._in_flight.pop(worker_id, None)
                 if task_and_attempt is not None:
-                    logger.info("Removed task %s from worker %s, re-queueing", task_and_attempt, worker_id)
+                    logger.info(
+                        "Removed task for shard %d from worker %s, re-queueing", task_and_attempt[0].shard_idx, worker_id
+                    )
                     task, _old_attempt = task_and_attempt
                     self._task_attempts[task.shard_idx] += 1
                     self._task_queue.append(task)
@@ -360,13 +364,20 @@ class ZephyrCoordinator:
         """
         with self._lock:
             self._last_seen[worker_id] = time.monotonic()
-            self._worker_states[worker_id] = WorkerState.READY
 
             if self._shutdown:
                 return "SHUTDOWN"
 
             if self._fatal_error:
                 return None
+
+            # Dead workers (from report_error) should not receive new tasks.
+            # This prevents broken workers (e.g. TPU device busy) from repeatedly
+            # pulling and failing on shards.
+            if self._worker_states.get(worker_id) == WorkerState.DEAD:
+                return None
+
+            self._worker_states[worker_id] = WorkerState.READY
 
             if not self._task_queue:
                 return None
@@ -382,7 +393,8 @@ class ZephyrCoordinator:
                 self._retries += 1
                 logger.warning(
                     "Worker %s had in-flight task for shard %d; re-queuing before assigning new task",
-                    worker_id, old_task.shard_idx,
+                    worker_id,
+                    old_task.shard_idx,
                 )
 
             task = self._task_queue.popleft()
@@ -415,12 +427,50 @@ class ZephyrCoordinator:
             self._worker_states[worker_id] = WorkerState.READY
 
     def report_error(self, worker_id: str, shard_idx: int, error_info: str) -> None:
-        """Worker reports a task failure. All errors are fatal."""
+        """Worker reports a task failure. Re-queues the shard to another worker.
+
+        The failing worker is marked DEAD so it won't receive new tasks. If a
+        shard exceeds max_task_retries or all workers are dead, sets a fatal error
+        that terminates the pipeline.
+        """
         with self._lock:
             self._last_seen[worker_id] = time.monotonic()
-            self._in_flight.pop(worker_id, None)
-            self._fatal_error = error_info
+            task_and_attempt = self._in_flight.pop(worker_id, None)
             self._worker_states[worker_id] = WorkerState.DEAD
+            self._retries += 1
+
+            attempts = self._task_attempts.get(shard_idx, 0) + 1
+            self._task_attempts[shard_idx] = attempts
+
+            alive_workers = sum(1 for s in self._worker_states.values() if s not in (WorkerState.DEAD,))
+
+            if attempts >= self._max_task_retries:
+                logger.error(
+                    "Shard %d failed %d times (max %d), marking as fatal",
+                    shard_idx,
+                    attempts,
+                    self._max_task_retries,
+                )
+                self._fatal_error = f"Shard {shard_idx} failed {attempts} times. Last error:\n{error_info}"
+            elif alive_workers == 0:
+                logger.error(
+                    "All workers are dead after worker %s failed on shard %d",
+                    worker_id,
+                    shard_idx,
+                )
+                self._fatal_error = f"All workers are dead. Last error on shard {shard_idx}:\n{error_info}"
+            elif task_and_attempt is not None:
+                task, _old_attempt = task_and_attempt
+                self._task_queue.append(task)
+                logger.warning(
+                    "Worker %s failed on shard %d (attempt %d/%d), re-queued. " "%d alive workers remain. Error: %.200s",
+                    worker_id,
+                    shard_idx,
+                    attempts,
+                    self._max_task_retries,
+                    alive_workers,
+                    error_info,
+                )
 
     def heartbeat(self, worker_id: str) -> None:
         with self._lock:
@@ -648,7 +698,7 @@ class ZephyrCoordinator:
         """Load a new stage's tasks into the queue (legacy compat)."""
         self._start_stage(stage_name, tasks)
 
-    def check_heartbeats(self, timeout: float = 30.0) -> None:
+    def check_heartbeats(self, timeout: float = 120.0) -> None:
         """Marks stale workers as FAILED, re-queues their in-flight tasks."""
         with self._lock:
             self._check_worker_heartbeats(timeout)
@@ -751,7 +801,13 @@ class ZephyrWorker:
                 logger.debug("[%s] Poll iteration #%d, tasks completed: %d", self._worker_id, loop_count, task_count)
 
             try:
-                response = coordinator.pull_task.remote(self._worker_id).result(timeout=30.0)
+                response = coordinator.pull_task.remote(self._worker_id).result(timeout=60.0)
+            except GetTimeoutError:
+                # Coordinator may be slow (e.g., importing heavy modules at startup).
+                # Retry instead of assuming it's dead — permanent death is detected
+                # by the heartbeat thread and shutdown_event.
+                logger.warning("[%s] pull_task timed out, retrying...", self._worker_id)
+                continue
             except Exception as e:
                 # Coordinator is dead or unreachable - exit gracefully
                 logger.info("[%s] pull_task failed (coordinator may be dead): %s", self._worker_id, e)

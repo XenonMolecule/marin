@@ -1,0 +1,61 @@
+{
+  "v3_extraction": {
+    "phase": 2,
+    "phase1_job_id": "ray-run-michaelryan-code_extraction_sft_v3_14b_sweep-20260319-173139",
+    "job_id": "ray-run-michaelryan-code_extraction_sft_v3_14b_sweep_phase2-20260319-124216",
+    "cluster": "us-central1",
+    "experiment": "experiments/rephraser/code_extraction_sft_v3_14b_sweep_phase2.py",
+    "phase1_experiment": "experiments/rephraser/code_extraction_sft_v3_14b_sweep.py",
+    "restart_count": 1,
+    "status": "RUNNING",
+    "phase1_best_lr": 2e-6,
+    "phase1_best_bs": 32,
+    "phase1_best_mbpp": 0.728,
+    "phase1_results_mbpp3shot": {
+      "lr1e-5_bs16": 0.738,
+      "lr1e-6_bs32": 0.732,
+      "lr2e-6_bs32": 0.728,
+      "lr1e-5_bs64": 0.726,
+      "lr1e-6_bs64": 0.724,
+      "lr1e-5_bs32": 0.722
+    },
+    "phase2_results_mbpp3shot": {
+      "wd0.05_wu0.0": 0.738,
+      "wd0.001_wu0.03": 0.730,
+      "wd0.1_wu0.0": 0.730,
+      "wd0.001_wu0.1": 0.728,
+      "wd0.01_wu0.03": 0.728,
+      "wd0.01_wu0.1": 0.728,
+      "wd0.001_wu0.0": 0.724,
+      "wd0.1_wu0.1": 0.724
+    },
+    "phase2_best_config": "wd0.05_wu0.0",
+    "phase2_best_mbpp": 0.738,
+    "phase2_best_humaneval": 0.774,
+    "eval_path": "gs://marin-us-central1/evaluation/lm_evaluation_harness/",
+    "note": "V3 Phase 1 restarted to complete 9 failed steps (node preemptions)"
+  },
+  "resiliparse": {
+    "phase": 1,
+    "job_id": "ray-run-michaelryan-resiliparse_sft_14b_sweep-20260319-080950",
+    "cluster": "us-central1",
+    "experiment": "experiments/rephraser/resiliparse_sft_14b_sweep.py",
+    "restart_count": 0,
+    "status": "RUNNING",
+    "phase1_best_lr": 1e-6,
+    "phase1_best_bs": 32,
+    "phase1_best_mbpp": 0.728,
+    "phase1_results_mbpp3shot": {
+      "lr1e-6_bs32": 0.728,
+      "lr1e-6_bs64": 0.724,
+      "lr2e-6_bs64": 0.722,
+      "lr5e-6_bs64": 0.718,
+      "lr5e-6_bs32": 0.716,
+      "lr1e-5_bs64": 0.712
+    }
+  },
+  "primary_metric": "mbpp_3shot",
+  "train_tpu_type": "v5p-32",
+  "model": "Qwen3-14B-Base",
+  "next_after_14b": "Repeat full sweep (Phase 1 + Phase 2) for Qwen3-8B-Base (v3 + resiliparse)"
+}

@@ -75,6 +75,7 @@ class QwenConfig(LlamaConfig):
             tie_word_embeddings=hf_config.tie_word_embeddings,
             rope=rope_config,
             use_bias=not getattr(hf_config, "no_bias", True),
+            hf_max_position_embeddings=hf_config.max_position_embeddings,
         )
 
     def to_hf_config(self, vocab_size: int, config_overrides: Optional[Dict] = None) -> HfQwenConfig:
@@ -84,7 +85,7 @@ class QwenConfig(LlamaConfig):
         rope_theta, rope_scaling = self.rope.to_hf_config()
 
         return HfQwenConfig(
-            max_position_embeddings=self.max_seq_len,
+            max_position_embeddings=self.hf_max_position_embeddings or self.max_seq_len,
             hidden_size=self.hidden_dim,
             intermediate_size=self.intermediate_dim,
             num_hidden_layers=self.num_layers,
@@ -324,7 +325,7 @@ class Qwen3Config(LlamaConfig):
         rope_theta, rope_scaling = self.rope.to_hf_config()
 
         return HfQwen3Config(
-            max_position_embeddings=self.max_seq_len,
+            max_position_embeddings=self.hf_max_position_embeddings or self.max_seq_len,
             hidden_size=self.hidden_dim,
             intermediate_size=self.intermediate_dim,
             num_hidden_layers=self.num_layers,
@@ -357,6 +358,7 @@ class Qwen3Config(LlamaConfig):
             num_layers=hf_config.num_hidden_layers,
             num_heads=hf_config.num_attention_heads,
             num_kv_heads=hf_config.num_key_value_heads,
+            hf_max_position_embeddings=hf_config.max_position_embeddings,
             sliding_window=getattr(hf_config, "sliding_window", 4096),
             use_sliding_window=getattr(hf_config, "use_sliding_window", True),
             activation_function=ActivationFunctionEnum(hf_config.hidden_act),

@@ -1,0 +1,48 @@
+{
+  "jobs": {
+    "extraction": {
+      "job_id": "ray-run-michaelryan-math_extraction_minerva_eval-20260322-084332",
+      "experiment": "experiments/rephraser/math_extraction_minerva_eval.py"
+    },
+    "resiliparse": {
+      "job_id": "ray-run-michaelryan-math_resiliparse_minerva_eval-20260322-084419",
+      "experiment": "experiments/rephraser/math_resiliparse_minerva_eval.py"
+    }
+  },
+  "last_check": "2026-03-22T02:55Z",
+  "last_status": "COMPLETE",
+  "final_results": {
+    "minerva_math_algebra_4shot": {
+      "baseline": 37.2, "extract-default": 34.0, "extract-lowreg": 35.8,
+      "extract-highreg": 37.5, "resili-default": 28.6, "resili-lowreg": 32.8, "resili-highreg": 32.3
+    },
+    "minerva_math_prealgebra_4shot": {
+      "baseline": 46.7, "extract-default": 43.3, "extract-lowreg": 42.4,
+      "extract-highreg": 42.0, "resili-default": 37.0, "resili-lowreg": 40.4, "resili-highreg": 38.2
+    },
+    "minerva_math_counting_and_prob_4shot": {
+      "baseline": 21.3, "extract-default": 20.9, "extract-lowreg": 22.4,
+      "extract-highreg": 20.5, "resili-default": 13.3, "resili-lowreg": 18.1, "resili-highreg": 17.1
+    },
+    "minerva_math_geometry_4shot": {
+      "baseline": 21.9, "extract-default": 18.8, "extract-lowreg": 19.6,
+      "extract-highreg": 22.1, "resili-default": 17.7, "resili-lowreg": 20.3, "resili-highreg": 21.1
+    },
+    "minerva_math_intermediate_algebra_4shot": {
+      "baseline": 10.2, "extract-default": 8.4, "extract-lowreg": 8.0,
+      "extract-highreg": 8.9, "resili-default": 7.2, "resili-lowreg": 8.3, "resili-highreg": 9.0
+    },
+    "minerva_math_num_theory_4shot": {
+      "baseline": 14.8, "extract-default": 11.1, "extract-lowreg": 13.7,
+      "extract-highreg": 14.3, "resili-default": 9.6, "resili-lowreg": 12.0, "resili-highreg": 13.0
+    },
+    "minerva_math_precalc_4shot": {
+      "baseline": 12.5, "extract-default": 11.9, "extract-lowreg": 11.4,
+      "extract-highreg": 12.5, "resili-default": 8.4, "resili-lowreg": 10.3, "resili-highreg": 10.8
+    },
+    "gsm8k_platinum_cot_8shot": {
+      "baseline": 62.8, "extract-default": 54.8, "extract-lowreg": 57.8,
+      "extract-highreg": 57.9, "resili-default": 43.7, "resili-lowreg": 52.6, "resili-highreg": 53.6
+    }
+  }
+}

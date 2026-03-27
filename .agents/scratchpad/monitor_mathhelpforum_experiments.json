@@ -1,0 +1,51 @@
+{
+  "jobs": [
+    {
+      "name": "gsm8k_baseline_eval",
+      "job_id": "ray-run-michaelryan-gsm8k_baseline_eval-20260305-211846",
+      "experiment": "experiments/rephraser/gsm8k_baseline_eval.py",
+      "type": "eval_only",
+      "restart_count": 4
+    },
+    {
+      "name": "gsm8k_sft",
+      "job_id": "ray-run-michaelryan-gsm8k_sft-20260305-211804",
+      "experiment": "experiments/rephraser/gsm8k_sft.py",
+      "type": "train+eval",
+      "restart_count": 4
+    },
+    {
+      "name": "mathhelpforum_sft",
+      "job_id": "ray-run-michaelryan-mathhelpforum_sft-20260305-213951",
+      "experiment": "experiments/rephraser/mathhelpforum_sft.py",
+      "type": "transform+tokenize+train+eval",
+      "restart_count": 5,
+      "note": "Relaunched with v2 parser — 80.7% parse rate (up from 1.2%). Uses WRONG prompt (generic extraction, not Q/R/A)"
+    },
+    {
+      "name": "mathhelpforum_resiliparse_sft",
+      "job_id": "ray-run-michaelryan-mathhelpforum_resiliparse_sft-20260305-211822",
+      "experiment": "experiments/rephraser/mathhelpforum_resiliparse_sft.py",
+      "type": "train+eval",
+      "restart_count": 4
+    },
+    {
+      "name": "mathhelpforum_qra_extract",
+      "job_id": "ray-run-michaelryan-mathhelpforum_extract_qra-20260305-215858",
+      "experiment": "experiments/rephraser/mathhelpforum_extract_qra.py",
+      "type": "inference+postprocess",
+      "restart_count": 0,
+      "note": "NEW: Q/R/A prompt extraction. Once complete, launch mathhelpforum_qra_sft.py for SFT+eval"
+    }
+  ],
+  "cluster": "us-central1",
+  "last_check": "2026-03-05T14:00:00Z",
+  "fix_history": [
+    "1: Added resource_config=ResourceConfig.with_tpu('v5p-8') to all eval steps",
+    "2: Switched from evaluate_lm_evaluation_harness (vLLM Docker) to default_eval (Levanter JAX)",
+    "3: Added MeshConfig with token compute_mapping to levanter_lm_eval_evaluator.py to fix OOM",
+    "4: OOM persisted (compute_mapping had no effect on generation). Changed mp to bf16, reduced max_length 4096->2048, reduced InferenceEngine max_seqs 256->32 and hbm_utilization 0.5->0.3",
+    "5: Rewrote _parse_markdown_to_messages to handle varied rephraser formats (1.2% -> 80.7% parse rate). Bumped step names to v2 to force re-execution",
+    "6: Created mathhelpforum_extract_qra.py + mathhelpforum_qra_sft.py with CORRECT Q/R/A structured prompt"
+  ]
+}

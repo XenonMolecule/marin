@@ -1,0 +1,43 @@
+{
+  "job_id": "ray-run-michaelryan-math_extraction_sweep-20260323-040528",
+  "cluster": "us-central1",
+  "last_check": "2026-03-23T18:45Z",
+  "configs_complete": 18,
+  "configs_total": 24,
+  "configs_training_failed": 6,
+  "sweep_complete": true,
+  "best_config": "lr5e-7_bs64",
+  "best_scores": {
+    "algebra_em": 39.3, "algebra_mv": 44.7,
+    "prealgebra_em": 44.2, "prealgebra_mv": 49.3,
+    "gsm8k_strict": 54.8, "gsm8k_flex": 58.9
+  },
+  "results": {
+    "lr5e-7_bs16": {"algebra_em": 37.8, "algebra_mv": 42.0, "prealg_em": 41.6, "prealg_mv": 45.7, "gsm8k_strict": 53.3, "gsm8k_flex": 58.8},
+    "lr5e-7_bs32": {"algebra_em": 38.5, "algebra_mv": 42.8, "prealg_em": 43.6, "prealg_mv": 48.8, "gsm8k_strict": 54.4, "gsm8k_flex": 59.5},
+    "lr5e-7_bs64": {"algebra_em": 39.3, "algebra_mv": 44.7, "prealg_em": 44.2, "prealg_mv": 49.3, "gsm8k_strict": 54.8, "gsm8k_flex": 58.9},
+    "lr1e-6_bs16": {"algebra_em": 36.9, "algebra_mv": 40.1, "prealg_em": 41.4, "prealg_mv": 44.4, "gsm8k_strict": 52.9, "gsm8k_flex": 58.6},
+    "lr1e-6_bs32": {"algebra_em": 37.8, "algebra_mv": 41.2, "prealg_em": 41.0, "prealg_mv": 44.9, "gsm8k_strict": 52.4, "gsm8k_flex": 57.9},
+    "lr1e-6_bs64": {"algebra_em": 38.8, "algebra_mv": 42.9, "prealg_em": 42.9, "prealg_mv": 47.2, "gsm8k_strict": 53.9, "gsm8k_flex": 58.9},
+    "lr2e-6_bs16": {"algebra_em": 36.2, "algebra_mv": 39.0, "prealg_em": 41.7, "prealg_mv": 44.4, "gsm8k_strict": 51.4, "gsm8k_flex": 56.8},
+    "lr2e-6_bs32": {"algebra_em": 35.4, "algebra_mv": 38.7, "prealg_em": 42.0, "prealg_mv": 45.7, "gsm8k_strict": 52.1, "gsm8k_flex": 58.1},
+    "lr2e-6_bs64": {"algebra_em": 37.5, "algebra_mv": 40.6, "prealg_em": 42.0, "prealg_mv": 45.4, "gsm8k_strict": 52.9, "gsm8k_flex": 57.9},
+    "lr5e-6_bs16": {"algebra_em": 33.8, "algebra_mv": 36.5, "prealg_em": 42.0, "prealg_mv": 44.8, "gsm8k_strict": 51.1, "gsm8k_flex": 56.6},
+    "lr5e-6_bs32": {"algebra_em": 35.0, "algebra_mv": 37.9, "prealg_em": 41.6, "prealg_mv": 44.9, "gsm8k_strict": 51.2, "gsm8k_flex": 57.2},
+    "lr5e-6_bs64": {"algebra_em": 35.7, "algebra_mv": 38.1, "prealg_em": 41.7, "prealg_mv": 45.4, "gsm8k_strict": 52.4, "gsm8k_flex": 57.4},
+    "lr1e-5_bs16": {"algebra_em": 34.4, "algebra_mv": 36.7, "prealg_em": 43.3, "prealg_mv": 44.4, "gsm8k_strict": 49.6, "gsm8k_flex": 54.4},
+    "lr1e-5_bs32": {"algebra_em": 34.1, "algebra_mv": 36.6, "prealg_em": 43.2, "prealg_mv": 45.7, "gsm8k_strict": 50.6, "gsm8k_flex": 55.7},
+    "lr1e-5_bs64": {"algebra_em": 35.1, "algebra_mv": 37.5, "prealg_em": 42.0, "prealg_mv": 45.2, "gsm8k_strict": 51.0, "gsm8k_flex": 55.6},
+    "lr2e-5_bs16": {"algebra_em": 34.4, "algebra_mv": 36.2, "prealg_em": 40.6, "prealg_mv": 41.7, "gsm8k_strict": 48.6, "gsm8k_flex": 53.3},
+    "lr2e-5_bs32": {"algebra_em": 34.0, "algebra_mv": 36.6, "prealg_em": 41.8, "prealg_mv": 43.1, "gsm8k_strict": 49.7, "gsm8k_flex": 53.1},
+    "lr2e-5_bs64": {"algebra_em": 34.3, "algebra_mv": 36.5, "prealg_em": 42.1, "prealg_mv": 44.3, "gsm8k_strict": 50.5, "gsm8k_flex": 54.8}
+  },
+  "pending": {
+    "training_oom": ["lr5e-7_bs128", "lr1e-6_bs128", "lr2e-6_bs128", "lr5e-6_bs128", "lr1e-5_bs128", "lr2e-5_bs128"]
+  },
+  "notes": "SWEEP COMPLETE: 18/18 recoverable configs done. Best: lr5e-7_bs64 — beats baseline on algebra (+3.3pp MV) and prealgebra (+0.3pp MV). GSM8K still below baseline (-3.9pp flex). Clear trend: low LR + large batch is optimal.",
+  "resubmit_job_id": "ray-run-michaelryan-math_extraction_sweep-20260323-163131",
+  "restart_count": 1,
+  "report_written": true,
+  "report_path": "experiments/rephraser/MATH_SWEEP_REPORT.md"
+}

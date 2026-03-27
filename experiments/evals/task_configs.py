@@ -212,6 +212,16 @@ MEDICAL_TASKS = (
     EvalTaskConfig("kormedmcqa_pharm", 0, task_alias="kormedmcqa_pharm_0shot"),
 )
 
+# Legal and Law Tasks
+LAW_TASKS = (
+    EvalTaskConfig("mmlu_professional_law", 0, task_alias="mmlu_professional_law_0shot"),
+    EvalTaskConfig("mmlu_jurisprudence", 0, task_alias="mmlu_jurisprudence_0shot"),
+    EvalTaskConfig("mmlu_international_law", 0, task_alias="mmlu_international_law_0shot"),
+    EvalTaskConfig("agieval_lsat_ar", 0, task_alias="agieval_lsat_ar_0shot"),
+    EvalTaskConfig("agieval_lsat_lr", 0, task_alias="agieval_lsat_lr_0shot"),
+    EvalTaskConfig("agieval_lsat_rc", 0, task_alias="agieval_lsat_rc_0shot"),
+)
+
 # Comprehensive Knowledge Assessment Tasks
 KNOWLEDGE_TASKS = (
     EvalTaskConfig("agieval", 0, task_alias="agieval_0shot"),

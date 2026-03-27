@@ -65,8 +65,7 @@ sid = spec_hash(SPECS[0])  # d7d976d3
 REPHRASER_TOKENIZED_PATH = f"gs://marin-us-east1/tokenized/rephraser_spec_{sid}_cooldown-02c17e"
 
 CHECKPOINT_PATH = (
-    "gs://marin-us-east1/exp2166-scaling-ladder-nemotron-validation-optimal-1e+20-9563f0"
-    "/checkpoints/step-35000"
+    "gs://marin-us-east1/exp2166-scaling-ladder-nemotron-validation-optimal-1e+20-9563f0" "/checkpoints/step-35000"
 )
 
 import experiments.rephraser.rephraser_cooldown as cooldown_module
@@ -106,8 +105,7 @@ rephraser_component = DatasetComponent(
 # Validation sets
 validation_steps = default_validation_sets(tokenizer=llama3_tokenizer)
 validation_component_configs = {
-    name: step_to_lm_mixture_component(step, include_raw_paths=False)
-    for name, step in validation_steps.items()
+    name: step_to_lm_mixture_component(step, include_raw_paths=False) for name, step in validation_steps.items()
 }
 
 

@@ -70,7 +70,7 @@ WARC_MANIFEST = os.path.join(os.path.dirname(__file__), "warc_paths.txt")
 THREADS_PER_WORKER = 16
 CPU_PER_WORKER = 16
 RAM_PER_WORKER = "16g"
-NUM_INFERENCE_WORKERS = 1875
+NUM_INFERENCE_WORKERS = 2500
 CONTEXT_LENGTH = 32768
 
 # ---------------------------------------------------------------------------

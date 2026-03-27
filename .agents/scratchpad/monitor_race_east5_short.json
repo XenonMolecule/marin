@@ -1,7 +1,9 @@
 {
-  "job_id": "ray-run-michaelryan-rephraser_east5-20260304-023445",
+  "job_id": "ray-run-michaelryan-rephraser_east5-20260304-061728",
   "cluster": "us-east5-a",
   "experiment": "experiments/rephraser/short_cooldown/rephraser_east5.py",
-  "restart_count": 1,
-  "description": "Short rephraser cooldown on east5-a v5p-8, fresh start (relaunched after preemption death)"
+  "restart_count": 4,
+  "status": "LIKELY_UNRECOVERABLE",
+  "description": "Short rephraser cooldown on east5-a v5p-8. us-east5-a has extreme and persistent preemption pressure on v5p-8 TPUs. After 4 restarts and ~3 hours of monitoring, training has NEVER started. Every v5p-8 node gets preempted within minutes of provisioning. Recommend switching to a different region or TPU type.",
+  "last_check": "2026-03-03T22:27:00-08:00"
 }

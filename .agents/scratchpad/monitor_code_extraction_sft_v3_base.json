@@ -1,0 +1,9 @@
+{
+  "job_id": "ray-run-michaelryan-code_extraction_sft_v3_base-20260315-205913",
+  "cluster": "us-central1",
+  "experiment": "experiments/rephraser/code_extraction_sft_v3_base.py",
+  "restart_count": 7,
+  "last_check": "2026-03-15T18:32Z",
+  "last_status": "RUNNING",
+  "notes": "Stage2 postprocess: 254/921 shards (~28%). 256 dirs on GCS. 16 workers. ~1.3 shards/min. ETA ~4h."
+}

@@ -1,7 +1,16 @@
 {
-  "job_id": "ray-run-michaelryan-rephraser_cooldown_150warc_train_east1d-20260304-013834",
+  "job_id": "ray-run-michaelryan-rephraser_cooldown_150warc_train_east1d-20260304-081038",
   "cluster": "us-east1",
   "experiment": "experiments/rephraser/rephraser_cooldown_150warc_train_east1d.py",
-  "restart_count": 0,
-  "description": "150-WARC cooldown on east1-d v6e-32, resuming from step-4001"
+  "restart_count": 5,
+  "description": "150-WARC cooldown on east1-d v6e-32 with lm-eval DISABLED. Resuming from step-9603, only 156 steps remain. Will export HF checkpoint at end of training.",
+  "last_restart": "2026-03-04T00:10:51",
+  "reason": "Previous job STOPPED (likely replaced by another experiment). Restarting. Only 156 steps remain (step 9603/9759).",
+  "status": "SUCCEEDED",
+  "final_step": 9758,
+  "final_checkpoint": "gs://marin-us-east1/cooldown-rephraser-d7d976d3-150warc-v2-f8aa0b/checkpoints/step-9758/",
+  "hf_checkpoint": "gs://marin-us-east1/cooldown-rephraser-d7d976d3-150warc-v2-f8aa0b/hf/step-9758",
+  "wandb_url": "https://wandb.ai/marin-community/marin/runs/cooldown-rephraser-d7d976d3-150warc-v2-f8aa0b",
+  "executor_info": "gs://marin-us-east1/experiments/rephraser_cooldown_150warc_train_east1d-1cdfb2.json",
+  "completed_at": "2026-03-04T00:24:16"
 }

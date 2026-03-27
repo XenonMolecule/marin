@@ -31,14 +31,11 @@ from experiments.llama import llama3_tokenizer
 from experiments.rephraser.rephraser_cooldown import (
     MAX_MIXIN_FRACTION,
     REPHRASER_MODEL,
-    REPHRASER_TOKENIZER,
-    SEQ_LEN,
     SPECS,
     SYSTEM_MESSAGE,
     USER_TEMPLATE_FMT,
     _read_token_count,
     _validate_mixin_fraction,
-    download_warcs,
     filter_html,
     spec_hash,
 )

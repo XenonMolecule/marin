@@ -1,7 +1,19 @@
 {
-  "job_id": "ray-run-michaelryan-rephraser_cooldown_150warc_train_east5-20260303-232041",
+  "job_id": "ray-run-michaelryan-rephraser_cooldown_150warc_train_east5-20260304-034020",
   "cluster": "us-east5-a",
   "experiment": "experiments/rephraser/rephraser_cooldown_150warc_train_east5.py",
-  "restart_count": 0,
-  "description": "150-WARC cooldown on east5-a v5p-8, resuming from step-474"
+  "description": "150-WARC rephraser cooldown on us-east5-a with v5p-8 TPUs. Should be resuming from step-474 checkpoint. Total target: 9,759 steps.",
+  "restart_count": 1,
+  "last_restart": "2026-03-04T03:40:35Z",
+  "restart_history": [
+    {
+      "old_job_id": "ray-run-michaelryan-rephraser_cooldown_150warc_train_east5-20260303-232041",
+      "new_job_id": "ray-run-michaelryan-rephraser_cooldown_150warc_train_east5-20260304-034020",
+      "reason": "Executor status FAILED on GCS. First node preempted, retry also failed after ~2 hours.",
+      "timestamp": "2026-03-04T03:40:35Z"
+    }
+  ],
+  "last_healthy_check": null,
+  "last_checkpoint": "step-474",
+  "target_steps": 9759
 }

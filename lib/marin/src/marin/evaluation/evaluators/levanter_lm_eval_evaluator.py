@@ -70,9 +70,12 @@ class LevanterLmEvalEvaluator(LevanterTpuEvaluator):
             print("after wandb log")
             # NOTE(chris): Before, the batch size was 16, but this is too large for the 8B model.
             # In the future, we should make this user-configurable.
+            #
+            # Use bf16 for both params and compute to reduce per-chip HBM pressure.
+            # With p=f32 the model weights take ~5.5GB per chip; bf16 halves that.
             trainer_config = TrainerConfig(
                 tracker=WandbConfig(project="marin", tags=wandb_tags, name=name),
-                mp=jmp.get_policy("p=f32,c=bfloat16"),
+                mp=jmp.get_policy("p=bfloat16,c=bfloat16"),
                 per_device_eval_parallelism=1,
                 ray=RayConfig(auto_start_cluster=False),
             )
@@ -90,16 +93,22 @@ class LevanterLmEvalEvaluator(LevanterTpuEvaluator):
             logger.info(f"Model name: {model.name}")
             logger.info(f"model_name_or_path: {model_name_or_path}")
 
+            # Build generation_kwargs, merging defaults with any user-provided params
+            generation_kwargs = {"max_gen_toks": 1024, "temperature": 0.0, "n": 1, "seed": None}
+            if model.generation_params:
+                generation_kwargs.update(model.generation_params)
+
             print("starting harness")
             eval_config = eval_harness.EvalHarnessMainConfig(
                 eval_harness=eval_harness.LmEvalHarnessConfig(
                     task_spec=tasks,
                     max_examples=max_eval_instances,
-                    log_samples=False,
-                    max_length=4096,
+                    log_samples=True,
+                    max_length=2048,
                     apply_chat_template=model.apply_chat_template,
                     confirm_run_unsafe_code=True,
                     sample_logging=eval_harness.SampleLoggingConfig(max_samples_per_benchmark=20),
+                    generation_kwargs=generation_kwargs,
                 ),
                 tokenizer=model_path,  # levanter picks up the tokenizer from the model path
                 checkpoint_path=model_path,
@@ -107,6 +116,22 @@ class LevanterLmEvalEvaluator(LevanterTpuEvaluator):
                 trainer=trainer_config,
                 model=model_config,
             )
+
+            # If apply_chat_template is enabled but the tokenizer doesn't have a
+            # built-in chat template (e.g. Llama3 base tokenizer), inject the
+            # Llama 3.1 chat template so eval prompts match the SFT training format.
+            if model.apply_chat_template:
+                tokenizer = eval_config.the_tokenizer
+                if not getattr(tokenizer, "chat_template", None):
+                    from experiments.chat_templates.llama3pt1_chat_template import LLAMA_3_1_CHAT_TEMPLATE
+
+                    # Strip Levanter-specific {% generation %} tags that the HF
+                    # tokenizer doesn't understand.
+                    clean_template = LLAMA_3_1_CHAT_TEMPLATE.replace("{% generation %}", "").replace(
+                        "{% endgeneration %}", ""
+                    )
+                    tokenizer.chat_template = clean_template
+                    logger.info("Injected Llama 3.1 chat template into tokenizer for eval")
 
             results = eval_harness.run_eval_harness_main(eval_config)
             print("finished harness")

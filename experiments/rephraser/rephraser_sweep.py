@@ -17,7 +17,7 @@ Key design:
 Launch (us-central1):
     uv run lib/marin/src/marin/run/ray_run.py \\
         --cluster us-central1 --no_wait \\
-        -e WANDB_API_KEY ***REMOVED-WANDB-KEY*** \\
+        -e WANDB_API_KEY $WANDB_API_KEY \\
         -e HF_TOKEN <your-hf-token> \\
         -- python experiments/rephraser/rephraser_sweep.py
 

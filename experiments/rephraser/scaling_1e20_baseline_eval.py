@@ -32,8 +32,7 @@ from marin.export import convert_checkpoint_to_hf_step
 
 # Raw Levanter checkpoint at step-35000 (right before cooldown ~step 35,808)
 CHECKPOINT_PATH = (
-    "gs://marin-us-central1/exp2166-scaling-ladder-nemotron-validation-optimal-1e+20-9563f0"
-    "/checkpoints/step-35000"
+    "gs://marin-us-central1/exp2166-scaling-ladder-nemotron-validation-optimal-1e+20-9563f0" "/checkpoints/step-35000"
 )
 
 # Step 1: Convert Levanter checkpoint to HF format (CPU mode avoids mesh/TPU issues)

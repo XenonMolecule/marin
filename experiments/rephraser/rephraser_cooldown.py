@@ -85,8 +85,7 @@ logger = logging.getLogger(__name__)
 # Source run constants (verified from exp2166 scaling ladder analysis)
 # ---------------------------------------------------------------------------
 CHECKPOINT_PATH = (
-    "gs://marin-us-central1/exp2166-scaling-ladder-nemotron-validation-optimal-1e+20-9563f0"
-    "/checkpoints/step-35000"
+    "gs://marin-us-central1/exp2166-scaling-ladder-nemotron-validation-optimal-1e+20-9563f0" "/checkpoints/step-35000"
 )
 RESUME_STEP = 35_000
 NUM_TRAIN_STEPS = 44_759
@@ -118,8 +117,8 @@ cooldown_optimizer = CautiousConfig(
     learning_rate=LEARNING_RATE,
     weight_decay=0.1,
     min_lr_ratio=0.0,
-    warmup=0,        # no warmup — straight into decay
-    decay=1.0,       # 100% of steps are linear decay
+    warmup=0,  # no warmup — straight into decay
+    decay=1.0,  # 100% of steps are linear decay
     beta1=0.95,
     beta2=0.9899494936611666,  # max(0.95, 0.98^(64/128))
     epsilon=1e-15,
@@ -309,10 +308,10 @@ class ExtractCooldownConfig:
     """Config for extracting exact cooldown tokens from the original nemotron mix."""
 
     nemotron_data_config: LmDataConfig
-    start_step: int   # 35,000
-    end_step: int     # 44,759
-    batch_size: int   # 64
-    seq_len: int      # 4,096
+    start_step: int  # 35,000
+    end_step: int  # 44,759
+    batch_size: int  # 64
+    seq_len: int  # 4,096
     output_path: str
 
 
@@ -378,16 +377,12 @@ def extract_cooldown_data(config: ExtractCooldownConfig):
                 indices = list(range(batch_start, batch_end))
                 examples = await dataset.get_batch(indices)
 
-                cache_batch = [
-                    {"input_ids": _extract_tokens_from_example(ex)} for ex in examples
-                ]
+                cache_batch = [{"input_ids": _extract_tokens_from_example(ex)} for ex in examples]
                 writer.write_batch(cache_batch)
                 num_written += len(cache_batch)
 
                 if num_written % 10_000 < fetch_batch_size:
-                    logger.info(
-                        f"  Extracted {num_written:,}/{total_sequences:,} sequences"
-                    )
+                    logger.info(f"  Extracted {num_written:,}/{total_sequences:,} sequences")
 
                 # Periodically free memory to prevent accumulation
                 if num_written % 50_000 < fetch_batch_size:
@@ -718,8 +713,7 @@ extract_cooldown_step = ExecutorStep(
 # Validation sets (Paloma + Uncheatable Eval)
 validation_steps = default_validation_sets(tokenizer=llama3_tokenizer)
 validation_component_configs = {
-    name: step_to_lm_mixture_component(step, include_raw_paths=False)
-    for name, step in validation_steps.items()
+    name: step_to_lm_mixture_component(step, include_raw_paths=False) for name, step in validation_steps.items()
 }
 
 # Pre-build the cooldown component (shared across specs).

@@ -1,0 +1,172 @@
+{
+  "job_id_original": "ray-run-michaelryan-math_14b_sft-20260323-235024",
+  "job_id_resubmit_23": "ray-run-michaelryan-math_14b_sft-20260326-005101",
+  "job_id_resubmit_26": "ray-run-michaelryan-math_14b_sft-20260326-081900",
+  "job_id_resubmit_27": "ray-run-michaelryan-math_14b_sft-20260326-141405",
+  "job_id_resubmit_28": "ray-run-michaelryan-math_14b_sft-20260326-151452",
+  "job_id_resubmit_29": "ray-run-michaelryan-math_14b_sft-20260326-163118",
+  "job_id_resubmit_30": "ray-run-michaelryan-math_14b_sft-20260326-164600",
+  "job_id_resubmit_extract_default_eval": "ray-run-michaelryan-math_14b_sft-20260326-182610",
+  "job_id_resubmit_31": "ray-run-michaelryan-math_14b_sft-20260326-190907",
+  "job_id_resubmit_32": "ray-run-michaelryan-math_14b_sft-20260327-024106",
+  "job_id_resubmit_33": "ray-run-michaelryan-math_14b_sft-20260327-050352",
+  "cluster": "us-central1",
+  "last_check": "2026-03-27T18:30Z",
+  "status": "ALL_COMPLETE",
+  "training_progress": "Mar 27 18:30Z: ALL 7/7 CONFIGS FULLY COMPLETE. extract-default geometry_mv=52.82% (final missing task). avg_minerva=57.55%. Full report ready to write.",
+  "configs": {
+    "baseline": {
+      "data": "none", "hp": "eval_only",
+      "status": "FULLY_COMPLETE",
+      "eval_dir": "math-14b-baseline-qwen3-14b-base-2601f5",
+      "eval_scores": {
+        "algebra_mv": 0.7574, "prealgebra_mv": 0.7520,
+        "counting_and_prob_mv": 0.5401, "geometry_mv": 0.4342,
+        "intermediate_algebra_mv": 0.3488, "num_theory_mv": 0.5148,
+        "precalc_mv": 0.4066,
+        "gsm8k_strict_match": 0.7287, "gsm8k_flex_extract": 0.9132,
+        "avg_minerva_mv": 53.63
+      },
+      "eval_executor_status": "SUCCESS"
+    },
+    "extract-default": {
+      "data": "extraction", "lr": 2e-5, "bs": 64, "wd": 0.01, "warmup": 0.03,
+      "status": "FULLY_COMPLETE",
+      "ckpt_dir": "math-14b-extract-default-qwen3-14b-base-8bafd6",
+      "eval_dir": "math-14b-extract-default-qwen3-14b-base-058258",
+      "executor_status": "SUCCESS",
+      "hf_exported": true,
+      "hf_step": 3045,
+      "eval_executor_status": "SUCCESS",
+      "eval_tasks_complete": 8,
+      "eval_scores": {
+        "algebra_mv": 0.8071, "prealgebra_mv": 0.7704,
+        "counting_and_prob_mv": 0.5781, "geometry_mv": 0.5282,
+        "intermediate_algebra_mv": 0.3610, "num_theory_mv": 0.5481,
+        "precalc_mv": 0.4359,
+        "gsm8k_strict_match": 0.8139, "gsm8k_flex_extract": 0.8801,
+        "avg_minerva_mv": 57.55
+      },
+      "notes": "COMPLETE. avg_minerva=57.55 vs baseline 53.63 (+3.9pp). geometry_mv=52.82% is +9.4pp over baseline (biggest single gain). GSM8K flex=88.01% vs baseline 91.32% (-3.3pp)."
+    },
+    "extract-best-extract": {
+      "data": "extraction", "lr": 2e-6, "bs": 32, "wd": 0.05, "warmup": 0.0,
+      "status": "FULLY_COMPLETE",
+      "ckpt_dir": "math-14b-extract-best-extract-qwen3-14b-base-fab231",
+      "eval_dir": "math-14b-extract-best-extract-qwen3-14b-base-07b321",
+      "hf_exported": true,
+      "eval_executor_status": "SUCCESS",
+      "eval_tasks_complete": 8,
+      "eval_scores": {
+        "algebra_mv": 0.8189, "prealgebra_mv": 0.7842,
+        "counting_and_prob_mv": 0.5823, "geometry_mv": 0.5532,
+        "intermediate_algebra_mv": 0.4020, "num_theory_mv": 0.5667,
+        "precalc_mv": 0.4432,
+        "gsm8k_strict_match": 0.8420, "gsm8k_flex_extract": 0.8842,
+        "avg_minerva_mv": 59.29
+      }
+    },
+    "extract-best-resili": {
+      "data": "extraction", "lr": 1e-6, "bs": 32, "wd": 0.01, "warmup": 0.03,
+      "status": "FULLY_COMPLETE",
+      "ckpt_dir": "math-14b-extract-best-resili-qwen3-14b-base-429f46",
+      "eval_dir": "math-14b-extract-best-resili-qwen3-14b-base-52aa7d",
+      "hf_exported": true,
+      "eval_executor_status": "SUCCESS",
+      "eval_tasks_complete": 8,
+      "eval_scores": {
+        "algebra_mv": 0.8256, "prealgebra_mv": 0.7773,
+        "counting_and_prob_mv": 0.6055, "geometry_mv": 0.5428,
+        "intermediate_algebra_mv": 0.4330, "num_theory_mv": 0.5500,
+        "precalc_mv": 0.4579,
+        "gsm8k_strict_match": 0.7990, "gsm8k_flex_extract": 0.8296,
+        "avg_minerva_mv": 59.89
+      }
+    },
+    "resili-default": {
+      "data": "resiliparse", "lr": 2e-5, "bs": 64, "wd": 0.01, "warmup": 0.03,
+      "status": "FULLY_COMPLETE",
+      "ckpt_dir": "math-14b-resili-default-qwen3-14b-base-d81f39",
+      "eval_dir": "math-14b-resili-default-qwen3-14b-base-11fc2c",
+      "executor_status": "SUCCESS",
+      "hf_exported": true,
+      "eval_executor_status": "SUCCESS",
+      "eval_tasks_complete": 8,
+      "eval_scores": {
+        "algebra_mv": 0.7683, "prealgebra_mv": 0.7658,
+        "counting_and_prob_mv": 0.5591, "geometry_mv": 0.4739,
+        "intermediate_algebra_mv": 0.3389, "num_theory_mv": 0.5204,
+        "precalc_mv": 0.3919,
+        "gsm8k_strict_match": 0.8354, "gsm8k_flex_extract": 0.8693,
+        "avg_minerva_mv": 54.55
+      },
+      "notes": "COMPLETE. avg_minerva_mv=54.55 vs baseline 53.63 — only +0.9pp gain."
+    },
+    "resili-best-resili": {
+      "data": "resiliparse", "lr": 1e-6, "bs": 32, "wd": 0.01, "warmup": 0.03,
+      "status": "FULLY_COMPLETE",
+      "ckpt_dir": "math-14b-resili-best-resili-qwen3-14b-base-c0112d",
+      "eval_dir": "math-14b-resili-best-resili-qwen3-14b-base-973d64",
+      "executor_status": "SUCCESS",
+      "hf_exported": true,
+      "hf_step": 22509,
+      "eval_tasks_complete": 8,
+      "eval_scores": {
+        "algebra_mv": 0.7793, "prealgebra_mv": 0.7589,
+        "counting_and_prob_mv": 0.5949, "geometry_mv": 0.4718,
+        "intermediate_algebra_mv": 0.3621, "num_theory_mv": 0.5370,
+        "precalc_mv": 0.4103,
+        "gsm8k_strict_match": 0.8528, "gsm8k_flex_extract": 0.8950,
+        "avg_minerva_mv": 55.92
+      },
+      "notes": "COMPLETE. avg_minerva=55.92 vs baseline 53.63 — +2.3pp. GSM8K flex=89.5% vs baseline 91.3% (-1.8pp)."
+    },
+    "resili-best-extract": {
+      "data": "resiliparse", "lr": 2e-6, "bs": 32, "wd": 0.05, "warmup": 0.0,
+      "status": "FULLY_COMPLETE",
+      "ckpt_dir": "math-14b-resili-best-extract-qwen3-14b-base-a7e7d9",
+      "eval_dir": "math-14b-resili-best-extract-qwen3-14b-base-59e730",
+      "executor_status": "SUCCESS",
+      "hf_exported": true,
+      "hf_step": 22509,
+      "eval_executor_status": "SUCCESS",
+      "eval_tasks_complete": 8,
+      "eval_scores": {
+        "algebra_mv": 0.7843, "prealgebra_mv": 0.7692,
+        "counting_and_prob_mv": 0.5802, "geometry_mv": 0.4530,
+        "intermediate_algebra_mv": 0.3488, "num_theory_mv": 0.5333,
+        "precalc_mv": 0.4066,
+        "gsm8k_strict_match": 0.8470, "gsm8k_flex_extract": 0.8759,
+        "avg_minerva_mv": 55.36
+      },
+      "notes": "COMPLETE. avg_minerva=55.36 vs baseline 53.63 (+1.7pp). GSM8K flex=87.59% vs baseline 91.32% (-3.7pp). Weakest among SFT configs on MATH, but decent GSM8K."
+    }
+  },
+  "eval_results_table": {
+    "note": "Scores as of this check. gsm8k=exact_match,flexible-extract. minerva=math_verify,none",
+    "configs_complete": {
+      "baseline":             {"gsm8k": 91.32, "algebra": 75.74, "cnt_prob": 54.01, "geometry": 43.42, "inter_alg": 34.88, "num_theory": 51.48, "prealgebra": 75.20, "precalc": 40.66, "avg_minerva": 53.63},
+      "extract-best-extract": {"gsm8k": 88.42, "algebra": 81.89, "cnt_prob": 58.23, "geometry": 55.32, "inter_alg": 40.20, "num_theory": 56.67, "prealgebra": 78.42, "precalc": 44.32, "avg_minerva": 59.29},
+      "extract-best-resili":  {"gsm8k": 82.96, "algebra": 82.56, "cnt_prob": 60.55, "geometry": 54.28, "inter_alg": 43.30, "num_theory": 55.00, "prealgebra": 77.73, "precalc": 45.79, "avg_minerva": 59.89},
+      "resili-default":       {"gsm8k": 86.93, "algebra": 76.83, "cnt_prob": 55.91, "geometry": 47.39, "inter_alg": 33.89, "num_theory": 52.04, "prealgebra": 76.58, "precalc": 39.19, "avg_minerva": 54.55},
+      "resili-best-resili":   {"gsm8k": 89.50, "algebra": 77.93, "cnt_prob": 59.49, "geometry": 47.18, "inter_alg": 36.21, "num_theory": 53.70, "prealgebra": 75.89, "precalc": 41.03, "avg_minerva": 55.92},
+      "resili-best-extract":  {"gsm8k": 87.59, "algebra": 78.43, "cnt_prob": 58.02, "geometry": 45.30, "inter_alg": 34.88, "num_theory": 53.33, "prealgebra": 76.92, "precalc": 40.66, "avg_minerva": 55.36},
+      "extract-default":      {"gsm8k": 88.01, "algebra": 80.71, "cnt_prob": 57.81, "geometry": 52.82, "inter_alg": 36.10, "num_theory": 54.81, "prealgebra": 77.04, "precalc": 43.59, "avg_minerva": 57.55}
+    },
+    "configs_partial": {},
+    "configs_pending": {}
+  },
+  "final_ranking": {
+    "by_avg_minerva": [
+      {"rank": 1, "config": "extract-best-resili", "avg_minerva": 59.89, "gsm8k_flex": 82.96, "delta_minerva": "+6.26"},
+      {"rank": 2, "config": "extract-best-extract", "avg_minerva": 59.29, "gsm8k_flex": 88.42, "delta_minerva": "+5.66"},
+      {"rank": 3, "config": "extract-default", "avg_minerva": 57.55, "gsm8k_flex": 88.01, "delta_minerva": "+3.92"},
+      {"rank": 4, "config": "resili-best-resili", "avg_minerva": 55.92, "gsm8k_flex": 89.50, "delta_minerva": "+2.29"},
+      {"rank": 5, "config": "resili-best-extract", "avg_minerva": 55.36, "gsm8k_flex": 87.59, "delta_minerva": "+1.73"},
+      {"rank": 6, "config": "resili-default", "avg_minerva": 54.55, "gsm8k_flex": 86.93, "delta_minerva": "+0.92"},
+      {"rank": 7, "config": "baseline", "avg_minerva": 53.63, "gsm8k_flex": 91.32, "delta_minerva": "0.00"}
+    ]
+  },
+  "action_needed": "Write final 14B report. All 7/7 configs complete.",
+  "notes": "Mar 27 18:30Z: ALL COMPLETE. Key finding: extraction data dominates resiliparse at 14B just as at 0.6B. Best config: extract-best-resili (avg_minerva=59.89, +6.3pp). All configs improve MATH over baseline. GSM8K tradeoff: -3 to -8pp depending on config. No catastrophic forgetting at 14B."
+}

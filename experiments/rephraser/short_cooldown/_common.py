@@ -20,7 +20,7 @@ Only the mixin data varies:
 """
 
 import logging
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from datetime import timedelta
 
 import jmp
@@ -40,11 +40,9 @@ from experiments.evals.task_configs import CORE_TASKS, convert_to_levanter_task_
 from experiments.llama import llama3_tokenizer
 from experiments.rephraser.rephraser_cooldown import (
     BATCH_SIZE,
-    LEARNING_RATE,
     RESUME_STEP,
     SEQ_LEN,
     ExtractCooldownConfig,
-    _read_token_count,
     cooldown_optimizer,
     extract_cooldown_data,
     nemotron_base_data,
@@ -54,12 +52,11 @@ from experiments.rephraser.rephraser_cooldown import (
 # Checkpoint copied from us-central1 to eu-west4 for training on v6e-8.
 # Original: gs://marin-us-central1/exp2166-scaling-ladder-nemotron-validation-optimal-1e+20-9563f0/checkpoints/step-35000
 CHECKPOINT_PATH = (
-    "gs://marin-eu-west4/checkpoints"
-    "/exp2166-scaling-ladder-nemotron-validation-optimal-1e+20-9563f0/step-35000"
+    "gs://marin-eu-west4/checkpoints" "/exp2166-scaling-ladder-nemotron-validation-optimal-1e+20-9563f0/step-35000"
 )
 from marin.execution.executor import ExecutorStep, output_path_of, this_output_path
 from marin.processing.tokenize.data_configs import step_to_lm_mixture_component
-from marin.training.training import TrainLmOnPodConfig, run_levanter_train_lm
+from marin.training.training import TrainLmOnPodConfig
 
 logger = logging.getLogger(__name__)
 
@@ -158,14 +155,14 @@ extra_nemotron_component = DatasetComponent(
 
 validation_steps = default_validation_sets(tokenizer=llama3_tokenizer)
 validation_component_configs = {
-    name: step_to_lm_mixture_component(step, include_raw_paths=False)
-    for name, step in validation_steps.items()
+    name: step_to_lm_mixture_component(step, include_raw_paths=False) for name, step in validation_steps.items()
 }
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def add_validation_configs(data: LmDataConfig) -> LmDataConfig:
     """Add validation sets (weight=0) to a data config for eval during training."""
