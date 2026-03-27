@@ -104,8 +104,6 @@ download_warcs = ExecutorStep(
         warc_paths=versioned(tuple(warc_paths)),
         output_path=this_output_path(),
     ),
-    resources=ResourceConfig.with_cpu(cpu=8, ram="64g"),
-    pip_dependency_groups=["cpu"],
 )
 
 # ---------------------------------------------------------------------------
@@ -122,8 +120,6 @@ filter_html = ExecutorStep(
         text_column="html",
         max_tokens=32768 - 4096,
     ),
-    resources=ResourceConfig.with_cpu(cpu=8, ram="32g"),
-    pip_dependency_groups=["cpu"],
 )
 
 # ---------------------------------------------------------------------------
@@ -169,7 +165,6 @@ for spec_text in SPECS:
             filetype="jsonl.gz",
             output_filetype_override="parquet",
         ),
-        pip_dependency_groups=["vllm"],
     )
 
     # Step 3: Post-process — strip <think> tokens, filter [NO_USEFUL_CONTENT]
@@ -181,8 +176,6 @@ for spec_text in SPECS:
             input_path=inference_step / "*.parquet",
             output_path=this_output_path(),
         ),
-        resources=ResourceConfig.with_cpu(cpu=4, ram="16g"),
-        pip_dependency_groups=["cpu"],
     )
 
     all_final_steps.append(postprocess_step)

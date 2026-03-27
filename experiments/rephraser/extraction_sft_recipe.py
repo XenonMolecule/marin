@@ -36,7 +36,6 @@ import jmp
 
 from experiments.defaults import default_tokenize
 from experiments.evals.evals import evaluate_lm_evaluation_harness
-from experiments.rephraser.rephraser_cooldown import _read_token_count
 from fray.cluster import ResourceConfig
 from levanter.checkpoint import CheckpointerConfig
 from levanter.data.text import LMMixtureDatasetConfig, TextLmDatasetFormat
@@ -64,6 +63,40 @@ from marin.transform.filter_by_token_length import FilterByTokenLengthConfig, fi
 from marin.transform.postprocess_extraction import PostProcessExtractionConfig, postprocess_extraction
 
 logger = logging.getLogger(__name__)
+
+
+def _read_token_count(cache_path: str, split: str | None = None) -> int:
+    """Read total token count from a cache's metadata."""
+    base = os.path.join(cache_path, split) if split else cache_path
+
+    stats_path = os.path.join(base, ".stats.json")
+    fs, _, _ = fsspec.get_fs_token_paths(stats_path)
+    if fs.exists(stats_path):
+        with fs.open(stats_path, "r") as f:
+            stats = json.load(f)
+        if stats.get("total_tokens", 0) > 0:
+            return stats["total_tokens"]
+
+    try:
+        shard_dirs = [p for p in fs.ls(base, detail=False) if "/part-" in p]
+        total_from_shards = 0
+        for shard_dir in sorted(shard_dirs):
+            shard_stats_path = os.path.join(shard_dir, ".stats.json")
+            if fs.exists(shard_stats_path):
+                with fs.open(shard_stats_path, "r") as f:
+                    shard_stats = json.load(f)
+                total_from_shards += shard_stats.get("token_count", 0)
+        if total_from_shards > 0:
+            return total_from_shards
+    except (FileNotFoundError, OSError):
+        pass
+
+    raise ValueError(
+        f"Could not determine token count for cache at {base}. "
+        f"No .stats.json with 'total_tokens' found at {stats_path}, "
+        f"and no per-shard part-*/.stats.json with 'token_count' found either."
+    )
+
 
 # ---------------------------------------------------------------------------
 # Default prompt templates (DSPy field-delimited format)
@@ -544,8 +577,6 @@ def build_extraction_sft_experiment(
                         crawl_indices=source.crawl_indices,
                         match_type=match_type,
                     ),
-                    resources=ResourceConfig.with_cpu(cpu=8, ram="32g"),
-                    pip_dependency_groups=["cpu"],
                     env_vars={"CDX_COLUMNAR_WORKERS": str(source.columnar_cdx_workers)},
                 )
             else:
@@ -559,8 +590,6 @@ def build_extraction_sft_experiment(
                         crawl_indices=source.crawl_indices,
                         match_type=match_type,
                     ),
-                    resources=ResourceConfig.with_cpu(cpu=2, ram="8g"),
-                    pip_dependency_groups=["cpu"],
                 )
             cdx_query_steps.append(cdx_step)
 
@@ -572,8 +601,6 @@ def build_extraction_sft_experiment(
                     cdx_manifest_path=cdx_step / "cdx_manifest.json",
                     output_path=this_output_path(),
                 ),
-                resources=ResourceConfig.with_cpu(cpu=4, ram="64g"),
-                pip_dependency_groups=["cpu"],
             )
             download_steps.append(dl_step)
 
@@ -589,8 +616,6 @@ def build_extraction_sft_experiment(
                     input_paths=[output_path_of(s) for s in download_steps],
                     output_path=this_output_path(),
                 ),
-                resources=ResourceConfig.with_cpu(cpu=4, ram="16g"),
-                pip_dependency_groups=["cpu"],
             )
             html_data = combine_step
 
@@ -616,8 +641,6 @@ def build_extraction_sft_experiment(
                 text_column="html",
                 max_tokens=max_context - max_output,
             ),
-            resources=ResourceConfig.with_cpu(cpu=8, ram="32g"),
-            pip_dependency_groups=["cpu"],
         )
         extraction_input = filter_html_step
     else:
@@ -635,8 +658,6 @@ def build_extraction_sft_experiment(
                 text_column="html",
                 max_tokens=max_context - max_output,
             ),
-            resources=ResourceConfig.with_cpu(cpu=8, ram="32g"),
-            pip_dependency_groups=["cpu"],
         )
         extraction_input = filter_html_step
 
@@ -651,8 +672,6 @@ def build_extraction_sft_experiment(
             input_path=html_data / "*.jsonl.gz",
             output_path=this_output_path(),
         ),
-        resources=ResourceConfig.with_cpu(cpu=8, ram="32g"),
-        pip_dependency_groups=["cpu"],
     )
 
     # ------------------------------------------------------------------
@@ -701,7 +720,6 @@ def build_extraction_sft_experiment(
                     num_workers=spec.num_workers,
                     records_per_shard=spec.records_per_shard,
                 ),
-                pip_dependency_groups=["vllm"],
             )
 
             pp_step = ExecutorStep(
@@ -712,8 +730,6 @@ def build_extraction_sft_experiment(
                     input_path=extract_step / "*.jsonl.gz",
                     output_path=this_output_path(),
                 ),
-                resources=ResourceConfig.with_cpu(cpu=4, ram="16g"),
-                pip_dependency_groups=["cpu"],
             )
             branch_data = pp_step
 
@@ -819,8 +835,6 @@ def build_extraction_sft_experiment(
             branch_paths=branch_tokenized_paths,
             output_path=this_output_path(),
         ),
-        resources=ResourceConfig.with_cpu(cpu=1, ram="4g"),
-        pip_dependency_groups=["cpu"],
     )
 
     return RecipeOutputs(

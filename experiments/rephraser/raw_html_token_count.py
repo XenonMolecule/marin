@@ -49,8 +49,6 @@ download_warcs = ExecutorStep(
         warc_paths=versioned(tuple(warc_paths)),
         output_path=this_output_path(),
     ),
-    resources=ResourceConfig.with_cpu(cpu=8, ram="64g"),
-    pip_dependency_groups=["cpu"],
 )
 
 # Step 2: Tokenize raw HTML directly — text_key="html" reads the html field from JSONL
@@ -65,8 +63,6 @@ tokenize_raw_html = ExecutorStep(
         tokenizer=ensure_versioned(llama3_tokenizer),
         format=TextLmDatasetFormat(text_key="html"),
     ),
-    resources=ResourceConfig.with_cpu(cpu=8, ram="64g"),
-    pip_dependency_groups=["cpu"],
 )
 
 if __name__ == "__main__":

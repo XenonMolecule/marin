@@ -101,8 +101,6 @@ create_data = ExecutorStep(
     description="Create tiny test HTML documents for inference_v2 smoke test.",
     fn=create_test_data,
     config=CreateTestDataConfig(output_path=this_output_path()),
-    resources=ResourceConfig.with_cpu(cpu=4, ram="8g"),
-    pip_dependency_groups=["cpu"],
 )
 
 inference = ExecutorStep(
@@ -133,7 +131,6 @@ inference = ExecutorStep(
         num_workers=1,  # Single worker for smoke test
         records_per_shard=10,  # All 10 records in one shard
     ),
-    pip_dependency_groups=["vllm"],
 )
 
 # ---------------------------------------------------------------------------

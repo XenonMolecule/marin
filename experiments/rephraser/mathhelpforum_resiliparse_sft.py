@@ -73,8 +73,6 @@ extract_text_step = ExecutorStep(
         input_path=consolidate_step / "*.jsonl.gz",
         output_path=this_output_path(),
     ),
-    resources=ResourceConfig.with_cpu(cpu=8, ram="32g"),
-    pip_dependency_groups=["cpu"],
 )
 
 # ---------------------------------------------------------------------------

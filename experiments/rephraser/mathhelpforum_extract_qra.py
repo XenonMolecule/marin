@@ -103,7 +103,6 @@ inference_step = ExecutorStep(
         num_workers=16,
         records_per_shard=500,
     ),
-    pip_dependency_groups=["vllm"],
 )
 
 # ---------------------------------------------------------------------------
@@ -117,8 +116,6 @@ postprocess_step_qra = ExecutorStep(
         input_path=inference_step / "*.jsonl.gz",
         output_path=this_output_path(),
     ),
-    resources=ResourceConfig.with_cpu(cpu=4, ram="16g"),
-    pip_dependency_groups=["cpu"],
 )
 
 if __name__ == "__main__":

@@ -179,8 +179,6 @@ consolidate_step = ExecutorStep(
         input_path=scan_step / "*.jsonl.gz",
         output_path=this_output_path(),
     ),
-    resources=ResourceConfig.with_cpu(cpu=8, ram="32g"),
-    pip_dependency_groups=["cpu"],
 )
 
 # ---------------------------------------------------------------------------
@@ -201,8 +199,6 @@ filter_html = ExecutorStep(
         text_column="html",
         max_tokens=32768 - 4096,
     ),
-    resources=ResourceConfig.with_cpu(cpu=8, ram="32g"),
-    pip_dependency_groups=["cpu"],
 )
 
 # Step 3: Inference with rephraser model
@@ -234,7 +230,6 @@ inference_step = ExecutorStep(
         num_workers=16,
         records_per_shard=500,
     ),
-    pip_dependency_groups=["vllm"],
 )
 
 # Step 4: Post-process extraction output
@@ -246,8 +241,6 @@ postprocess_step = ExecutorStep(
         input_path=inference_step / "*.jsonl.gz",
         output_path=this_output_path(),
     ),
-    resources=ResourceConfig.with_cpu(cpu=4, ram="16g"),
-    pip_dependency_groups=["cpu"],
 )
 
 if __name__ == "__main__":

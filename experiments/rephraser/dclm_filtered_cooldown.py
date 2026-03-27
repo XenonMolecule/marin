@@ -91,8 +91,6 @@ download_lid_model = ExecutorStep(
         url=versioned("https://dl.fbaipublicfiles.com/fasttext/supervised-models/lid.176.bin"),
         output_path=this_output_path(),
     ),
-    resources=ResourceConfig.with_cpu(cpu=2, ram="4g"),
-    pip_dependency_groups=["cpu"],
 )
 
 download_quality_model = ExecutorStep(
@@ -107,8 +105,6 @@ download_quality_model = ExecutorStep(
         output_path=this_output_path(),
         filename="fasttext_oh_eli5.bin",
     ),
-    resources=ResourceConfig.with_cpu(cpu=2, ram="8g"),
-    pip_dependency_groups=["cpu"],
 )
 
 # Ban lists are pre-uploaded to GCS (the curated domain list is 118MB, too large for GitHub).
@@ -126,8 +122,6 @@ extract_text = ExecutorStep(
         input_path=download_warcs / "*.jsonl.gz",
         output_path=this_output_path(),
     ),
-    resources=ResourceConfig.with_cpu(cpu=8, ram="32g"),
-    pip_dependency_groups=["cpu"],
 )
 
 # ---------------------------------------------------------------------------
@@ -145,8 +139,6 @@ filter_step = ExecutorStep(
         quality_model_path=download_quality_model,
         banlists_path=versioned(BANLISTS_GCS_PATH),
     ),
-    resources=ResourceConfig.with_cpu(cpu=8, ram="32g"),
-    pip_dependency_groups=["cpu", "dclm"],
 )
 
 # ---------------------------------------------------------------------------
@@ -164,8 +156,6 @@ tokenize_step = ExecutorStep(
         tokenizer=ensure_versioned(llama3_tokenizer),
         format=TextLmDatasetFormat(),
     ),
-    resources=ResourceConfig.with_cpu(cpu=8, ram="32g"),
-    pip_dependency_groups=["cpu"],
 )
 
 # ---------------------------------------------------------------------------

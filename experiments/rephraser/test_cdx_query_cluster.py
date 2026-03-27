@@ -33,8 +33,6 @@ cdx_step = ExecutorStep(
         match_type="domain",
         request_delay=1.0,
     ),
-    resources=ResourceConfig.with_cpu(cpu=2, ram="8g"),
-    pip_dependency_groups=["cpu"],
 )
 
 # Download WARC records into 10 shards. Uses num_workers=10 (one per shard)
@@ -48,8 +46,6 @@ download_step = ExecutorStep(
         output_path=this_output_path(),
         num_output_shards=versioned(10),
     ),
-    resources=ResourceConfig.with_cpu(cpu=4, ram="16g"),
-    pip_dependency_groups=["cpu"],
 )
 
 if __name__ == "__main__":

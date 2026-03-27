@@ -186,8 +186,6 @@ for mix in MIXES:
         description=f"Domain filter V2: {mix.description}",
         fn=filter_by_domain,
         config=filter_config,
-        resources=ResourceConfig.with_cpu(cpu=4, ram="16g"),
-        pip_dependency_groups=["cpu"],
     )
 
     # Step 2: Tokenize filtered data

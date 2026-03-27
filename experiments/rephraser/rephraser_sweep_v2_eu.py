@@ -113,8 +113,6 @@ download_warcs = ExecutorStep(
         warc_paths=versioned(tuple(warc_paths)),
         output_path=this_output_path(),
     ),
-    resources=ResourceConfig.with_cpu(cpu=8, ram="64g"),
-    pip_dependency_groups=["cpu"],
 )
 
 # ---------------------------------------------------------------------------
@@ -131,8 +129,6 @@ filter_html = ExecutorStep(
         text_column="html",
         max_tokens=32768 - 4096,
     ),
-    resources=ResourceConfig.with_cpu(cpu=8, ram="32g"),
-    pip_dependency_groups=["cpu"],
 )
 
 # ---------------------------------------------------------------------------
@@ -173,7 +169,6 @@ for spec_text in SPECS:
             num_workers=16,
             records_per_shard=500,
         ),
-        pip_dependency_groups=["vllm"],
     )
 
     # Step 3: Post-process
@@ -185,8 +180,6 @@ for spec_text in SPECS:
             input_path=inference_step / "*.jsonl.gz",
             output_path=this_output_path(),
         ),
-        resources=ResourceConfig.with_cpu(cpu=4, ram="16g"),
-        pip_dependency_groups=["cpu"],
     )
 
     # Step 4: Tokenize
@@ -201,8 +194,6 @@ for spec_text in SPECS:
             tokenizer=ensure_versioned(BASE_MODEL_HF),
             format=TextLmDatasetFormat(),
         ),
-        resources=ResourceConfig.with_cpu(cpu=8, ram="32g"),
-        pip_dependency_groups=["cpu"],
     )
 
     # Step 5: Midtrain with CORE_TASKS eval (v6e-8 for training too)

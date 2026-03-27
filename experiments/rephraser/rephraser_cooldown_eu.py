@@ -61,8 +61,6 @@ download_warcs = ExecutorStep(
         warc_paths=versioned(tuple(warc_paths)),
         output_path=this_output_path(),
     ),
-    resources=ResourceConfig.with_cpu(cpu=8, ram="64g"),
-    pip_dependency_groups=["cpu"],
 )
 
 # Step 1b: Pre-filter HTML by token length
@@ -78,8 +76,6 @@ filter_html = ExecutorStep(
         text_column="html",
         max_tokens=32768 - 4096,
     ),
-    resources=ResourceConfig.with_cpu(cpu=8, ram="32g"),
-    pip_dependency_groups=["cpu"],
 )
 
 # ---------------------------------------------------------------------------
@@ -121,7 +117,6 @@ for spec_text in SPECS:
             num_workers=16,
             records_per_shard=500,
         ),
-        pip_dependency_groups=["vllm"],
     )
 
     # Step 3: Post-process
@@ -133,8 +128,6 @@ for spec_text in SPECS:
             input_path=inference_step / "*.jsonl.gz",
             output_path=this_output_path(),
         ),
-        resources=ResourceConfig.with_cpu(cpu=4, ram="16g"),
-        pip_dependency_groups=["cpu"],
     )
 
     # Step 4: Tokenize with Meta-Llama-3.1-8B (nemotron-compatible)
@@ -150,8 +143,6 @@ for spec_text in SPECS:
             tokenizer=ensure_versioned(llama3_tokenizer),
             format=TextLmDatasetFormat(),
         ),
-        resources=ResourceConfig.with_cpu(cpu=8, ram="32g"),
-        pip_dependency_groups=["cpu"],
     )
 
     all_tokenize_steps.append(tokenize_step)

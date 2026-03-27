@@ -96,8 +96,6 @@ extract_short_cooldown_step = ExecutorStep(
         seq_len=SEQ_LEN,
         output_path=this_output_path(),
     ),
-    resources=ResourceConfig.with_cpu(cpu=8, ram="128g"),
-    pip_dependency_groups=["cpu"],
 )
 
 # Extra 300M nemotron tokens (steps 38,815 -> 39,960), only for nemotron-only baseline
@@ -113,8 +111,6 @@ extract_extra_nemotron_step = ExecutorStep(
         seq_len=SEQ_LEN,
         output_path=this_output_path(),
     ),
-    resources=ResourceConfig.with_cpu(cpu=8, ram="128g"),
-    pip_dependency_groups=["cpu"],
 )
 
 

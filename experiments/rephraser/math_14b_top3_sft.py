@@ -138,8 +138,6 @@ extract_filter_step = ExecutorStep(
     description="Domain filter: top3 (brainly + jiskha + mathhelpforum) — extraction",
     fn=filter_by_domain,
     config=extract_filter_config,
-    resources=ResourceConfig.with_cpu(cpu=4, ram="16g"),
-    pip_dependency_groups=["cpu"],
 )
 
 extract_tokenized = default_tokenize(
@@ -163,8 +161,6 @@ resili_filter_step = ExecutorStep(
     description="Domain filter: top3 (brainly + jiskha + mathhelpforum) — resiliparse",
     fn=filter_by_domain,
     config=resili_filter_config,
-    resources=ResourceConfig.with_cpu(cpu=4, ram="16g"),
-    pip_dependency_groups=["cpu"],
 )
 
 resili_tokenized = default_tokenize(
