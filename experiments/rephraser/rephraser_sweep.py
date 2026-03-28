@@ -36,6 +36,7 @@ from experiments.defaults import SimpleTrainConfig, default_train
 from experiments.evals.task_configs import CORE_TASKS
 from experiments.llama import llama_3_2_1b
 from marin.datakit.download.commoncrawl.download_warc import WarcDownloadConfig, download_and_extract_warcs
+from marin.execution.remote import remote
 from marin.execution.executor import ExecutorStep, ensure_versioned, executor_main, this_output_path, versioned
 from marin.generation.inference import TextGenerationInferenceConfig, run_inference
 from marin.processing.tokenize import TokenizeConfig, lm_data_config, tokenize
@@ -244,7 +245,7 @@ for spec_text in SPECS:
     inference_step = ExecutorStep(
         name=f"documents/rephraser_spec_{sid}",
         description=f"Run rephraser inference for spec {sid}.",
-        fn=run_inference,
+        fn=remote(run_inference, pip_dependency_groups=["vllm"]),
         config=TextGenerationInferenceConfig(
             input_path=filter_html / "*.jsonl.gz",
             output_path=this_output_path(),

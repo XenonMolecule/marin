@@ -25,6 +25,7 @@ from levanter.data.text import TextLmDatasetFormat
 
 from experiments.llama import llama3_tokenizer
 from marin.datakit.download.commoncrawl.download_warc import WarcDownloadConfig, download_and_extract_warcs
+from marin.execution.remote import remote
 from marin.execution.executor import ExecutorStep, ensure_versioned, executor_main, this_output_path, versioned
 from marin.generation.inference_v2 import InferenceV2Config, run_inference_v2
 from marin.processing.tokenize import TokenizeConfig, tokenize
@@ -92,7 +93,7 @@ for spec_text in SPECS:
     inference_step = ExecutorStep(
         name=f"documents/rephraser_spec_{sid}_v2",
         description=f"Run rephraser inference_v2 for spec {sid} (v6e-8).",
-        fn=run_inference_v2,
+        fn=remote(run_inference_v2, pip_dependency_groups=["vllm"]),
         config=InferenceV2Config(
             input_path=filter_html / "*.jsonl.gz",
             output_path=this_output_path(),

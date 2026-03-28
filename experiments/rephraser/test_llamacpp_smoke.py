@@ -24,6 +24,7 @@ import fsspec
 
 from fray.cluster import ResourceConfig
 
+from marin.execution.remote import remote
 from marin.execution.executor import ExecutorStep, executor_main, output_path_of, this_output_path
 from marin.generation.build_llamacpp import BuildLlamaCppConfig, build_llamacpp
 from marin.generation.inference_llamacpp import LlamaCppInferenceConfig, run_inference_llamacpp
@@ -331,7 +332,7 @@ write_test_data_step = ExecutorStep(
 inference_step = ExecutorStep(
     name="test/llamacpp_smoke_inference_v2",
     description="Smoke test: llama.cpp CPU inference with 2 workers on 8 documents.",
-    fn=run_inference_llamacpp,
+    fn=remote(run_inference_llamacpp, pip_dependency_groups=["cpu"]),
     config=LlamaCppInferenceConfig(
         input_path=write_test_data_step / "*.jsonl.gz",
         output_path=this_output_path(),

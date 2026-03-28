@@ -55,6 +55,7 @@ from marin.execution.executor import (
     this_output_path,
     versioned,
 )
+from marin.execution.remote import remote
 from marin.generation.inference_v2 import InferenceV2Config, run_inference_v2
 from marin.processing.tokenize import lm_data_config
 from marin.training.training import TrainLmOnPodConfig, run_levanter_train_lm
@@ -695,7 +696,7 @@ def build_extraction_sft_experiment(
             extract_step = ExecutorStep(
                 name=f"documents/{domain}_extract_{spec_name}_{sid}",
                 description=f"Run extraction on {domain} HTML (spec {spec_name}).",
-                fn=run_inference_v2,
+                fn=remote(run_inference_v2, pip_dependency_groups=["vllm"]),
                 config=InferenceV2Config(
                     input_path=extraction_input / "*.jsonl.gz",
                     output_path=this_output_path(),

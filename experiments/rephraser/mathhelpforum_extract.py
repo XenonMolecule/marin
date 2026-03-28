@@ -33,6 +33,7 @@ import fsspec
 from zephyr import Dataset, ZephyrContext, load_jsonl
 
 from fray.cluster import ResourceConfig
+from marin.execution.remote import remote
 from marin.execution.executor import (
     ExecutorStep,
     executor_main,
@@ -205,7 +206,7 @@ filter_html = ExecutorStep(
 inference_step = ExecutorStep(
     name=f"documents/mathhelpforum_extract_{sid}",
     description=f"Run rephraser inference on mathhelpforum HTML (spec {sid}).",
-    fn=run_inference_v2,
+    fn=remote(run_inference_v2, pip_dependency_groups=["vllm"]),
     config=InferenceV2Config(
         input_path=filter_html / "*.jsonl.gz",
         output_path=this_output_path(),
