@@ -106,13 +106,10 @@ extraction_tokenized = default_tokenize(
 )
 
 # Resiliparse: plain text from HTML
-resili_processed = medical_v2_result.shared_branches["resiliparse"][0]
-resili_tokenized = default_tokenize(
-    name="medical_resiliparse_qwen3-0.6b_sft",
-    dataset=output_path_of(resili_processed) / "**/*.jsonl.gz",
-    tokenizer="Qwen/Qwen3-0.6B",
-    format=TextLmDatasetFormat(),
-)
+# Use the tokenize step from the resiliparse train config directly
+# to ensure the hash matches the existing cached tokenized data (2061a9).
+resili_train_step = medical_v2_result.shared_branches["resiliparse"][0]
+resili_tokenized = resili_train_step.config.tokenized_path
 
 DATA_SOURCES = {
     "extract": extraction_tokenized,

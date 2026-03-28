@@ -26,6 +26,7 @@ from dataclasses import dataclass
 import fsspec
 from fray.cluster import ResourceConfig
 
+from marin.execution.remote import remote
 from marin.execution.executor import ExecutorStep, executor_main, this_output_path
 from marin.generation.inference_v2 import InferenceV2Config, run_inference_v2
 
@@ -106,7 +107,7 @@ create_data = ExecutorStep(
 inference = ExecutorStep(
     name="test_v6e_v2/inference",
     description="Run inference_v2 on v6e-8 TPU (eu-west4-a smoke test).",
-    fn=run_inference_v2,
+    fn=remote(run_inference_v2, pip_dependency_groups=["vllm"]),
     config=InferenceV2Config(
         input_path=create_data / "*.jsonl.gz",
         output_path=this_output_path(),

@@ -27,6 +27,7 @@ from experiments.rephraser.mathhelpforum_extract import (
     filter_html,
 )
 from fray.cluster import ResourceConfig
+from marin.execution.remote import remote
 from marin.execution.executor import ExecutorStep, executor_main, this_output_path
 from marin.generation.inference_v2 import InferenceV2Config, run_inference_v2
 from marin.transform.postprocess_extraction import PostProcessExtractionConfig, postprocess_extraction
@@ -78,7 +79,7 @@ user_template = USER_TEMPLATE_FMT.format(spec=EXTRACTION_SPEC)
 inference_step = ExecutorStep(
     name=f"documents/mathhelpforum_qra_{sid}",
     description=f"Run rephraser inference on mathhelpforum HTML with Q/R/A prompt (spec {sid}).",
-    fn=run_inference_v2,
+    fn=remote(run_inference_v2, pip_dependency_groups=["vllm"]),
     config=InferenceV2Config(
         input_path=filter_html / "*.jsonl.gz",
         output_path=this_output_path(),

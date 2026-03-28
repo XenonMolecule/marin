@@ -57,6 +57,7 @@ from haliax.partitioning import ResourceAxis
 from levanter.utils.mesh import MeshConfig
 
 from experiments.defaults import default_validation_sets
+from marin.execution.remote import remote
 from experiments.evals.task_configs import CORE_TASKS, convert_to_levanter_task_config
 from experiments.llama import llama3_tokenizer
 from experiments.pretraining_datasets import NEMOTRON_WEIGHTS, tokenize_nemotron
@@ -743,7 +744,7 @@ for spec_text in SPECS:
     inference_step = ExecutorStep(
         name=f"documents/rephraser_spec_{sid}_v2",
         description=f"Run rephraser inference_v2 for spec {sid}.",
-        fn=run_inference_v2,
+        fn=remote(run_inference_v2, pip_dependency_groups=["vllm"]),
         config=InferenceV2Config(
             input_path=filter_html / "*.jsonl.gz",
             output_path=this_output_path(),

@@ -23,6 +23,7 @@ from dataclasses import dataclass
 import fsspec
 from fray.cluster import ResourceConfig
 
+from marin.execution.remote import remote
 from marin.execution.executor import ExecutorStep, executor_main, this_output_path
 from marin.generation.inference import TextGenerationInferenceConfig, run_inference
 
@@ -103,7 +104,7 @@ create_data = ExecutorStep(
 inference = ExecutorStep(
     name="test_v6e/inference",
     description="Run rephraser inference on v6e-8 TPU (eu-west4-a proof of concept).",
-    fn=run_inference,
+    fn=remote(run_inference, pip_dependency_groups=["vllm"]),
     config=TextGenerationInferenceConfig(
         input_path=create_data / "*.jsonl.gz",
         output_path=this_output_path(),

@@ -48,6 +48,7 @@ from experiments.rephraser.short_cooldown._common import (
     short_cooldown_component,
     validation_component_configs,
 )
+from marin.execution.remote import remote
 from marin.execution.executor import (
     ExecutorStep,
     ensure_versioned,
@@ -149,7 +150,7 @@ for spec_text in SPECS:
     inference_step = ExecutorStep(
         name=f"documents/rephraser_spec_{sid}_v2",
         description=f"Run rephraser inference_v2 for spec {sid}.",
-        fn=run_inference_v2,
+        fn=remote(run_inference_v2, pip_dependency_groups=["vllm"]),
         config=InferenceV2Config(
             input_path=filter_html / "*.jsonl.gz",
             output_path=this_output_path(),

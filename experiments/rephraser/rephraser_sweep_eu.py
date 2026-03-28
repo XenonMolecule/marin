@@ -31,6 +31,7 @@ import os
 from fray.cluster import ResourceConfig
 
 from marin.datakit.download.commoncrawl.download_warc import WarcDownloadConfig, download_and_extract_warcs
+from marin.execution.remote import remote
 from marin.execution.executor import ExecutorStep, executor_main, this_output_path, versioned
 from marin.generation.inference import TextGenerationInferenceConfig, run_inference
 from marin.transform.filter_by_token_length import FilterByTokenLengthConfig, filter_by_token_length
@@ -135,7 +136,7 @@ for spec_text in SPECS:
     inference_step = ExecutorStep(
         name=f"documents/rephraser_eu_spec_{sid}",
         description=f"Run rephraser inference for spec {sid} on v6e-8.",
-        fn=run_inference,
+        fn=remote(run_inference, pip_dependency_groups=["vllm"]),
         config=TextGenerationInferenceConfig(
             input_path=filter_html / "*.jsonl.gz",
             output_path=this_output_path(),
