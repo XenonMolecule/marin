@@ -1,10 +1,17 @@
 {
   "job_id_original": "ray-run-michaelryan-math_14b_top3_sft-20260327-064030",
   "job_id_resubmit_1": "ray-run-michaelryan-math_14b_top3_sft-20260327-175010",
+  "job_id_failed_evals_FAILED_IMPORT": "ray-run-michaelryan-math_14b_top3_failed_evals-20260327-213916",
+  "job_id_resubmit_2_FAILED_PB2": "ray-run-michaelryan-math_14b_top3_sft-20260327-214120",
+  "job_id_resubmit_3_FAILED_RESOURCES": "ray-run-michaelryan-math_14b_top3_sft-20260327-215127",
+  "job_id_standalone_evals": "ray-run-michaelryan-math_14b_top3_failed_evals-20260327-220131",
   "cluster": "us-central1",
-  "last_check": "2026-03-27T12:00Z",
-  "status": "EVALS_IN_PROGRESS",
-  "training_progress": "Mar 27 12:00Z: ALL 6 TRAINING COMPLETE. 1/6 evals complete. extract-default 6/8, resili-default 6/8 (+1 num_theory=55.0%). 3/6 FAILED awaiting retry. 3 configs still need 0/8.",
+  "last_check": "2026-03-28T22:07Z",
+  "job_id_standalone_evals_2_FAILED": "ray-run-michaelryan-math_14b_top3_failed_evals-20260328-072051",
+  "job_id_standalone_evals_3_FAILED_TPU_BUSY": "ray-run-michaelryan-math_14b_top3_failed_evals-20260328-074703",
+  "job_id_standalone_evals_4": "ray-run-michaelryan-math_14b_top3_failed_evals-20260328-075737",
+  "status": "ALL 7/7 COMPLETE!",
+  "training_progress": "Mar 28 22:07Z: ALL 7/7 CONFIGS FULLY COMPLETE! extract-best-resili GSM8K uploaded at 17:41Z. Best config: extract-best-resili (avg_minerva=62.53, +8.9pp over baseline). Report written to MATH_14B_SFT_REPORT.md.",
   "configs": {
     "baseline": {
       "data": "none", "hp": "eval_only",
@@ -20,54 +27,81 @@
     },
     "extract-default": {
       "data": "extraction_top3", "lr": 2e-5, "bs": 64, "wd": 0.01, "warmup": 0.03,
-      "status": "EVAL_RUNNING (6/8 tasks)",
+      "status": "FULLY_COMPLETE",
       "ckpt_dir": "math-14b-top3-extract-default-qwen3-14b-base-cc0da1",
       "eval_dir": "math-14b-top3-extract-default-qwen3-14b-base-1ee499",
       "hf_step": 966,
-      "eval_scores_partial": {
+      "eval_scores": {
         "algebra_mv": 0.8206, "prealgebra_mv": 0.8025,
         "counting_and_prob_mv": 0.6055, "geometry_mv": 0.5720,
-        "intermediate_algebra_mv": 0.4319, "num_theory_mv": 0.6019
+        "intermediate_algebra_mv": 0.4319, "num_theory_mv": 0.6019,
+        "precalc_mv": 0.5110,
+        "gsm8k_strict_match": 0.8114, "gsm8k_flex_extract": 0.8627
       },
-      "missing_tasks": ["precalc", "gsm8k"],
-      "notes": "6/8 tasks done. Scores already very strong — algebra 82.1%, geometry 57.2%!"
+      "avg_minerva_mv": 61.36,
+      "notes": "COMPLETE. avg_minerva=61.36 vs full-data extract-default 57.55 (+3.8pp!). vs baseline 53.63 (+7.7pp). GSM8K flex=86.3% vs baseline 91.3% (-5.0pp). Top3 clearly better than full data."
     },
     "extract-best-resili": {
       "data": "extraction_top3", "lr": 1e-6, "bs": 32, "wd": 0.01, "warmup": 0.03,
-      "status": "EVAL_FAILED (resubmitted)",
+      "status": "FULLY_COMPLETE",
       "ckpt_dir": "math-14b-top3-extract-best-resili-qwen3-14b-base-3e275e",
-      "eval_dir": "math-14b-top3-extract-best-resili-qwen3-14b-base-0818e9",
+      "eval_dir": "math-14b-top3-extract-best-resili-qwen3-14b-base-86c3a9",
       "hf_step": 1932,
-      "notes": "Eval FAILED — 0 tasks completed. Resubmitted in job 175010."
+      "eval_scores": {
+        "algebra_mv": 0.8425, "prealgebra_mv": 0.8175,
+        "counting_and_prob_mv": 0.6034, "geometry_mv": 0.5428,
+        "intermediate_algebra_mv": 0.4707, "num_theory_mv": 0.6019,
+        "precalc_mv": 0.4982,
+        "gsm8k_strict_match": 0.6840, "gsm8k_flex_extract": 0.7204
+      },
+      "avg_minerva_mv": 62.53,
+      "notes": "COMPLETE. avg_minerva=62.53 — NEW OVERALL BEST! vs full-data extract-best-resili 59.89 (+2.6pp). vs baseline 53.63 (+8.9pp). GSM8K flex=72.0% vs baseline 91.3% (-19.3pp, largest drop of any config)."
     },
     "extract-best-extract": {
       "data": "extraction_top3", "lr": 2e-6, "bs": 32, "wd": 0.05, "warmup": 0.0,
-      "status": "EVAL_FAILED (resubmitted)",
+      "status": "FULLY_COMPLETE",
       "ckpt_dir": "math-14b-top3-extract-best-extract-qwen3-14b-base-981bb3",
-      "eval_dir": "math-14b-top3-extract-best-extract-qwen3-14b-base-5025c6",
+      "eval_dir": "math-14b-top3-extract-best-extract-qwen3-14b-base-066983",
       "hf_step": 1932,
-      "notes": "Eval FAILED — 0 tasks completed. Resubmitted in job 175010."
+      "eval_scores": {
+        "algebra_mv": 0.8534, "prealgebra_mv": 0.7991,
+        "counting_and_prob_mv": 0.5928, "geometry_mv": 0.5511,
+        "intermediate_algebra_mv": 0.4419, "num_theory_mv": 0.6074,
+        "precalc_mv": 0.4908,
+        "gsm8k_strict_match": 0.7221, "gsm8k_flex_extract": 0.7734
+      },
+      "avg_minerva_mv": 61.95,
+      "notes": "COMPLETE. avg_minerva=61.95 — BEST top3 config! vs full-data extract-best-extract 59.29 (+2.7pp). vs baseline 53.63 (+8.3pp). GSM8K flex=77.3% vs baseline 91.3% (-14.0pp, largest drop). Completed by .78 after .85 preempted."
     },
     "resili-default": {
       "data": "resiliparse_top3", "lr": 2e-5, "bs": 64, "wd": 0.01, "warmup": 0.03,
-      "status": "EVAL_RUNNING (6/8 tasks)",
+      "status": "FULLY_COMPLETE",
       "ckpt_dir": "math-14b-top3-resili-default-qwen3-14b-base-fa46f8",
       "eval_dir": "math-14b-top3-resili-default-qwen3-14b-base-121ba1",
       "hf_step": 1869,
-      "eval_scores_partial": {
+      "eval_scores": {
         "algebra_mv": 0.7911, "prealgebra_mv": 0.7692,
         "counting_and_prob_mv": 0.5907, "geometry_mv": 0.5010,
-        "intermediate_algebra_mv": 0.3780, "num_theory_mv": 0.5500
+        "intermediate_algebra_mv": 0.3780, "num_theory_mv": 0.5500,
+        "precalc_mv": 0.4231,
+        "gsm8k_strict_match": 0.8213, "gsm8k_flex_extract": 0.8586
       },
-      "missing_tasks": ["precalc", "gsm8k"]
+      "avg_minerva_mv": 55.76,
+      "notes": "COMPLETE. avg_minerva=55.76 vs full-data resili-default 54.55 (+1.2pp). vs baseline 53.63 (+2.1pp). GSM8K flex=85.9% vs baseline 91.3% (-5.4pp)."
     },
     "resili-best-resili": {
       "data": "resiliparse_top3", "lr": 1e-6, "bs": 32, "wd": 0.01, "warmup": 0.03,
-      "status": "EVAL_FAILED (resubmitted)",
+      "status": "FULLY_COMPLETE",
       "ckpt_dir": "math-14b-top3-resili-best-resili-qwen3-14b-base-fff30a",
       "eval_dir": "math-14b-top3-resili-best-resili-qwen3-14b-base-b1860a",
       "hf_step": 3738,
-      "notes": "Eval FAILED — 0 tasks completed. Resubmitted in job 175010."
+      "eval_scores": {
+        "algebra_mv": 0.7751, "prealgebra_mv": 0.7589, "counting_and_prob_mv": 0.5696, "geometry_mv": 0.4656,
+        "intermediate_algebra_mv": 0.3411, "num_theory_mv": 0.5204, "precalc_mv": 0.4066,
+        "gsm8k_strict_match": 0.8495, "gsm8k_flex_extract": 0.9032
+      },
+      "avg_minerva_mv": 54.82,
+      "notes": "COMPLETE. avg_minerva=54.82 vs baseline 53.63 (+1.2pp). GSM8K flex=90.3% vs baseline 91.3% (-1.0pp). Lowest MATH regression of all SFT configs."
     },
     "resili-best-extract": {
       "data": "resiliparse_top3", "lr": 2e-6, "bs": 32, "wd": 0.05, "warmup": 0.0,
@@ -86,6 +120,6 @@
       "notes": "COMPLETE. avg_minerva=54.75 vs baseline 53.63 (+1.1pp). GSM8K flex=89.8% vs baseline 91.3% (-1.3pp)."
     }
   },
-  "action_needed": "Wait for resubmitted job 175010 to retry 3 failed evals + complete 2 running evals. Monitor every 10 min.",
-  "notes": "All training done fast (<1h wall clock). Early scores look VERY promising — extract-default already shows algebra=82.1%, geometry=57.2% (vs full-data 14B extract-default algebra=80.7%, geometry=52.8%). Top3 filter may be BETTER than full data at 14B!"
+  "action_needed": "DONE. All 7/7 complete. Report written.",
+  "notes": "ALL COMPLETE. Top3 filter consistently improves extraction configs (+2.6-3.8pp avg_minerva over full data). Resiliparse top3 results mixed (+1.2pp default, -1.1pp best-resili vs full data). Best overall: top3 extract-best-resili (62.53) = new 14B champion. GSM8K tradeoff steeper for top3 extraction (-19.3pp worst case). vllm_server.py fix for TPU Device busy errors deployed."
 }

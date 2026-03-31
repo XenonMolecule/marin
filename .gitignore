@@ -236,6 +236,8 @@ scr/*
 .entire
 
 # Generated protobuf and Connect RPC files (rebuilt by hatch build hook)
-lib/iris/src/iris/rpc/*_pb2.py
-lib/iris/src/iris/rpc/*_pb2.pyi
-lib/iris/src/iris/rpc/*_connect.py
+# NOTE: Temporarily commented out so Ray job submissions include these files.
+# Uncomment when fully migrated to Iris. See memory/feedback_ray_iris_pb2.md.
+# lib/iris/src/iris/rpc/*_pb2.py
+# lib/iris/src/iris/rpc/*_pb2.pyi
+# lib/iris/src/iris/rpc/*_connect.py

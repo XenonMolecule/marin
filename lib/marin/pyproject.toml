@@ -42,6 +42,7 @@ dependencies = [
     "requests",
     "resiliparse>=0.17.2",
     "s3fs>=2024",
+    "tenacity",
     "toml",
     "tqdm",
     "tqdm-loggable",
