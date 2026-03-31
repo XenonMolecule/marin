@@ -1,0 +1,66 @@
+============================================
+Kimi K2.5 TPU Inference — Final Overnight Report
+Generated: Sat Mar 28 07:30 PDT 2026
+============================================
+
+## BOTTOM LINE
+Could not get inference running. The core blocker is that pipeline parallelism 
+(PP) does not distribute layers for DeepSeek V2 architecture on TPU.
+
+## Definitively Proven
+1. FP8 weights load successfully on TPU (61/61 shards, multiple times)
+2. The 115.52GB per-chip memory is CONSTANT across:
+   - v5p-32 (PP=4), v5p-64 (PP=8), v5p-128 (PP=16)
+   - max_model_len=128 and max_model_len=4096
+   - gpu_memory_utilization=0.5 and 0.95
+   This proves PP is NOT distributing layers on the PyTorch path.
+3. JAX path with PP: two separate issues
+   a. 2D vs 5D mesh axis mismatch (partially fixed with axis adaptation)
+   b. Weight device placement (weights on CPU, mesh on TPU)
+4. --enforce-eager does not help (OOM is weight allocation, not compilation)
+
+## What Was Built (Ready to Use)
+1. K2.5 FP8 weights: gs://marin-us-central1/models/kimi-k25-fp8/ (62 shards)
+2. K2-Instruct FP8 weights: gs://marin-us-central1/models/moonshotai--Kimi-K2-Instruct/
+3. All patches in scripts/ray_multihost_vllm/patches/:
+   - patch_compressed_tensors.py (accept INT4/compressed-tensors quant)
+   - patch_deepseek_v3_config.py (fix hardcoded model dimensions)
+   - patch_deepseek_2d_mesh.py (adapt 5D sharding to 2D mesh)
+   - patch_5d_mesh.py (add missing mesh axes)
+   - patch_pp_enable_deepseek.py (remove DeepseekV3 from PP disabled)
+   - patch_mesh_axes.py (add attn_dp/attn_dp_expert to build_mesh)
+   - patch_int4_moe.py (INT4 MoE support for on-the-fly dequant)
+4. K2.5 INT4->FP8 conversion script: convert_k25_int4_to_fp8.py
+5. Auto-test framework: auto_test_when_ready.sh + benchmark_math500.py
+
+## Recommended Next Steps (in order of likelihood to work)
+
+### Option A: Fix JAX PP path (most promising, ~2-3 days)
+The JAX path IS the right path (Ahmed's Qwen3-235B used it successfully).
+The issues are specific to DeepSeek V3:
+- Fix: make the tpu_inference model_loader NOT skip DeepSeek V3 for PP
+- Fix: ensure 5D mesh is created correctly OR adapt model to 2D mesh
+- Fix: weight placement (CPU→TPU) during flax model loading
+Key file: /workspace/tpu_inference/tpu_inference/runner/tpu_runner.py
+
+### Option B: MaxText (alternative framework, ~1-2 weeks)
+MaxText already supports DeepSeek V3 with PP on TPU.
+Would need: weight conversion, config adaptation, different serving API.
+See: github.com/AI-Hypercomputer/maxtext/blob/main/end_to_end/tpu/deepseek/Run_DeepSeek.md
+
+### Option C: GPU inference (immediate, just costs money)
+vLLM on 8xH200 is battle-tested for Kimi K2.5.
+Command: vllm serve moonshotai/Kimi-K2.5 -tp 8 --trust-remote-code
+
+## Resources to Clean Up
+- v5p-128 kimi-k25-v5p128-c1 in us-central1-a: DELETE
+- Any queued v5p-64/v5p-128 requests: DELETE
+
+## Key Technical Insight
+Ahmed's multi-host vLLM setup works because Qwen3/Llama models go through
+the JAX flax_nnx path with proper mesh-based PP. DeepSeek V2/V3 is explicitly
+disabled from this path (_PP_DISABLED_MODELS) and falls back to the vLLM
+PyTorch path where PP does not actually distribute layers (each worker loads
+the full 1T model). Removing from PP_DISABLED_MODELS triggers JAX path but
+hits mesh/device placement issues that need model-specific fixes.
+============================================

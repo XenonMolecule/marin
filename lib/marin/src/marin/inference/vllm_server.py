@@ -259,6 +259,27 @@ def _resolve_vllm_backend(
 _TPU_LOCKFILE = "/tmp/libtpu_lockfile"
 
 
+def _cleanup_stale_vllm_containers() -> None:
+    """Kill and remove all ``marin-vllm-*`` Docker containers on this node.
+
+    When a Ray task crashes without running its cleanup handler (e.g. OOM, job
+    stop, node preemption), the vLLM Docker sidecar can remain running and hold
+    the TPU device (``/dev/vfio/0``).  Subsequent containers on the same node
+    then fail with "Device or resource busy".
+
+    This function is intentionally aggressive: only one vLLM eval should run per
+    node at a time, so killing all ``marin-vllm-*`` containers is safe.
+    """
+    result = subprocess.run(
+        ["docker", "ps", "-aq", "--filter", "name=marin-vllm-"],
+        check=False, capture_output=True, text=True,
+    )
+    container_ids = result.stdout.strip().split()
+    if container_ids:
+        logger.info("Cleaning up %d stale marin-vllm container(s): %s", len(container_ids), container_ids)
+        subprocess.run(["docker", "rm", "-f", *container_ids], check=False, capture_output=True, text=True)
+
+
 def _remove_tpu_lockfile() -> None:
     """Remove the libtpu lockfile if it exists.
 
@@ -723,10 +744,10 @@ def _start_vllm_docker_server(
     resolved_port = port if port is not None else _pick_free_port(host)
     resolved_name = container_name or f"marin-vllm-{uuid.uuid4().hex[:10]}-{resolved_port}"
 
-    # Remove stale TPU lockfile before starting the container. The lockfile is
-    # created by libtpu inside Docker and persists on the host via the /tmp bind
-    # mount. If a previous container crashed without cleanup, the lockfile blocks
-    # TPU initialization for all subsequent containers on this node.
+    # Kill stale vLLM Docker containers and remove the TPU lockfile before
+    # starting a new container. Prior containers may linger after abrupt task
+    # failures and hold /dev/vfio/0, blocking TPU initialization.
+    _cleanup_stale_vllm_containers()
     _remove_tpu_lockfile()
 
     cmd = _build_docker_run_command(

@@ -553,6 +553,14 @@ INSTRUCTION_DATASET_NAME_TO_CONFIG = {
         name="MichaelR207/rephraser_late_check_0225",
         splits=["train"],
     ),
+    "MichaelR207/rephraser_kimi_v1_0331": InstructionDatasetConfig(
+        hf_dataset_id="MichaelR207/rephraser_kimi_v1_0331",
+        revision="b40c3c8",
+        adapter=multi_turn_adapter(),
+        metadata_columns=["warc_file", "doc_id", "spec_id", "spec", "model"],
+        name="MichaelR207/rephraser_kimi_v1_0331",
+        splits=["train"],
+    ),
     "openai/gsm8k": InstructionDatasetConfig(
         hf_dataset_id="openai/gsm8k",
         revision="cc7b047",

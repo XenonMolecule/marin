@@ -5,19 +5,30 @@
 
 nnx.get_named_sharding(params, mesh) fails under Ray, leaving all specs None.
 This patch adds a fallback that assigns correct TP partition specs based on
-weight name patterns, matching the model definitions in llama3.py/gpt_oss.py.
+weight name patterns, matching the model definitions in llama3.py/gpt_oss.py
+and deepseek_v3.py (for DeepSeek V3 / Kimi K2 MLA + MoE architectures).
 
 Weight -> Shape -> PartitionSpec mapping (for 2D mesh with axes ('data', 'model')):
-  embed_tokens:   (vocab, hidden)         -> P('model', None)     -- shard vocab
-  lm_head:        (hidden, vocab)         -> P(None, 'model')     -- shard vocab (transposed)
-  q_proj:         (hidden, heads, head_d) -> P(None, 'model', None) -- shard heads
-  k_proj:         (hidden, kv_h, head_d)  -> P(None, 'model', None)
-  v_proj:         (hidden, kv_h, head_d)  -> P(None, 'model', None)
-  o_proj:         (heads, head_d, hidden) -> P('model', None, None)
-  gate_proj:      (hidden, inter)         -> P(None, 'model')     -- shard intermediate
-  up_proj:        (hidden, inter)         -> P(None, 'model')
-  down_proj:      (inter, hidden)         -> P('model', None)
-  layernorm/bias: (hidden,)               -> P()                  -- replicate
+
+  Llama / standard transformer:
+    embed_tokens:   (vocab, hidden)         -> P('model', None)     -- shard vocab
+    lm_head:        (hidden, vocab)         -> P(None, 'model')     -- shard vocab (transposed)
+    q_proj:         (hidden, heads, head_d) -> P(None, 'model', None) -- shard heads
+    k_proj:         (hidden, kv_h, head_d)  -> P(None, 'model', None)
+    v_proj:         (hidden, kv_h, head_d)  -> P(None, 'model', None)
+    o_proj:         (heads, head_d, hidden) -> P('model', None, None)
+    gate_proj:      (hidden, inter)         -> P(None, 'model')     -- shard intermediate
+    up_proj:        (hidden, inter)         -> P(None, 'model')
+    down_proj:      (inter, hidden)         -> P('model', None)
+    layernorm/bias: (hidden,)               -> P()                  -- replicate
+
+  DeepSeek V3 / Kimi K2 MLA attention:
+    q_a_proj:              (hidden, q_lora_rank)                    -> P(None, 'model')
+    q_b_proj:              (q_lora_rank, heads*head_dim)            -> P(None, 'model')
+    kv_a_proj_with_mqa:    (hidden, kv_lora_rank+rope_dim)         -> replicate (small)
+    kv_b_proj:             (kv_lora_rank, heads*(nope+v_head_dim)) -> P(None, 'model')
+    q_a_layernorm/kv_a_layernorm:                                  -> replicate
+    weight_scale_inv:      FP8 block scales                        -> replicate
 """
 
 import os
@@ -56,9 +67,28 @@ replacement = """    # Update the model weight
     elif isinstance(_val_sharding, NamedSharding):
         spec = _val_sharding.spec
     else:
-        # Hardcoded TP sharding fallback based on weight name
+        # Hardcoded TP sharding fallback based on weight name.
+        # Order matters: check specific patterns (MLA, FP8 scales) before
+        # generic ones (q_proj, bias) to avoid substring false positives.
         ndim = len(hf_weight.shape)
-        if any(k in hf_key for k in ('gate_proj', 'up_proj')):
+        # --- FP8 block quantization scales: always replicate ---
+        if 'weight_scale_inv' in hf_key:
+            spec = P(*([None] * ndim)) if ndim > 0 else P()
+        # --- DeepSeek V3 / Kimi K2 MLA attention projections ---
+        elif 'q_a_proj' in hf_key:
+            # Query LoRA down: (hidden, q_lora_rank) -> shard output dim
+            spec = P(None, 'model') if ndim == 2 else P()
+        elif 'q_b_proj' in hf_key:
+            # Query LoRA up: (q_lora_rank, heads*head_dim) -> shard output dim
+            spec = P(None, 'model') if ndim == 2 else P()
+        elif 'kv_a_proj_with_mqa' in hf_key:
+            # KV LoRA down + RoPE: (hidden, kv_lora_rank+rope_dim) -> replicate (small output dim)
+            spec = P(*([None] * ndim)) if ndim > 0 else P()
+        elif 'kv_b_proj' in hf_key:
+            # KV reconstruction: (kv_lora_rank, heads*(nope+v_head)) -> shard output dim
+            spec = P(None, 'model') if ndim == 2 else P()
+        # --- Standard transformer / Llama patterns ---
+        elif any(k in hf_key for k in ('gate_proj', 'up_proj')):
             spec = P(None, 'model') if ndim == 2 else P()
         elif 'down_proj' in hf_key:
             spec = P('model', None) if ndim == 2 else P()

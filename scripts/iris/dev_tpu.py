@@ -169,7 +169,8 @@ def find_workspace_root(start: Path) -> Path | None:
 def controller_client(config_file: str) -> Iterable[IrisClient]:
     iris_config = IrisConfig.load(config_file)
     controller_address = iris_config.controller_address()
-    platform = iris_config.platform()
+    bundle = iris_config.provider_bundle()
+    platform = bundle.controller
     workspace = find_workspace_root(Path.cwd())
     if not controller_address:
         controller_address = platform.discover_controller(iris_config.proto.controller)

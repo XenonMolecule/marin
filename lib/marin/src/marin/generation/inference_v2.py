@@ -1,4 +1,4 @@
-# Copyright 2025 The Marin Authors
+# Copyright The Marin Authors
 # SPDX-License-Identifier: Apache-2.0
 
 """Zephyr-based inference with persistent vLLM engines on TPU workers.
@@ -301,7 +301,7 @@ def _count_records(input_path: str, input_format: str) -> int:
 # ---------------------------------------------------------------------------
 
 
-def _process_shard(records: Iterator[dict]) -> Iterator[dict]:
+def _process_shard(records: Iterator[dict], _shard_info: Any = None) -> Iterator[dict]:
     """Process an entire shard through vLLM.
 
     Called by Zephyr ``map_shard``. Each invocation:
@@ -361,7 +361,7 @@ def _process_shard(records: Iterator[dict]) -> Iterator[dict]:
 
     # Map outputs back to records. Records with empty prompts get empty text.
     output_map: dict[int, str] = {}
-    for idx, output in zip(valid_indices, outputs):
+    for idx, output in zip(valid_indices, outputs, strict=True):
         output_map[idx] = " ".join([o.text for o in output.outputs])
 
     for i, record in enumerate(record_list):
@@ -424,14 +424,14 @@ def run_inference_v2(config: InferenceV2Config) -> None:
             # Use lightweight CPU/RAM with explicit TpuConfig device. The TpuConfig
             # triggers a TPU-{variant}-head resource request in fray's actor options,
             # ensuring each actor gets exclusive access to a TPU node.
-            with ZephyrContext(
+            ctx = ZephyrContext(
                 name="inference-v2",
-                num_workers=config.num_workers,
+                max_workers=config.num_workers,
                 resources=ResourceConfig(cpu=8, ram="16g", device=TpuConfig(variant=config.tpu_type)),
                 chunk_size=config.records_per_shard,
-            ) as ctx:
-                ctx.put("config", config)
-                output_files = list(ctx.execute(ds))
+            )
+            ctx.put("config", config)
+            output_files = list(ctx.execute(ds))
             break  # Success — exit retry loop
         except Exception as e:
             if attempt < max_retries:
