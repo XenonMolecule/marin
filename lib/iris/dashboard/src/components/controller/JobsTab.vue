@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue'
 import { RouterLink } from 'vue-router'
-import { useControllerRpc } from '@/composables/useRpc'
+import { useControllerRpc, controllerRpcCall } from '@/composables/useRpc'
 import { useAutoRefresh } from '@/composables/useAutoRefresh'
-import { stateToName } from '@/types/status'
+import { stateToName, stateDisplayName } from '@/types/status'
+import type { JobState } from '@/types/status'
 import type { JobStatus, ListJobsResponse } from '@/types/rpc'
 import { timestampMs, formatDuration, formatRelativeTime } from '@/utils/formatting'
 import { flattenJobTree, getLeafJobName, jobsWithChildren } from '@/utils/jobTree'
@@ -40,7 +41,12 @@ const sortField = ref<SortField>('date')
 const sortDir = ref<SortDir>('desc')
 const nameFilter = ref('')
 const localFilter = ref('')
+const stateFilter = ref('')
 const expandedJobs = ref<Set<string>>(loadExpandedJobs())
+
+const JOB_STATES: JobState[] = [
+  'pending', 'building', 'running', 'succeeded', 'failed', 'killed', 'worker_failed', 'unschedulable',
+]
 
 const {
   data: listResponse,
@@ -53,6 +59,7 @@ const {
   sortField: SORT_FIELD_MAP[sortField.value],
   sortDirection: sortDir.value === 'asc' ? 'SORT_DIRECTION_ASC' : 'SORT_DIRECTION_DESC',
   nameFilter: nameFilter.value || undefined,
+  stateFilter: stateFilter.value || undefined,
 }))
 
 const jobs = computed(() => listResponse.value?.jobs ?? [])
@@ -78,28 +85,73 @@ function saveExpandedJobs() {
   }
 }
 
-onMounted(fetchJobs)
-useAutoRefresh(fetchJobs, 30_000)
+async function fetchAll() {
+  await fetchJobs()
+  // Prune children whose parent is no longer on this page
+  const currentNames = new Set(jobs.value.map(j => j.name))
+  for (const key of childJobsMap.value.keys()) {
+    if (!currentNames.has(key)) {
+      childJobsMap.value.delete(key)
+    }
+  }
+  await refreshExpandedChildren()
+}
 
-watch([page, sortField, sortDir, nameFilter], () => {
-  fetchJobs()
+onMounted(fetchAll)
+useAutoRefresh(fetchAll, 30_000)
+
+watch([page, sortField, sortDir, nameFilter, stateFilter], () => {
+  childJobsMap.value = new Map()
+  fetchAll()
 })
 
-// -- Job tree --
+watch(stateFilter, () => {
+  page.value = 0
+})
 
-const flattenedJobs = computed(() => flattenJobTree(jobs.value, expandedJobs.value))
+// -- Job tree (lazy-loaded children) --
 
-// Track which jobs have children for expand/collapse UI
-const expandableJobs = computed(() => jobsWithChildren(jobs.value))
+const childJobsMap = ref<Map<string, JobStatus[]>>(new Map())
+
+const allJobs = computed(() => {
+  const extra = [...childJobsMap.value.values()].flat()
+  return [...jobs.value, ...extra]
+})
+
+const flattenedJobs = computed(() => flattenJobTree(allJobs.value, expandedJobs.value))
+
+const expandableJobs = computed(() => jobsWithChildren(allJobs.value))
+
+async function fetchChildJobs(jobName: string, jobId: string) {
+  const resp = await controllerRpcCall<ListJobsResponse>('ListJobs', {
+    parentJobId: jobId,
+  })
+  childJobsMap.value.set(jobName, resp.jobs ?? [])
+}
+
+async function refreshExpandedChildren() {
+  const expanded = expandedJobs.value
+  const all = allJobs.value
+  for (const jobName of expanded) {
+    const job = all.find(j => j.name === jobName)
+    if (job) {
+      await fetchChildJobs(jobName, job.jobId)
+    }
+  }
+}
 
 // -- Interactions --
 
-function toggleExpanded(jobName: string) {
+async function toggleExpanded(jobName: string) {
   const next = new Set(expandedJobs.value)
   if (next.has(jobName)) {
     next.delete(jobName)
   } else {
     next.add(jobName)
+    const job = allJobs.value.find(j => j.name === jobName)
+    if (job && !childJobsMap.value.has(jobName)) {
+      await fetchChildJobs(jobName, job.jobId)
+    }
   }
   expandedJobs.value = next
   saveExpandedJobs()
@@ -123,8 +175,11 @@ function handleFilterSubmit() {
 function handleFilterClear() {
   localFilter.value = ''
   nameFilter.value = ''
+  stateFilter.value = ''
   page.value = 0
 }
+
+const hasActiveFilter = computed(() => !!nameFilter.value || !!stateFilter.value)
 
 // -- Formatting --
 
@@ -156,6 +211,7 @@ const SEGMENT_COLORS: Record<string, string> = {
   assigned: 'bg-status-orange',
   failed: 'bg-status-danger',
   worker_failed: 'bg-status-danger',
+  preempted: 'bg-status-warning',
   killed: 'bg-text-muted',
   pending: 'bg-surface-border',
 }
@@ -171,8 +227,9 @@ function progressSegments(job: JobStatus): ProgressSegment[] {
   const assigned = counts['assigned'] ?? 0
   const failed = counts['failed'] ?? 0
   const workerFailed = counts['worker_failed'] ?? 0
+  const preempted = counts['preempted'] ?? 0
   const killed = counts['killed'] ?? 0
-  const pending = total - succeeded - running - building - assigned - failed - workerFailed - killed
+  const pending = total - succeeded - running - building - assigned - failed - workerFailed - preempted - killed
 
   return [
     { count: succeeded, colorClass: SEGMENT_COLORS['succeeded'], label: 'succeeded' },
@@ -181,6 +238,7 @@ function progressSegments(job: JobStatus): ProgressSegment[] {
     { count: assigned, colorClass: SEGMENT_COLORS['assigned'], label: 'assigned' },
     { count: failed, colorClass: SEGMENT_COLORS['failed'], label: 'failed' },
     { count: workerFailed, colorClass: SEGMENT_COLORS['worker_failed'], label: 'worker_failed' },
+    { count: preempted, colorClass: SEGMENT_COLORS['preempted'], label: 'preempted' },
     { count: killed, colorClass: SEGMENT_COLORS['killed'], label: 'killed' },
     { count: Math.max(0, pending), colorClass: SEGMENT_COLORS['pending'], label: 'pending' },
   ].filter(s => s.count > 0)
@@ -224,6 +282,15 @@ function sortIndicator(field: SortField): string {
   <!-- Filter bar -->
   <div class="mb-4 flex items-center gap-3">
     <form class="flex gap-2" @submit.prevent="handleFilterSubmit">
+      <select
+        v-model="stateFilter"
+        class="px-3 py-1.5 text-sm border border-surface-border rounded
+               bg-surface text-text
+               focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent"
+      >
+        <option value="">All states</option>
+        <option v-for="s in JOB_STATES" :key="s" :value="s">{{ stateDisplayName(s) }}</option>
+      </select>
       <input
         v-model="localFilter"
         type="text"
@@ -239,12 +306,12 @@ function sortIndicator(field: SortField): string {
         Filter
       </button>
       <button
-        v-if="nameFilter"
+        v-if="hasActiveFilter"
         type="button"
         class="px-3 py-1.5 text-sm border border-surface-border rounded hover:bg-surface-raised text-status-danger"
         @click="handleFilterClear"
       >
-        Clear
+        Reset
       </button>
     </form>
     <span class="text-[13px] text-text-secondary">
@@ -272,7 +339,7 @@ function sortIndicator(field: SortField): string {
   <!-- Empty state -->
   <EmptyState
     v-else-if="!loading && jobs.length === 0"
-    :message="nameFilter ? 'No jobs matching filter' : 'No jobs'"
+    :message="hasActiveFilter ? 'No jobs matching filter' : 'No jobs'"
   />
 
   <!-- Jobs table -->

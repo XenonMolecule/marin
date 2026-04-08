@@ -28,6 +28,22 @@ class TestJobs:
         return 1
 
     @staticmethod
+    def log_periodic(duration: float, interval: float = 1.0):
+        """Log a message every `interval` seconds for `duration` seconds."""
+        import logging
+        import time
+
+        logger = logging.getLogger("iris.test.log_periodic")
+        start = time.monotonic()
+        tick = 0
+        while time.monotonic() - start < duration:
+            tick += 1
+            logger.info("tick %d (elapsed=%.1fs)", tick, time.monotonic() - start)
+            time.sleep(interval)
+        logger.info("done after %d ticks", tick)
+        return tick
+
+    @staticmethod
     def block(s):
         """Block until sentinel is signalled."""
         s.wait()
@@ -78,8 +94,8 @@ class TestJobs:
     def register_endpoint(prefix):
         """Register an endpoint via RPC and verify it's listed."""
         from iris.cluster.client import get_job_info
-        from iris.rpc import cluster_pb2
-        from iris.rpc.cluster_connect import ControllerServiceClientSync
+        from iris.rpc import controller_pb2
+        from iris.rpc.controller_connect import ControllerServiceClientSync
 
         info = get_job_info()
         if info is None:
@@ -88,7 +104,7 @@ class TestJobs:
         client = ControllerServiceClientSync(address=info.controller_address, timeout_ms=5000)
         try:
             endpoint_name = f"{prefix}/actor1"
-            request = cluster_pb2.Controller.RegisterEndpointRequest(
+            request = controller_pb2.Controller.RegisterEndpointRequest(
                 name=endpoint_name,
                 address="localhost:5000",
                 task_id=info.task_id.to_wire(),
@@ -97,7 +113,7 @@ class TestJobs:
             response = client.register_endpoint(request)
             assert response.endpoint_id
 
-            list_request = cluster_pb2.Controller.ListEndpointsRequest(prefix=f"{prefix}/")
+            list_request = controller_pb2.Controller.ListEndpointsRequest(prefix=f"{prefix}/")
             list_response = client.list_endpoints(list_request)
             assert len(list_response.endpoints) == 1
             names = [ep.name for ep in list_response.endpoints]
@@ -135,7 +151,7 @@ class TestJobs:
     @staticmethod
     def wait_for_sentinel(s):
         """Wait on a sentinel with a short timeout, used for concurrency tests."""
-        from iris.time_utils import Duration
+        from rigging.timing import Duration
 
         s.wait(timeout=Duration.from_seconds(2))
         return "done"

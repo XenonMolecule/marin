@@ -22,7 +22,7 @@ const props = defineProps<{
   jobId: string
 }>()
 
-const TERMINAL_STATES = new Set(['succeeded', 'failed', 'killed', 'worker_failed', 'unschedulable'])
+const TERMINAL_STATES = new Set(['succeeded', 'failed', 'killed', 'worker_failed', 'preempted', 'unschedulable'])
 
 // -- State --
 
@@ -46,6 +46,10 @@ const sortColumn = ref<SortColumn | null>(null)
 const sortDir = ref<SortDir>('asc')
 const childJobsView = ref<ChildJobsView>('direct')
 
+type ChildSortColumn = 'name' | 'state' | 'duration'
+const childSortColumn = ref<ChildSortColumn | null>(null)
+const childSortDir = ref<SortDir>('asc')
+
 function toggleSort(col: SortColumn) {
   if (sortColumn.value === col) {
     if (sortDir.value === 'asc') sortDir.value = 'desc'
@@ -53,6 +57,16 @@ function toggleSort(col: SortColumn) {
   } else {
     sortColumn.value = col
     sortDir.value = 'asc'
+  }
+}
+
+function toggleChildSort(col: ChildSortColumn) {
+  if (childSortColumn.value === col) {
+    if (childSortDir.value === 'asc') childSortDir.value = 'desc'
+    else { childSortColumn.value = null; childSortDir.value = 'asc' }
+  } else {
+    childSortColumn.value = col
+    childSortDir.value = 'asc'
   }
 }
 
@@ -85,16 +99,26 @@ async function fetchData() {
     jobRequest.value = jobResp.request ?? null
     tasks.value = tasksResp.tasks ?? []
 
-    // Fetch child jobs using the job name as a prefix filter
-    const jobName = jobResp.job.name
-    if (jobName) {
-      const childResp = await controllerRpcCall<ListJobsResponse>('ListJobs', {
-        nameFilter: jobName,
-        limit: 500,
-      })
-      if (gen !== fetchGeneration) return  // superseded by a newer fetchData()
-      const prefix = jobName + '/'
-      descendantJobs.value = (childResp.jobs ?? []).filter(j => j.name.startsWith(prefix))
+    // Fetch all descendants by walking the job tree level by level via parentJobId
+    const jobId = jobResp.job.jobId
+    if (jobId) {
+      const result: JobStatus[] = []
+      const queue = [jobId]
+      while (queue.length > 0) {
+        const parentId = queue.shift()!
+        const resp = await controllerRpcCall<ListJobsResponse>('ListJobs', {
+          parentJobId: parentId,
+        })
+        if (gen !== fetchGeneration) return  // superseded by a newer fetchData()
+        const children = resp.jobs ?? []
+        result.push(...children)
+        for (const child of children) {
+          if (child.hasChildren) {
+            queue.push(child.jobId)
+          }
+        }
+      }
+      descendantJobs.value = result
     } else {
       descendantJobs.value = []
     }
@@ -180,7 +204,35 @@ const visibleChildJobs = computed(() => {
   return descendantJobs.value.filter(child => getParentJobName(child.name) === parentName)
 })
 
-const flattenedChildJobs = computed(() => flattenJobTree(visibleChildJobs.value, expandedChildJobs.value))
+function childJobDurationMs(j: JobStatus): number {
+  const started = timestampMs(j.startedAt)
+  if (!started) return 0
+  const ended = timestampMs(j.finishedAt) || Date.now()
+  return ended - started
+}
+
+const childJobComparator = computed<((a: JobStatus, b: JobStatus) => number) | undefined>(() => {
+  const col = childSortColumn.value
+  if (!col) return undefined
+  const dir = childSortDir.value === 'asc' ? 1 : -1
+  return (a: JobStatus, b: JobStatus) => {
+    let cmp = 0
+    switch (col) {
+      case 'name':
+        cmp = getLeafJobName(a.name).localeCompare(getLeafJobName(b.name))
+        break
+      case 'state':
+        cmp = (STATE_SORT_ORDER[stateToName(a.state)] ?? 99) - (STATE_SORT_ORDER[stateToName(b.state)] ?? 99)
+        break
+      case 'duration':
+        cmp = childJobDurationMs(a) - childJobDurationMs(b)
+        break
+    }
+    return cmp * dir
+  }
+})
+
+const flattenedChildJobs = computed(() => flattenJobTree(visibleChildJobs.value, expandedChildJobs.value, childJobComparator.value))
 const expandableChildJobs = computed(() => jobsWithChildren(visibleChildJobs.value))
 
 function toggleExpandedChildJob(jobName: string) {
@@ -200,6 +252,7 @@ const SEGMENT_COLORS: Record<string, string> = {
   assigned: 'bg-status-orange',
   failed: 'bg-status-danger',
   worker_failed: 'bg-status-danger',
+  preempted: 'bg-status-warning',
   killed: 'bg-text-muted',
   pending: 'bg-surface-border',
 }
@@ -220,8 +273,9 @@ function progressSegments(j: JobStatus): ProgressSegment[] {
   const assigned = counts['assigned'] ?? 0
   const failed = counts['failed'] ?? 0
   const workerFailed = counts['worker_failed'] ?? 0
+  const preempted = counts['preempted'] ?? 0
   const killed = counts['killed'] ?? 0
-  const pending = total - succeeded - running - building - assigned - failed - workerFailed - killed
+  const pending = total - succeeded - running - building - assigned - failed - workerFailed - preempted - killed
   return [
     { count: succeeded, colorClass: SEGMENT_COLORS['succeeded'], label: 'succeeded' },
     { count: running, colorClass: SEGMENT_COLORS['running'], label: 'running' },
@@ -229,6 +283,7 @@ function progressSegments(j: JobStatus): ProgressSegment[] {
     { count: assigned, colorClass: SEGMENT_COLORS['assigned'], label: 'assigned' },
     { count: failed, colorClass: SEGMENT_COLORS['failed'], label: 'failed' },
     { count: workerFailed, colorClass: SEGMENT_COLORS['worker_failed'], label: 'worker_failed' },
+    { count: preempted, colorClass: SEGMENT_COLORS['preempted'], label: 'preempted' },
     { count: killed, colorClass: SEGMENT_COLORS['killed'], label: 'killed' },
     { count: Math.max(0, pending), colorClass: SEGMENT_COLORS['pending'], label: 'pending' },
   ].filter(s => s.count > 0)
@@ -266,7 +321,7 @@ const taskCounts = computed(() => {
     else if (state === 'building') counts.building++
     else if (state === 'assigned') counts.assigned++
     else if (state === 'pending') counts.pending++
-    else if (state === 'failed' || state === 'worker_failed') counts.failed++
+    else if (state === 'failed' || state === 'worker_failed' || state === 'preempted') counts.failed++
   }
   return counts
 })
@@ -299,7 +354,7 @@ const diskDisplay = computed(() => {
 
 const STATE_SORT_ORDER: Record<string, number> = {
   running: 0, building: 1, assigned: 2, pending: 3,
-  succeeded: 4, killed: 5, failed: 6, worker_failed: 7, unschedulable: 8,
+  succeeded: 4, killed: 5, failed: 6, worker_failed: 7, preempted: 8, unschedulable: 9,
 }
 
 function taskDurationMs(t: TaskStatus): number {
@@ -359,7 +414,7 @@ const filteredTasks = computed(() => {
 
 function buildProfileType(profilerType: string, format: string | null): Record<string, unknown> {
   if (profilerType === 'cpu') return { cpu: { format: format ?? 'SPEEDSCOPE' } }
-  if (profilerType === 'memory') return { memory: { format: format ?? 'FLAMEGRAPH' } }
+  if (profilerType === 'memory') return { memory: { format: format ?? 'RAW' } }
   return { threads: {} }
 }
 
@@ -377,13 +432,18 @@ async function handleProfile(taskId: string, profilerType: string, format: strin
       return
     }
     if (resp.profileData) {
-      const decoded = atob(resp.profileData)
-      const blob = new Blob([decoded], { type: 'application/octet-stream' })
+      const bin = atob(resp.profileData)
+      const bytes = new Uint8Array(bin.length)
+      for (let i = 0; i < bin.length; i++) {
+        bytes[i] = bin.charCodeAt(i)
+      }
+      const blob = new Blob([bytes], { type: 'application/octet-stream' })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
       const ts = new Date().toISOString().replace(/[T]/g, '_').replace(/:/g, '-').replace(/\.\d+Z$/, '')
-      a.download = `${ts}_profile-${taskId.replace(/\//g, '_')}.out`
+      const ext = profilerType === 'memory' ? 'bin' : 'out'
+      a.download = `${ts}_profile-${taskId.replace(/\//g, '_')}.${ext}`
       a.click()
       URL.revokeObjectURL(url)
     }
@@ -544,9 +604,15 @@ async function handleProfile(taskId: string, profilerType: string, format: strin
         <table class="w-full border-collapse">
           <thead>
             <tr class="border-b border-surface-border">
-              <th class="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider text-text-secondary">Name</th>
-              <th class="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider text-text-secondary">State</th>
-              <th class="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider text-text-secondary">Duration</th>
+              <th class="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider text-text-secondary cursor-pointer select-none hover:text-text-primary" @click="toggleChildSort('name')">
+                Name <span v-if="childSortColumn === 'name'" class="ml-0.5">{{ childSortDir === 'asc' ? '▲' : '▼' }}</span>
+              </th>
+              <th class="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider text-text-secondary cursor-pointer select-none hover:text-text-primary" @click="toggleChildSort('state')">
+                State <span v-if="childSortColumn === 'state'" class="ml-0.5">{{ childSortDir === 'asc' ? '▲' : '▼' }}</span>
+              </th>
+              <th class="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider text-text-secondary cursor-pointer select-none hover:text-text-primary" @click="toggleChildSort('duration')">
+                Duration <span v-if="childSortColumn === 'duration'" class="ml-0.5">{{ childSortDir === 'asc' ? '▲' : '▼' }}</span>
+              </th>
               <th class="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider text-text-secondary">Tasks</th>
               <th class="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider text-text-secondary">Diagnostic</th>
             </tr>
@@ -734,7 +800,7 @@ async function handleProfile(taskId: string, profilerType: string, format: strin
                   <button
                     class="px-2 py-0.5 text-[11px] font-semibold rounded bg-status-success text-white hover:opacity-80 disabled:opacity-50"
                     :disabled="profilingTaskId === task.taskId"
-                    @click="handleProfile(task.taskId, 'memory', 'FLAMEGRAPH')"
+                    @click="handleProfile(task.taskId, 'memory', 'RAW')"
                   >
                     {{ profilingTaskId === task.taskId ? '⏳' : 'MEM' }}
                   </button>

@@ -37,8 +37,10 @@ from iris.cluster.types import (
     get_gpu_count,
     get_tpu_count,
 )
-from iris.rpc import cluster_pb2, config_pb2, time_pb2, vm_pb2
-from iris.time_utils import Deadline, Duration, Timestamp, TokenBucket
+from iris.rpc import config_pb2, time_pb2, vm_pb2
+from iris.rpc import job_pb2
+from iris.time_proto import timestamp_to_proto
+from rigging.timing import Deadline, Duration, Timestamp, TokenBucket
 
 logger = logging.getLogger(__name__)
 
@@ -97,8 +99,8 @@ class AvailabilityState:
     until: Timestamp | None = None
 
 
-DEFAULT_SCALE_UP_RATE_LIMIT = 5  # per minute
-DEFAULT_SCALE_DOWN_RATE_LIMIT = 5  # per minute
+DEFAULT_SCALE_UP_RATE_LIMIT = 16  # per minute
+DEFAULT_SCALE_DOWN_RATE_LIMIT = 32  # per minute
 DEFAULT_SCALE_UP_COOLDOWN = Duration.from_minutes(1)
 DEFAULT_BACKOFF_INITIAL = Duration.from_minutes(5)
 DEFAULT_BACKOFF_MAX = Duration.from_minutes(15)
@@ -204,7 +206,7 @@ def slice_state_to_proto(state: SliceState, idle_threshold: Duration | None = No
             for worker_id in state.worker_ids
         ],
         error_message=state.error_message,
-        last_active=state.last_active.to_proto(),
+        last_active=timestamp_to_proto(state.last_active),
         idle=is_idle,
     )
 
@@ -551,24 +553,33 @@ class ScalingGroup:
             slice_id: ID of the slice to terminate
             timestamp: Optional timestamp (for testing)
         """
+        handle = self.detach_slice(slice_id, timestamp=timestamp)
+        if handle is not None:
+            self._terminate_slice_handle(handle, context="cleaning up anyway")
+
+    def detach_slice(self, slice_id: str, timestamp: Timestamp | None = None) -> SliceHandle | None:
+        """Remove a slice from tracking and persistence without terminating it."""
         timestamp = timestamp or Timestamp.now()
         with self._slices_lock:
-            state = self._slices.get(slice_id)
-        if state:
-            try:
-                state.handle.terminate()
-            except Exception:
-                logger.warning(
-                    "Scale group %s: terminate() failed for slice %s, cleaning up anyway",
-                    self.name,
-                    slice_id,
-                    exc_info=True,
-                )
-            with self._slices_lock:
-                self._slices.pop(slice_id, None)
-            self._last_scale_down = timestamp
-            self._db_remove_slice(slice_id)
-            self._db_update_group()
+            state = self._slices.pop(slice_id, None)
+        if state is None:
+            return None
+        self._last_scale_down = timestamp
+        self._db_remove_slice(slice_id)
+        self._db_update_group()
+        return state.handle
+
+    def _terminate_slice_handle(self, handle: SliceHandle, *, context: str) -> None:
+        try:
+            handle.terminate()
+        except Exception:
+            logger.warning(
+                "Scale group %s: terminate() failed for slice %s, %s",
+                self.name,
+                handle.slice_id,
+                context,
+                exc_info=True,
+            )
 
     def slice_handles(self) -> list[SliceHandle]:
         """All slice handles in this scale group."""
@@ -607,11 +618,11 @@ class ScalingGroup:
         self._current_demand = demand
         self._peak_demand = max(self._peak_demand, demand)
 
-    def can_fit_resources(self, resources: cluster_pb2.ResourceSpecProto) -> bool:
+    def can_fit_resources(self, resources: job_pb2.ResourceSpecProto) -> bool:
         """Check whether a demand entry's resources fit within one VM."""
         return self.check_resource_fit(resources) is None
 
-    def check_resource_fit(self, resources: cluster_pb2.ResourceSpecProto) -> str | None:
+    def check_resource_fit(self, resources: job_pb2.ResourceSpecProto) -> str | None:
         """Check whether a demand entry's resources fit within one VM.
 
         Unconfigured group resource values (0 in the proto) are passed as None
@@ -960,7 +971,8 @@ class ScalingGroup:
         if self._config.HasField("resources") and self._config.resources.device_variant:
             attrs[WellKnownAttribute.DEVICE_VARIANT] = AttributeValue(self._config.resources.device_variant.lower())
         if self._config.HasField("resources"):
-            attrs[WellKnownAttribute.PREEMPTIBLE] = AttributeValue(str(self._config.resources.preemptible).lower())
+            is_preemptible = self._config.resources.capacity_type == config_pb2.CAPACITY_TYPE_PREEMPTIBLE
+            attrs[WellKnownAttribute.PREEMPTIBLE] = AttributeValue(str(is_preemptible).lower())
         region = self.region
         if region:
             attrs[WellKnownAttribute.REGION] = AttributeValue(region)
@@ -969,7 +981,7 @@ class ScalingGroup:
             attrs[WellKnownAttribute.ZONE] = AttributeValue(zone)
         return attrs
 
-    def matches_constraints(self, constraints: Sequence[cluster_pb2.Constraint]) -> bool:
+    def matches_constraints(self, constraints: Sequence[job_pb2.Constraint]) -> bool:
         """Check if this group satisfies the given proto constraints.
 
         Only evaluates routing constraints (device-type, device-variant,
@@ -1024,6 +1036,10 @@ class ScalingGroup:
         with self._slices_lock:
             pending = self._pending_scale_ups
             count = len(self._slices) + pending
+            has_inflight = pending > 0 or any(
+                s.lifecycle in (SliceLifecycleState.BOOTING, SliceLifecycleState.INITIALIZING)
+                for s in self._slices.values()
+            )
         if pending > 0:
             return AvailabilityState(
                 GroupAvailability.REQUESTING,
@@ -1031,6 +1047,11 @@ class ScalingGroup:
             )
 
         if count >= self._config.max_slices:
+            # When all slice slots are filled but some are still booting/initializing,
+            # accept demand so it doesn't waterfall to other groups. The routing budget
+            # already accounts for in-flight capacity via max_vms.
+            if has_inflight:
+                return AvailabilityState(GroupAvailability.COOLDOWN, "at max_slices with in-flight capacity")
             return AvailabilityState(GroupAvailability.AT_MAX_SLICES)
 
         cooldown_end = self._last_scale_up.add(self._scale_up_cooldown)
@@ -1137,14 +1158,14 @@ class ScalingGroup:
             config=self._config,
             current_demand=self._current_demand,
             peak_demand=self._peak_demand,
-            backoff_until=backoff_ts.to_proto(),
+            backoff_until=timestamp_to_proto(backoff_ts),
             consecutive_failures=self._consecutive_failures,
-            last_scale_up=self._last_scale_up.to_proto(),
-            last_scale_down=self._last_scale_down.to_proto(),
+            last_scale_up=timestamp_to_proto(self._last_scale_up),
+            last_scale_down=timestamp_to_proto(self._last_scale_down),
             availability_status=availability.status.value,
             availability_reason=availability.reason,
-            blocked_until=blocked_until.to_proto(),
-            scale_up_cooldown_until=cooldown_until.to_proto(),
+            blocked_until=timestamp_to_proto(blocked_until),
+            scale_up_cooldown_until=timestamp_to_proto(cooldown_until),
             slices=[slice_state_to_proto(state, idle_threshold=self._idle_threshold) for state in snapshot],
             idle_threshold_ms=self._idle_threshold.to_ms(),
         )

@@ -503,7 +503,7 @@ class _RayActorHostBase:
         args: tuple,
         kwargs: dict,
     ):
-        from iris.logging import configure_logging  # lazy: avoid PyPI iris conflict on workers
+        from rigging.log_setup import configure_logging
 
         configure_logging(level=logging.INFO)
 
@@ -612,6 +612,10 @@ class RayProxyMethod:
     def remote(self, *args: Any, **kwargs: Any) -> ActorFuture:
         object_ref = self._ray_handle._proxy_call.remote(self._method_name, args, kwargs)
         return RayActorFuture(object_ref)
+
+    def submit(self, *args: Any, **kwargs: Any) -> ActorFuture:
+        """Long-running operation path. Same as remote() for Ray backend."""
+        return self.remote(*args, **kwargs)
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
         object_ref = self._ray_handle._proxy_call.remote(self._method_name, args, kwargs)
