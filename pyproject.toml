@@ -15,6 +15,7 @@ dependencies = [
     "haliax",
     "levanter",
     "marin",
+    "rigging",
     "zephyr",
     # top level deps. try to keep these small.
     "watchdog",
@@ -23,7 +24,10 @@ dependencies = [
 
 [tool.uv]
 fork-strategy = "fewest"
-find-links = ["https://github.com/marin-community/marin/releases/expanded_assets/dupekit-0.1.0-40ac799"]
+find-links = [
+    "https://github.com/marin-community/marin/releases/expanded_assets/dupekit-0.1.0-40ac799",
+    "https://github.com/marin-community/kitoken/releases/expanded_assets/kitoken-0.10.2-a3012f4",
+]
 override-dependencies = [
     "omegaconf>=2.4.0.dev4",
     "antlr4-python3-runtime==4.11",
@@ -40,6 +44,7 @@ members = [
     "lib/haliax",
     "lib/levanter",
     "lib/marin",
+    "lib/rigging",
     "lib/zephyr",
 ]
 
@@ -49,6 +54,7 @@ fray = { workspace = true }
 haliax = { workspace = true }
 levanter = { workspace = true }
 marin = { workspace = true }
+rigging = { workspace = true }
 zephyr = { workspace = true }
 # NOTE: harbor is a pinned git dependency (not a workspace member).
 # harbor lives in marin-community/harbor as a pinned git dependency.
@@ -99,6 +105,7 @@ project-includes = [
     "lib/haliax/src/**/*.py",
     "lib/fray/src/**/*.py",
     "lib/iris/src/**/*.py",
+    "lib/rigging/src/**/*.py",
     "lib/zephyr/src/**/*.py",
 ]
 
@@ -109,6 +116,7 @@ search-path = [
     "lib/marin/src",
     "lib/levanter/src",
     "lib/haliax/src",
+    "lib/rigging/src",
     "lib/zephyr/src",
     "lib/fray/src",
     "lib/iris/src",

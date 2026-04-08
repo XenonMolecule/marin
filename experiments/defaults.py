@@ -136,6 +136,17 @@ def _checkpoint_keep(steps_per_export: int | None) -> list[dict]:
     return [dict(every=steps_per_export)]
 
 
+def _checkpoint_keep(steps_per_export: int | None) -> list[dict]:
+    """Build the `keep` list for `CheckpointerConfig`.
+
+    None means keep no permanent intermediate checkpoints (only the final checkpoint
+    is saved at end-of-training, plus a rolling temporary checkpoint for resumption).
+    """
+    if steps_per_export is None:
+        return []
+    return [dict(every=steps_per_export)]
+
+
 def _validate_train_length(train_seq_len: int | None, model_config: LmConfig) -> int:
     """Resolve and validate the training sequence length against the model's max."""
     actual = unwrap_versioned_value(model_config)

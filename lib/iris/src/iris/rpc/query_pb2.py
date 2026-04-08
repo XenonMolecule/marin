@@ -24,18 +24,18 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0bquery.proto\x12\x0ciris.cluster\"4\n\nColumnMeta\x12\x12\n\x04name\x18\x01 \x01(\tR\x04name\x12\x12\n\x04type\x18\x02 \x01(\tR\x04type\"#\n\x0fRawQueryRequest\x12\x10\n\x03sql\x18\x01 \x01(\tR\x03sql\"Z\n\x10RawQueryResponse\x12\x32\n\x07\x63olumns\x18\x01 \x03(\x0b\x32\x18.iris.cluster.ColumnMetaR\x07\x63olumns\x12\x12\n\x04rows\x18\x02 \x03(\tR\x04rowsBo\n\x10\x63om.iris.clusterB\nQueryProtoP\x01\xa2\x02\x03ICX\xaa\x02\x0cIris.Cluster\xca\x02\x0cIris\\Cluster\xe2\x02\x18Iris\\Cluster\\GPBMetadata\xea\x02\rIris::Clusterb\x08\x65\x64itionsp\xe8\x07')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0bquery.proto\x12\niris.query\"4\n\nColumnMeta\x12\x12\n\x04name\x18\x01 \x01(\tR\x04name\x12\x12\n\x04type\x18\x02 \x01(\tR\x04type\"#\n\x0fRawQueryRequest\x12\x10\n\x03sql\x18\x01 \x01(\tR\x03sql\"X\n\x10RawQueryResponse\x12\x30\n\x07\x63olumns\x18\x01 \x03(\x0b\x32\x16.iris.query.ColumnMetaR\x07\x63olumns\x12\x12\n\x04rows\x18\x02 \x03(\tR\x04rowsBe\n\x0e\x63om.iris.queryB\nQueryProtoP\x01\xa2\x02\x03IQX\xaa\x02\nIris.Query\xca\x02\nIris\\Query\xe2\x02\x16Iris\\Query\\GPBMetadata\xea\x02\x0bIris::Queryb\x08\x65\x64itionsp\xe8\x07')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'query_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   _globals['DESCRIPTOR']._loaded_options = None
-  _globals['DESCRIPTOR']._serialized_options = b'\n\020com.iris.clusterB\nQueryProtoP\001\242\002\003ICX\252\002\014Iris.Cluster\312\002\014Iris\\Cluster\342\002\030Iris\\Cluster\\GPBMetadata\352\002\rIris::Cluster'
-  _globals['_COLUMNMETA']._serialized_start=29
-  _globals['_COLUMNMETA']._serialized_end=81
-  _globals['_RAWQUERYREQUEST']._serialized_start=83
-  _globals['_RAWQUERYREQUEST']._serialized_end=118
-  _globals['_RAWQUERYRESPONSE']._serialized_start=120
-  _globals['_RAWQUERYRESPONSE']._serialized_end=210
+  _globals['DESCRIPTOR']._serialized_options = b'\n\016com.iris.queryB\nQueryProtoP\001\242\002\003IQX\252\002\nIris.Query\312\002\nIris\\Query\342\002\026Iris\\Query\\GPBMetadata\352\002\013Iris::Query'
+  _globals['_COLUMNMETA']._serialized_start=27
+  _globals['_COLUMNMETA']._serialized_end=79
+  _globals['_RAWQUERYREQUEST']._serialized_start=81
+  _globals['_RAWQUERYREQUEST']._serialized_end=116
+  _globals['_RAWQUERYRESPONSE']._serialized_start=118
+  _globals['_RAWQUERYRESPONSE']._serialized_end=206
 # @@protoc_insertion_point(module_scope)

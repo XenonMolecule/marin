@@ -43,29 +43,30 @@ from iris.cluster.types import (
     gpu_device,
     tpu_device,
 )
-from iris.rpc import cluster_pb2
+from iris.rpc import job_pb2
 from iris.rpc.auth import TokenProvider
-from iris.time_utils import Duration, Timestamp
+from iris.time_proto import timestamp_from_proto
+from rigging.timing import Duration, Timestamp
 
 logger = logging.getLogger(__name__)
 
-_STATE_MAP: dict[str, cluster_pb2.JobState] = {
-    "pending": cluster_pb2.JOB_STATE_PENDING,
-    "building": cluster_pb2.JOB_STATE_BUILDING,
-    "running": cluster_pb2.JOB_STATE_RUNNING,
-    "succeeded": cluster_pb2.JOB_STATE_SUCCEEDED,
-    "failed": cluster_pb2.JOB_STATE_FAILED,
-    "killed": cluster_pb2.JOB_STATE_KILLED,
-    "worker_failed": cluster_pb2.JOB_STATE_WORKER_FAILED,
-    "unschedulable": cluster_pb2.JOB_STATE_UNSCHEDULABLE,
+_STATE_MAP: dict[str, job_pb2.JobState] = {
+    "pending": job_pb2.JOB_STATE_PENDING,
+    "building": job_pb2.JOB_STATE_BUILDING,
+    "running": job_pb2.JOB_STATE_RUNNING,
+    "succeeded": job_pb2.JOB_STATE_SUCCEEDED,
+    "failed": job_pb2.JOB_STATE_FAILED,
+    "killed": job_pb2.JOB_STATE_KILLED,
+    "worker_failed": job_pb2.JOB_STATE_WORKER_FAILED,
+    "unschedulable": job_pb2.JOB_STATE_UNSCHEDULABLE,
 }
 
 
-def _job_state_name(state: cluster_pb2.JobState) -> str:
-    return cluster_pb2.JobState.Name(state).replace("JOB_STATE_", "").lower()
+def _job_state_name(state: job_pb2.JobState) -> str:
+    return job_pb2.JobState.Name(state).replace("JOB_STATE_", "").lower()
 
 
-def _format_resources(resources: cluster_pb2.ResourceSpecProto | None) -> str:
+def _format_resources(resources: job_pb2.ResourceSpecProto | None) -> str:
     """Format job resources as a compact human-readable string."""
     if not resources:
         return "-"
@@ -440,7 +441,6 @@ def run_iris_job(
     max_retries: int = 0,
     timeout: int = 0,
     extras: list[str] | None = None,
-    include_children_logs: bool = True,
     terminate_on_exit: bool = True,
     regions: tuple[str, ...] | None = None,
     zone: str | None = None,
@@ -520,7 +520,6 @@ def run_iris_job(
         timeout=timeout,
         wait=wait,
         extras=extras,
-        include_children_logs=include_children_logs,
         terminate_on_exit=terminate_on_exit,
         constraints=constraints or None,
         coscheduling=coscheduling,
@@ -541,7 +540,6 @@ def _submit_and_wait_job(
     timeout: int,
     wait: bool,
     extras: list[str] | None = None,
-    include_children_logs: bool = True,
     terminate_on_exit: bool = True,
     constraints: list[Constraint] | None = None,
     coscheduling: CoschedulingConfig | None = None,
@@ -583,9 +581,9 @@ def _submit_and_wait_job(
     )
     try:
         try:
-            status = job.wait(stream_logs=True, include_children=include_children_logs, timeout=float("inf"))
+            status = job.wait(stream_logs=True, timeout=float("inf"))
             logger.info(f"Job completed with state: {status.state}")
-            return 0 if status.state == cluster_pb2.JOB_STATE_SUCCEEDED else 1
+            return 0 if status.state == job_pb2.JOB_STATE_SUCCEEDED else 1
         except JobFailedError as e:
             logger.error(f"Job failed: {e}")
             return 1
@@ -667,11 +665,6 @@ Examples:
     ),
 )
 @click.option(
-    "--include-children-logs/--no-include-children-logs",
-    default=True,
-    help="Stream logs from child jobs (nested submissions).",
-)
-@click.option(
     "--terminate-on-exit/--no-terminate-on-exit",
     default=True,
     help="Terminate the job on Ctrl+C (default: terminate). Tunnel failures never kill the job.",
@@ -696,7 +689,6 @@ def run(
     zone: str | None,
     extra: tuple[str, ...],
     reserve: tuple[str, ...],
-    include_children_logs: bool,
     terminate_on_exit: bool,
     cmd: tuple[str, ...],
 ):
@@ -738,7 +730,6 @@ def run(
             max_retries=max_retries,
             timeout=timeout,
             extras=list(extra),
-            include_children_logs=include_children_logs,
             terminate_on_exit=terminate_on_exit,
             regions=region or None,
             zone=zone,
@@ -799,7 +790,7 @@ def list_jobs(ctx, state: str | None, prefix: str | None, json_output: bool) -> 
     controller_url = require_controller_url(ctx)
     client = IrisClient.remote(controller_url, workspace=Path.cwd(), token_provider=ctx.obj.get("token_provider"))
 
-    states: list[cluster_pb2.JobState] | None = None
+    states: list[job_pb2.JobState] | None = None
     if state is not None:
         state_lower = state.lower()
         if state_lower not in _STATE_MAP:
@@ -829,7 +820,7 @@ def list_jobs(ctx, state: str | None, prefix: str | None, json_output: bool) -> 
     for j in jobs:
         job_id = j.job_id
         state_name = _job_state_name(j.state)
-        submitted = Timestamp.from_proto(j.submitted_at).as_formatted_date() if j.submitted_at.epoch_ms else "-"
+        submitted = timestamp_from_proto(j.submitted_at).as_formatted_date() if j.submitted_at.epoch_ms else "-"
         resources = _format_resources(j.resources) if j.HasField("resources") else "-"
 
         # Show error for failed jobs, pending_reason for pending/unschedulable
@@ -862,15 +853,17 @@ def list_jobs(ctx, state: str | None, prefix: str | None, json_output: bool) -> 
 )
 @click.option("--follow", "-f", is_flag=True, help="Stream logs continuously.")
 @click.option(
+    "--max-lines",
+    type=int,
+    default=0,
+    help="Maximum number of log lines to return (0 = server default, currently 1000).",
+)
+@click.option("--tail", is_flag=True, help="Return the most recent lines instead of the earliest.")
+@click.option(
     "--level",
     type=click.Choice(["debug", "info", "warning", "error", "critical"], case_sensitive=False),
     default=None,
     help="Minimum log level to display (e.g., --level warning).",
-)
-@click.option(
-    "--include-children/--no-include-children",
-    default=False,
-    help="Include logs from child jobs (nested submissions).",
 )
 @click.pass_context
 def logs(
@@ -879,8 +872,9 @@ def logs(
     since_ms: int | None,
     since_seconds: int | None,
     follow: bool,
+    max_lines: int,
+    tail: bool,
     level: str | None,
-    include_children: bool,
 ) -> None:
     """Stream task logs for a job using batch log fetching."""
     if since_ms is not None and since_seconds is not None:
@@ -901,22 +895,23 @@ def logs(
         job = Job(client, job_name)
         job.wait(
             stream_logs=True,
-            include_children=include_children,
             timeout=float("inf"),
             raise_on_failure=False,
+            since_ms=start_since_ms,
             min_level=min_level,
         )
         return
 
     entries = client.fetch_task_logs(
         job_name,
-        include_children=include_children,
         start=Timestamp.from_ms(start_since_ms) if start_since_ms > 0 else None,
+        max_lines=max_lines,
+        tail=tail,
         min_level=min_level,
     )
     for entry in entries:
         ts = entry.timestamp.as_short_time()
-        click.echo(f"[{ts}] worker={entry.worker_id} task={entry.task_id} | {entry.data}")
+        click.echo(f"[{ts}] task={entry.task_id} | {entry.data}")
 
 
 @job.command("bug-report")

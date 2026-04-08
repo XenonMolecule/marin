@@ -22,7 +22,8 @@ from iris.cluster.providers.gcp.workers import GcpWorkerProvider
 from iris.cluster.providers.types import CloudSliceState
 from iris.cluster.service_mode import ServiceMode
 from iris.rpc import config_pb2
-from iris.time_utils import Duration, Timestamp
+from iris.time_proto import duration_to_proto
+from rigging.timing import Duration, Timestamp
 
 from tests.cluster.controller.conftest import (
     advance_all_tpus,
@@ -55,7 +56,7 @@ class TestAutoscalerWaterfallEndToEnd:
         group_fallback = ScalingGroup(config_fallback, platform_fallback, scale_up_cooldown=Duration.from_ms(0))
 
         config = config_pb2.AutoscalerConfig()
-        config.evaluation_interval.CopyFrom(Duration.from_seconds(0.001).to_proto())
+        config.evaluation_interval.CopyFrom(duration_to_proto(Duration.from_seconds(0.001)))
         autoscaler = make_autoscaler(
             scale_groups={"primary": group_primary, "fallback": group_fallback},
             config=config,
@@ -89,7 +90,7 @@ class TestAutoscalerWaterfallEndToEnd:
         group_fallback = ScalingGroup(config_fallback, platform_fallback, scale_up_cooldown=Duration.from_ms(0))
 
         config = config_pb2.AutoscalerConfig()
-        config.evaluation_interval.CopyFrom(Duration.from_seconds(0.001).to_proto())
+        config.evaluation_interval.CopyFrom(duration_to_proto(Duration.from_seconds(0.001)))
         autoscaler = make_autoscaler(
             scale_groups={"primary": group_primary, "fallback": group_fallback},
             config=config,
@@ -123,19 +124,19 @@ class TestAutoscalerWaterfallEndToEnd:
         autoscaler.shutdown()
 
     def test_full_group_cascades_to_fallback(self):
-        """When primary group hits max_slices, demand cascades to fallback."""
+        """When primary group hits max_slices with all slices READY, demand cascades to fallback."""
 
         config_primary = make_scale_group_config(name="primary", max_slices=1, priority=10, zones=["us-central1-a"])
         config_fallback = make_scale_group_config(name="fallback", max_slices=5, priority=20, zones=["us-central1-a"])
 
-        platform_primary, _ = make_gcp_provider(config_primary)
+        platform_primary, service_primary = make_gcp_provider(config_primary)
         platform_fallback, _ = make_gcp_provider(config_fallback)
 
         group_primary = ScalingGroup(config_primary, platform_primary, scale_up_cooldown=Duration.from_ms(0))
         group_fallback = ScalingGroup(config_fallback, platform_fallback, scale_up_cooldown=Duration.from_ms(0))
 
         config = config_pb2.AutoscalerConfig()
-        config.evaluation_interval.CopyFrom(Duration.from_seconds(0.001).to_proto())
+        config.evaluation_interval.CopyFrom(duration_to_proto(Duration.from_seconds(0.001)))
         autoscaler = make_autoscaler(
             scale_groups={"primary": group_primary, "fallback": group_fallback},
             config=config,
@@ -145,6 +146,10 @@ class TestAutoscalerWaterfallEndToEnd:
         autoscaler.run_once(demand, {})
         autoscaler._wait_for_inflight()
         assert group_primary.slice_count() == 1
+
+        # Mark the primary slice as READY so it enters AT_MAX_SLICES (rejecting)
+        advance_all_tpus(service_primary, "READY")
+        _mark_all_slices_ready(group_primary)
 
         demand = make_demand_entries(2, device_type=DeviceType.CPU, device_variant=None)
         autoscaler.run_once(demand, {})
@@ -196,7 +201,7 @@ class TestAutoscalerWaterfallEndToEnd:
         group_fallback = ScalingGroup(config_fallback, platform_fallback, scale_up_cooldown=Duration.from_ms(0))
 
         config = config_pb2.AutoscalerConfig()
-        config.evaluation_interval.CopyFrom(Duration.from_seconds(0.001).to_proto())
+        config.evaluation_interval.CopyFrom(duration_to_proto(Duration.from_seconds(0.001)))
         autoscaler = make_autoscaler(
             scale_groups={"primary": group_primary, "fallback": group_fallback},
             config=config,
@@ -204,9 +209,9 @@ class TestAutoscalerWaterfallEndToEnd:
 
         from iris.cluster.constraints import PlacementRequirements
         from iris.cluster.controller.autoscaler import DemandEntry
-        from iris.rpc import cluster_pb2
+        from iris.rpc import job_pb2
 
-        big_resources = cluster_pb2.ResourceSpecProto(cpu_millicores=128000, memory_bytes=128 * 1024**3)
+        big_resources = job_pb2.ResourceSpecProto(cpu_millicores=128000, memory_bytes=128 * 1024**3)
         normalized = PlacementRequirements(
             device_type=DeviceType.TPU,
             device_variants=frozenset({"v5p-8"}),
@@ -255,7 +260,7 @@ class TestAutoscalerWaterfallEndToEnd:
         )
 
         config = config_pb2.AutoscalerConfig()
-        config.evaluation_interval.CopyFrom(Duration.from_seconds(0.001).to_proto())
+        config.evaluation_interval.CopyFrom(duration_to_proto(Duration.from_seconds(0.001)))
         autoscaler = make_autoscaler(
             scale_groups={"primary": group_primary, "fallback": group_fallback},
             config=config,
@@ -442,7 +447,7 @@ def test_incremental_demand_growth_triggers_scale_up():
     group = ScalingGroup(config, platform, scale_up_cooldown=Duration.from_ms(0), scale_up_rate_limit=1000)
 
     as_config = config_pb2.AutoscalerConfig()
-    as_config.evaluation_interval.CopyFrom(Duration.from_seconds(0.001).to_proto())
+    as_config.evaluation_interval.CopyFrom(duration_to_proto(Duration.from_seconds(0.001)))
     autoscaler = make_autoscaler({"test-group": group}, config=as_config)
 
     # Phase 1: 4 big entries, each fills 1 VM
@@ -502,7 +507,7 @@ def test_marin_style_lifecycle():
         groups[name] = ScalingGroup(cfg, plat, scale_up_cooldown=Duration.from_ms(COOLDOWN_MS))
 
     as_config = config_pb2.AutoscalerConfig()
-    as_config.evaluation_interval.CopyFrom(Duration.from_seconds(0.001).to_proto())
+    as_config.evaluation_interval.CopyFrom(duration_to_proto(Duration.from_seconds(0.001)))
     autoscaler = make_autoscaler(groups, config=as_config)
 
     def make_demand(count):
@@ -630,7 +635,7 @@ class TestScaleUpRateLimiting:
         group = ScalingGroup(config, platform, scale_up_cooldown=Duration.from_ms(0), scale_up_rate_limit=1)
 
         as_config = config_pb2.AutoscalerConfig()
-        as_config.evaluation_interval.CopyFrom(Duration.from_seconds(0.001).to_proto())
+        as_config.evaluation_interval.CopyFrom(duration_to_proto(Duration.from_seconds(0.001)))
         autoscaler = make_autoscaler({"test-group": group}, config=as_config)
 
         demand = _make_big_demand_entries(
@@ -664,7 +669,7 @@ class TestScaleUpRateLimiting:
         group = ScalingGroup(config, platform, scale_up_cooldown=Duration.from_ms(0), scale_up_rate_limit=2)
 
         as_config = config_pb2.AutoscalerConfig()
-        as_config.evaluation_interval.CopyFrom(Duration.from_seconds(0.001).to_proto())
+        as_config.evaluation_interval.CopyFrom(duration_to_proto(Duration.from_seconds(0.001)))
         autoscaler = make_autoscaler({"test-group": group}, config=as_config)
 
         demand = _make_big_demand_entries(
@@ -700,7 +705,7 @@ class TestScaleUpRateLimiting:
         group = ScalingGroup(config, platform, scale_up_cooldown=Duration.from_ms(0), scale_up_rate_limit=1000)
 
         as_config = config_pb2.AutoscalerConfig()
-        as_config.evaluation_interval.CopyFrom(Duration.from_seconds(0.001).to_proto())
+        as_config.evaluation_interval.CopyFrom(duration_to_proto(Duration.from_seconds(0.001)))
         autoscaler = make_autoscaler({"test-group": group}, config=as_config)
 
         demand = _make_big_demand_entries(

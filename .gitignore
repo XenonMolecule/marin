@@ -6,6 +6,9 @@ logs/
 # CPU profiles
 prof/
 
+# Downloaded build tools (zig, etc.)
+.tools/
+
 tests/snapshots/outputs
 tests/snapshots/diffs
 
@@ -234,10 +237,3 @@ scr/*
 .agents/tmp/
 .codex
 .entire
-
-# Generated protobuf and Connect RPC files (rebuilt by hatch build hook)
-# NOTE: Temporarily commented out so Ray job submissions include these files.
-# Uncomment when fully migrated to Iris. See memory/feedback_ray_iris_pb2.md.
-# lib/iris/src/iris/rpc/*_pb2.py
-# lib/iris/src/iris/rpc/*_pb2.pyi
-# lib/iris/src/iris/rpc/*_connect.py

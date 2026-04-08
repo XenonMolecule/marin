@@ -24,7 +24,7 @@ from iris.cluster.providers.types import (
     SliceStatus,
     WorkerStatus,
 )
-from iris.time_utils import Duration, Timestamp
+from rigging.timing import Duration, Timestamp
 
 
 @dataclass
@@ -102,7 +102,7 @@ class StubSliceHandle:
             workers=list(self._workers),
         )
 
-    def terminate(self) -> None:
+    def terminate(self, *, wait: bool = False) -> None:
         pass
 
 
