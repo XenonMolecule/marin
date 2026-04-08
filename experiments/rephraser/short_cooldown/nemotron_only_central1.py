@@ -1,3 +1,6 @@
+# Copyright The Marin Authors
+# SPDX-License-Identifier: Apache-2.0
+
 # Copyright 2025 The Marin Authors
 # SPDX-License-Identifier: Apache-2.0
 
@@ -168,7 +171,7 @@ def run_short_nemotron_only_v5p8(config):
             steps_per_eval=1000,
             checkpointer=CheckpointerConfig(
                 save_interval=timedelta(minutes=10),
-                keep=[dict(every=SHORT_COOLDOWN_STEPS)],
+                keep=[],
             ),
             mesh=MeshConfig(
                 compute_mapping={

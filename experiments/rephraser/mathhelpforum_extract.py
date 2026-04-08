@@ -1,3 +1,6 @@
+# Copyright The Marin Authors
+# SPDX-License-Identifier: Apache-2.0
+
 # Copyright 2025 The Marin Authors
 # SPDX-License-Identifier: Apache-2.0
 
@@ -32,7 +35,6 @@ from dataclasses import dataclass
 import fsspec
 from zephyr import Dataset, ZephyrContext, load_jsonl
 
-from fray.cluster import ResourceConfig
 from marin.execution.remote import remote
 from marin.execution.executor import (
     ExecutorStep,

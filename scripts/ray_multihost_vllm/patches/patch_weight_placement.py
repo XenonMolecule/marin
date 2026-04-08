@@ -13,7 +13,6 @@ weights NEED CPU placement for process_weights_after_loading. MoE weights
 bypass assign_and_shard_param entirely via our custom Fp8FusedMoEMethod.load_weights.
 """
 
-import re
 
 PATH = "/workspace/tpu_inference/tpu_inference/models/jax/utils/weight_utils.py"
 

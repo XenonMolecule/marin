@@ -272,7 +272,9 @@ def _cleanup_stale_vllm_containers() -> None:
     """
     result = subprocess.run(
         ["docker", "ps", "-aq", "--filter", "name=marin-vllm-"],
-        check=False, capture_output=True, text=True,
+        check=False,
+        capture_output=True,
+        text=True,
     )
     container_ids = result.stdout.strip().split()
     if container_ids:

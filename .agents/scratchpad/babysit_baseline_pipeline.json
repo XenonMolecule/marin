@@ -1,0 +1,9 @@
+{
+  "ts": 1743993191000,
+  "track": "ray",
+  "job_id": "ray-run-michaelryan-pipeline-20260407-113301",
+  "cluster": "marin-big-run",
+  "experiment": "experiments/baseline_collection/pipeline.py",
+  "restart_count": 15,
+  "notes": "Restart 15: tok_dclm failed with IndexError (list index out of range) — likely empty DCLM output shards causing tokenizer crash. Retrying. May need to consolidate DCLM output if it fails again. All other 9 steps SUCCESS."
+}

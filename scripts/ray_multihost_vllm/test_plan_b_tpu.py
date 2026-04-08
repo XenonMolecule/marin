@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright The Marin Authors
+# SPDX-License-Identifier: Apache-2.0
+
 """Test Plan B: Run FP8 dequant→requant on TPU instead of CPU.
 
 Compares CPU vs TPU for the full MoE weight processing pipeline:
@@ -13,7 +16,6 @@ Usage:
 """
 
 import argparse
-import itertools
 import time
 
 import jax
@@ -28,9 +30,9 @@ def time_fn(fn, name, warmup=1, repeats=3):
         result = fn()
         if isinstance(result, tuple):
             for r in result:
-                if hasattr(r, 'block_until_ready'):
+                if hasattr(r, "block_until_ready"):
                     r.block_until_ready()
-        elif hasattr(result, 'block_until_ready'):
+        elif hasattr(result, "block_until_ready"):
             result.block_until_ready()
 
     times = []
@@ -39,9 +41,9 @@ def time_fn(fn, name, warmup=1, repeats=3):
         result = fn()
         if isinstance(result, tuple):
             for r in result:
-                if hasattr(r, 'block_until_ready'):
+                if hasattr(r, "block_until_ready"):
                     r.block_until_ready()
-        elif hasattr(result, 'block_until_ready'):
+        elif hasattr(result, "block_until_ready"):
             result.block_until_ready()
         times.append(time.time() - t0)
 
@@ -54,7 +56,7 @@ FP8_MAX = 448.0
 FP8_MIN = -448.0
 
 
-@jax.jit(static_argnames=('bs',))
+@jax.jit(static_argnames=("bs",))
 def full_pipeline_jit(w, s, bs):
     """Dequant blockwise FP8 → float32 → requant per-channel FP8."""
     n, h, k = w.shape
@@ -89,7 +91,7 @@ def main():
     print(f"  JAX devices: {jax.devices()}")
     print(f"  CPU devices: {jax.devices('cpu')}")
     try:
-        tpu_devices = jax.devices('tpu')
+        tpu_devices = jax.devices("tpu")
         print(f"  TPU devices: {tpu_devices}")
         has_tpu = True
     except RuntimeError:
@@ -153,7 +155,9 @@ def main():
             print(f"  Output: weight {q_tpu_np.shape} {q_tpu_np.dtype}, scale {s_tpu_np.shape}")
             print(f"  vs CPU weight max diff: {w_diff:.4f}")
             print(f"  vs CPU scale max diff:  {s_diff:.8f}")
-            print(f"  Numerical match (weight): {np.allclose(q_tpu_np.astype(np.float32), q_cpu_np.astype(np.float32), atol=1.0)}")
+            print(
+                f"  Numerical match (weight): {np.allclose(q_tpu_np.astype(np.float32), q_cpu_np.astype(np.float32), atol=1.0)}"
+            )
             print(f"  Numerical match (scale):  {np.allclose(s_tpu_np, s_cpu_np, rtol=1e-5)}")
         except Exception as e:
             t_tpu = None
@@ -177,9 +181,9 @@ def main():
             return full_pipeline_jit(w, s, BS)
 
         try:
-            t_tpu_preconcat, _ = time_fn(tpu_preconcat_pipeline,
-                                         "TPU (np.concat + transfer + process)",
-                                         warmup=1, repeats=2)
+            t_tpu_preconcat, _ = time_fn(
+                tpu_preconcat_pipeline, "TPU (np.concat + transfer + process)", warmup=1, repeats=2
+            )
         except Exception as e:
             t_tpu_preconcat = None
             print(f"  FAILED: {type(e).__name__}: {e}")
@@ -198,6 +202,7 @@ def main():
             # Measure numpy concat alone
             def np_concat_only():
                 return np.concatenate(expert_list_np, axis=0)
+
             t_np_concat, _ = time_fn(np_concat_only, "np.concatenate only", warmup=1, repeats=2)
 
             # Measure CPU→TPU transfer alone
@@ -207,17 +212,20 @@ def main():
                 w.block_until_ready()
                 s.block_until_ready()
                 return w, s
+
             t_transfer, (w_tpu, s_tpu) = time_fn(transfer_only, "CPU→TPU transfer only", warmup=1, repeats=2)
 
             # Measure TPU compute alone (data already on TPU)
             def compute_only():
                 return full_pipeline_jit(w_tpu, s_tpu, BS)
+
             t_compute, _ = time_fn(compute_only, "TPU compute only (dequant+requant)", warmup=1, repeats=2)
 
             # Measure jnp.concatenate on CPU (the current bottleneck)
             def jnp_concat_cpu():
                 with jax.default_device(cpu_device):
                     return jnp.concatenate(expert_list_np, axis=0)
+
             t_jnp_concat, _ = time_fn(jnp_concat_cpu, "jnp.concatenate on CPU (current bottleneck)", warmup=1, repeats=2)
 
         except Exception as e:
@@ -238,7 +246,7 @@ def main():
         print(f"    TPU (preconcat):       {t_tpu_preconcat:.1f}s  ({t_cpu/t_tpu_preconcat:.1f}x speedup)")
 
     if has_tpu and t_np_concat and t_transfer and t_compute and t_jnp_concat:
-        print(f"\n  Breakdown:")
+        print("\n  Breakdown:")
         print(f"    jnp.concatenate (CPU): {t_jnp_concat:.1f}s  ← CURRENT BOTTLENECK")
         print(f"    np.concatenate:        {t_np_concat:.1f}s")
         print(f"    CPU→TPU transfer:      {t_transfer:.1f}s")

@@ -35,26 +35,21 @@ import argparse
 import glob
 import json
 import logging
-import math
 import os
-import shutil
 import sys
 import time
-from collections import defaultdict
 from multiprocessing import Pool
-from pathlib import Path
 
 # Force CPU-only JAX before any JAX imports
 os.environ["JAX_PLATFORMS"] = "cpu"
 
-import jax
 import jax.numpy as jnp
 import ml_dtypes
 import numpy as np
 
 # tpu_inference imports (available inside vllm-tpu Docker image)
 sys.path.insert(0, "/workspace/tpu_inference")
-from tpu_inference.layers.common.quantization import dequantize_tensor, quantize_tensor
+from tpu_inference.layers.common.quantization import dequantize_tensor
 from tpu_inference.layers.common.process_weights.moe_weights import (
     FusedMoEWeights,
     MoEBackend,
@@ -65,8 +60,7 @@ from tpu_inference.layers.common.quantization.fp8 import (
     process_blockwise_fp8_linear_weights,
 )
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s",
-                    stream=sys.stdout)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", stream=sys.stdout)
 # Force unbuffered output for real-time logging
 sys.stdout.reconfigure(line_buffering=True)
 logger = logging.getLogger(__name__)
@@ -82,7 +76,7 @@ NUM_EXPERTS = 384
 HIDDEN_SIZE = 7168
 MOE_INTERMEDIATE_SIZE = 2048
 DENSE_INTERMEDIATE_SIZE = 18432
-NUM_HEADS = 64          # K2-Instruct (not 128 like DS-V3)
+NUM_HEADS = 64  # K2-Instruct (not 128 like DS-V3)
 KV_LORA_RANK = 512
 QK_NOPE_HEAD_DIM = 128
 QK_ROPE_HEAD_DIM = 64
@@ -96,6 +90,7 @@ W13_INTERLEAVE = False  # silu activation
 # ============================================================================
 # Expert weight loading
 # ============================================================================
+
 
 def load_expert_weights(shard_files, layer_idx, num_experts=NUM_EXPERTS):
     """Load all expert weights for one MoE layer from safetensors shards.
@@ -154,7 +149,7 @@ def load_expert_weights(shard_files, layer_idx, num_experts=NUM_EXPERTS):
             for key in f.keys():
                 if not key.startswith(prefix):
                     continue
-                rest = key[len(prefix):]
+                rest = key[len(prefix) :]
                 parts = rest.split(".")
                 if len(parts) != 3:
                     continue
@@ -178,9 +173,7 @@ def load_expert_weights(shard_files, layer_idx, num_experts=NUM_EXPERTS):
     for key, experts in result.items():
         loaded = sum(1 for e in experts if e is not None)
         if loaded != num_experts:
-            raise ValueError(
-                f"Layer {layer_idx}: only loaded {loaded}/{num_experts} for {key}"
-            )
+            raise ValueError(f"Layer {layer_idx}: only loaded {loaded}/{num_experts} for {key}")
 
     # Stack into [E, ...] arrays
     return {k: np.stack(v, axis=0) for k, v in result.items()}
@@ -190,16 +183,15 @@ def load_expert_weights(shard_files, layer_idx, num_experts=NUM_EXPERTS):
 # MoE layer processing
 # ============================================================================
 
+
 def process_moe_layer(expert_weights, tp_size):
     """Process one MoE layer's expert weights through the full pipeline.
 
     Returns dict of post-processing tensor name → numpy array.
     """
     # Fuse gate + up into w13: [E, 2*intermediate, hidden]
-    w13 = jnp.array(np.concatenate(
-        [expert_weights["gate_weight"], expert_weights["up_weight"]], axis=1))
-    s13 = jnp.array(np.concatenate(
-        [expert_weights["gate_scale"], expert_weights["up_scale"]], axis=1))
+    w13 = jnp.array(np.concatenate([expert_weights["gate_weight"], expert_weights["up_weight"]], axis=1))
+    s13 = jnp.array(np.concatenate([expert_weights["gate_scale"], expert_weights["up_scale"]], axis=1))
     w2 = jnp.array(expert_weights["down_weight"])
     s2 = jnp.array(expert_weights["down_scale"])
 
@@ -210,8 +202,12 @@ def process_moe_layer(expert_weights, tp_size):
     # Step 2: Requantize to per-channel FP8
     fused = quantize_moe_weights(
         FusedMoEWeights(
-            w13_weight=w13_f32, w13_weight_scale=None, w13_bias=None,
-            w2_weight=w2_f32, w2_weight_scale=None, w2_bias=None,
+            w13_weight=w13_f32,
+            w13_weight_scale=None,
+            w13_bias=None,
+            w2_weight=w2_f32,
+            w2_weight_scale=None,
+            w2_bias=None,
         ),
         jnp.float8_e4m3fn,
         None,  # per-channel (no block size)
@@ -236,6 +232,7 @@ def process_moe_layer(expert_weights, tp_size):
 # ============================================================================
 # Dense linear processing
 # ============================================================================
+
 
 def load_dense_weight(shard_files, weight_name, weight_map=None):
     """Load a single dense weight + scale from safetensors shards."""
@@ -281,7 +278,8 @@ def process_dense_linear(weight, weight_scale):
     s = jnp.array(weight_scale)
 
     result = process_blockwise_fp8_linear_weights(
-        w, s,
+        w,
+        s,
         bias=None,
         weight_block_size=WEIGHT_BLOCK_SIZE,
         requant_block_size=None,
@@ -300,6 +298,7 @@ def process_dense_linear(weight, weight_scale):
 # ============================================================================
 # kv_b_proj special handling (MLA split)
 # ============================================================================
+
 
 def process_kv_b_proj(weight, weight_scale):
     """Replicate MLAEinsum.load_weights logic exactly: split kv_b_proj into k_up_proj + v_up_proj.
@@ -321,8 +320,8 @@ def process_kv_b_proj(weight, weight_scale):
     dequantized = dequantize_tensor(w, s, (0, 1), block_size=None)
     dequantized = dequantized.T
 
-    A = KV_LORA_RANK   # 512
-    N = NUM_HEADS       # 64
+    A = KV_LORA_RANK  # 512
+    N = NUM_HEADS  # 64
     total_head_dim = QK_NOPE_HEAD_DIM + V_HEAD_DIM  # 256
 
     # Step 2: Reshape and split (same as MLAEinsum lines 536-541)
@@ -338,10 +337,10 @@ def process_kv_b_proj(weight, weight_scale):
     v_N1H_scale = v_scale.transpose(1, 0, 2)  # (1,N,V) → (N,1,V) = (64,1,128)
 
     return {
-        "k_up_proj.weight": np.asarray(k_weight),               # (512, 64, 128)
-        "k_up_proj.weight_scale_inv": np.asarray(k_N1A_scale),   # (64, 1, 512)
-        "v_up_proj.weight": np.asarray(v_weight),               # (512, 64, 128)
-        "v_up_proj.weight_scale_inv": np.asarray(v_N1H_scale),   # (64, 1, 128)
+        "k_up_proj.weight": np.asarray(k_weight),  # (512, 64, 128)
+        "k_up_proj.weight_scale_inv": np.asarray(k_N1A_scale),  # (64, 1, 512)
+        "v_up_proj.weight": np.asarray(v_weight),  # (512, 64, 128)
+        "v_up_proj.weight_scale_inv": np.asarray(v_N1H_scale),  # (64, 1, 128)
     }
 
 
@@ -349,10 +348,10 @@ def process_kv_b_proj(weight, weight_scale):
 # Pass-through weight loading
 # ============================================================================
 
+
 def load_passthrough_weights(shard_files, key_names):
     """Load weights that don't need processing (norms, embeddings, router gates)."""
     from safetensors import safe_open
-    import torch
 
     import torch as _torch
 
@@ -376,6 +375,7 @@ def load_passthrough_weights(shard_files, key_names):
 # ============================================================================
 # Layer processing (main per-layer function)
 # ============================================================================
+
 
 def get_attention_weight_names(layer_idx):
     """Get HF weight names for attention projections in a layer."""
@@ -420,10 +420,12 @@ def get_passthrough_names(layer_idx, is_moe):
         f"{prefix}self_attn.rotary_emb.inv_freq",
     ]
     if is_moe:
-        names.extend([
-            f"{prefix}mlp.gate.weight",
-            f"{prefix}mlp.gate.e_score_correction_bias",
-        ])
+        names.extend(
+            [
+                f"{prefix}mlp.gate.weight",
+                f"{prefix}mlp.gate.e_score_correction_bias",
+            ]
+        )
     return names
 
 
@@ -523,14 +525,14 @@ def process_layer(args):
     elapsed = time.time() - t0
     n_tensors = len(output_tensors)
     size_mb = sum(t.nbytes for t in output_tensors.values()) / 1e6
-    logger.info(f"Layer {layer_idx}: Done in {elapsed:.1f}s "
-                f"({n_tensors} tensors, {size_mb:.0f} MB)")
+    logger.info(f"Layer {layer_idx}: Done in {elapsed:.1f}s " f"({n_tensors} tensors, {size_mb:.0f} MB)")
     return layer_idx, elapsed
 
 
 # ============================================================================
 # Saving
 # ============================================================================
+
 
 def save_layer(tensors, output_dir, layer_idx):
     """Save one layer's tensors to a safetensors file.
@@ -539,16 +541,14 @@ def save_layer(tensors, output_dir, layer_idx):
     If output_dir is on GCS (via gcsfuse), the temp file is local to avoid
     filling up disk — we write, copy to GCS, then delete local.
     """
-    import tempfile
-    import subprocess
     from safetensors.numpy import save_file
 
     # Convert FP8/BF16 for safetensors compatibility
     save_dict = {}
     for key, arr in tensors.items():
-        if hasattr(arr, 'dtype') and arr.dtype == ml_dtypes.float8_e4m3fn:
+        if hasattr(arr, "dtype") and arr.dtype == ml_dtypes.float8_e4m3fn:
             save_dict[key] = arr.view(np.uint8)
-        elif hasattr(arr, 'dtype') and arr.dtype == ml_dtypes.bfloat16:
+        elif hasattr(arr, "dtype") and arr.dtype == ml_dtypes.bfloat16:
             save_dict[key] = arr.astype(np.float32)
         elif isinstance(arr, np.ndarray):
             save_dict[key] = arr
@@ -571,9 +571,9 @@ def save_non_layer_weights(shard_files, output_dir):
 
     save_dict = {}
     for key, arr in tensors.items():
-        if hasattr(arr, 'dtype') and arr.dtype == ml_dtypes.float8_e4m3fn:
+        if hasattr(arr, "dtype") and arr.dtype == ml_dtypes.float8_e4m3fn:
             save_dict[key] = arr.view(np.uint8)
-        elif hasattr(arr, 'dtype') and arr.dtype == ml_dtypes.bfloat16:
+        elif hasattr(arr, "dtype") and arr.dtype == ml_dtypes.bfloat16:
             save_dict[key] = arr.astype(np.float32)
         else:
             save_dict[key] = np.asarray(arr)
@@ -590,6 +590,7 @@ def write_index(output_dir):
 
     for sf_path in sorted(glob.glob(os.path.join(output_dir, "*.safetensors"))):
         from safetensors import safe_open
+
         filename = os.path.basename(sf_path)
         with safe_open(sf_path, framework="numpy") as f:
             for key in f.keys():
@@ -616,6 +617,7 @@ def write_index(output_dir):
 # Main
 # ============================================================================
 
+
 def main():
     parser = argparse.ArgumentParser(description="Preprocess K2-Instruct weights for TPU")
     parser.add_argument("--input-dir", required=True, help="Path to original safetensors")
@@ -623,8 +625,7 @@ def main():
     parser.add_argument("--tp-size", type=int, default=4, help="Tensor parallelism degree")
     parser.add_argument("--workers", type=int, default=1, help="Parallel workers per host")
     parser.add_argument("--layer-start", type=int, default=0, help="First layer to process")
-    parser.add_argument("--layer-end", type=int, default=NUM_LAYERS,
-                        help="Last layer (exclusive)")
+    parser.add_argument("--layer-end", type=int, default=NUM_LAYERS, help="Last layer (exclusive)")
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
@@ -632,22 +633,27 @@ def main():
     shard_files = sorted(glob.glob(os.path.join(args.input_dir, "*.safetensors")))
     logger.info(f"Input: {len(shard_files)} safetensors shards")
     logger.info(f"Output: {args.output_dir}")
-    logger.info(f"Layers: {args.layer_start}-{args.layer_end}, TP={args.tp_size}, "
-                f"workers={args.workers}")
+    logger.info(f"Layers: {args.layer_start}-{args.layer_end}, TP={args.tp_size}, " f"workers={args.workers}")
 
     # Copy config files — skip if output is on gcsfuse (we'll copy later via gcloud)
     # Only copy on layer_start=0 worker
     if args.layer_start == 0:
-        for fname in ["config.json", "tokenizer.json", "tokenizer_config.json",
-                       "special_tokens_map.json", "generation_config.json",
-                       "tokenization_kimi.py", "tiktoken.model"]:
+        for fname in [
+            "config.json",
+            "tokenizer.json",
+            "tokenizer_config.json",
+            "special_tokens_map.json",
+            "generation_config.json",
+            "tokenization_kimi.py",
+            "tiktoken.model",
+        ]:
             src = os.path.join(args.input_dir, fname)
             dst = os.path.join(args.output_dir, fname)
             if os.path.exists(src):
                 try:
-                    with open(src, 'rb') as f_in:
+                    with open(src, "rb") as f_in:
                         data = f_in.read()
-                    with open(dst, 'wb') as f_out:
+                    with open(dst, "wb") as f_out:
                         f_out.write(data)
                     logger.info(f"Copied {fname}")
                 except Exception as e:
@@ -668,7 +674,7 @@ def main():
                     "w13_interleave": W13_INTERLEAVE,
                     "weight_block_size": list(WEIGHT_BLOCK_SIZE),
                 }
-                with open(config_path, 'w') as f:
+                with open(config_path, "w") as f:
                     json.dump(config, f, indent=2)
             except Exception as e:
                 logger.warning(f"Could not patch config: {e}")

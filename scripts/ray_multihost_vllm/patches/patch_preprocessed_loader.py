@@ -285,8 +285,8 @@ try:
     with open(MOE_PATH) as f:
         moe_code = f.read()
 
-    old_moe_lw = '    def _load_weights(self, weights: Iterable):'
-    new_moe_lw = '''    def _load_weights(self, weights: Iterable):
+    old_moe_lw = "    def _load_weights(self, weights: Iterable):"
+    new_moe_lw = """    def _load_weights(self, weights: Iterable):
         import os as _os_moe_lw
         if _os_moe_lw.environ.get("PREPROCESSED_WEIGHTS", "0") == "1":
             from flax import nnx
@@ -310,7 +310,7 @@ try:
                         except Exception:
                             pass
                         break
-            return loaded'''
+            return loaded"""
 
     if old_moe_lw in moe_code:
         moe_code = moe_code.replace(old_moe_lw, new_moe_lw)
@@ -335,7 +335,7 @@ try:
     ds_patched = False
 
     # --- 3a. Pre-create k_up_proj/v_up_proj in MLA __post_init__ ---
-    old_mla_init = '''        self.kv_b_proj = MLAEinsum(
+    old_mla_init = """        self.kv_b_proj = MLAEinsum(
             mla_layer=self,
             einsum_str="SA,AL->SL",
             kernel_shape=(self.kv_lora_rank,
@@ -345,9 +345,9 @@ try:
             param_dtype=self.dtype,
             kernel_init=nnx.with_partitioning(weight_init, self.ap_sharding),
             prefix=self.prefix + ".kv_b_proj",
-        )'''
+        )"""
 
-    new_mla_init = '''        self.kv_b_proj = MLAEinsum(
+    new_mla_init = """        self.kv_b_proj = MLAEinsum(
             mla_layer=self,
             einsum_str="SA,AL->SL",
             kernel_shape=(self.kv_lora_rank,
@@ -374,7 +374,7 @@ try:
                 rngs=nnx.Rngs(0),
                 prefix=self.prefix + ".v_up_proj",
                 quant_config=self.quant_config,
-            )'''
+            )"""
 
     if old_mla_init in ds_code:
         ds_code = ds_code.replace(old_mla_init, new_mla_init)
@@ -384,9 +384,9 @@ try:
         print("  SKIP: MLA __post_init__ (already patched or pattern changed)")
 
     # --- 3b. Skip MLAEinsum.load_weights when preprocessed ---
-    old_mla_lw = '    def load_weights(self, weights):\n        named_params = dict(self.named_parameters())'
+    old_mla_lw = "    def load_weights(self, weights):\n        named_params = dict(self.named_parameters())"
 
-    new_mla_lw = '''    def load_weights(self, weights):
+    new_mla_lw = """    def load_weights(self, weights):
         import os as _os_mla_lw
         import logging as _mla_log
         _mla_log.warning("PP_MLA: MLAEinsum.load_weights called for %s, PREPROCESSED=%s",
@@ -401,7 +401,7 @@ try:
                 delattr(self, 'weight_scale_inv')
             _mla_log.warning("PP_MLA: Skipped kv_b_proj for %s (preprocessed)", self.prefix)
             return set()
-        named_params = dict(self.named_parameters())'''
+        named_params = dict(self.named_parameters())"""
 
     if old_mla_lw in ds_code:
         ds_code = ds_code.replace(old_mla_lw, new_mla_lw)
@@ -411,15 +411,15 @@ try:
         print("  SKIP: MLAEinsum.load_weights (already patched or pattern changed)")
 
     # --- 3c. Add kv_b_proj to skip_substrs ---
-    old_skip = '''            skip_substrs=[
+    old_skip = """            skip_substrs=[
                 f"layers.{i}"
                 for i in range(start_ignore_layer_num, end_ignore_layer_num)
-            ],'''
+            ],"""
 
-    new_skip = '''            skip_substrs=[
+    new_skip = """            skip_substrs=[
                 f"layers.{i}"
                 for i in range(start_ignore_layer_num, end_ignore_layer_num)
-            ] + (["kv_b_proj"] if os.environ.get("PREPROCESSED_WEIGHTS", "0") == "1" else []),'''
+            ] + (["kv_b_proj"] if os.environ.get("PREPROCESSED_WEIGHTS", "0") == "1" else []),"""
 
     if old_skip in ds_code:
         ds_code = ds_code.replace(old_skip, new_skip)

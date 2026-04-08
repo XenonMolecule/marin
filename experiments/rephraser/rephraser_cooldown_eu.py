@@ -1,3 +1,6 @@
+# Copyright The Marin Authors
+# SPDX-License-Identifier: Apache-2.0
+
 # Copyright 2025 The Marin Authors
 # SPDX-License-Identifier: Apache-2.0
 
@@ -20,7 +23,6 @@ Launch (eu-west4-a):
 
 import os
 
-from fray.cluster import ResourceConfig
 from levanter.data.text import TextLmDatasetFormat
 
 from experiments.llama import llama3_tokenizer

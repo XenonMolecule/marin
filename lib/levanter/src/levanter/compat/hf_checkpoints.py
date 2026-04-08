@@ -634,7 +634,12 @@ class HFCheckpointConverter(Generic[LevConfig]):
         path, rev = self._get_ref(ref)
 
         with _patch_hf_hub_download():
-            config = AutoConfig.from_pretrained(path, revision=rev, trust_remote_code=self.trust_remote_code)
+            if self.HfConfigClass is not None and self.HfConfigClass is not AutoConfig:
+                config = self.HfConfigClass.from_pretrained(
+                    path, revision=rev, trust_remote_code=self.trust_remote_code
+                )
+            else:
+                config = AutoConfig.from_pretrained(path, revision=rev, trust_remote_code=self.trust_remote_code)
         return config
 
     def _get_ref(self, ref) -> Tuple[str, Optional[str]]:

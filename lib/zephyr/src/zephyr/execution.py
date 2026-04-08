@@ -38,7 +38,6 @@ from fray.v2.client import JobHandle
 from fray.v2.types import Entrypoint, JobRequest
 from iris.marin_fs import marin_temp_bucket
 from iris.time_utils import ExponentialBackoff
-from ray.exceptions import GetTimeoutError
 
 from zephyr.dataset import Dataset
 from zephyr.plan import (

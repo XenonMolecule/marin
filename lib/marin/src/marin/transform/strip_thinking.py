@@ -1,23 +1,31 @@
+# Copyright The Marin Authors
+# SPDX-License-Identifier: Apache-2.0
+
 # Copyright 2025 The Marin Authors
 # SPDX-License-Identifier: Apache-2.0
 
-"""Strip <think>...</think> blocks from assistant messages in chat-format datasets.
+"""Replace <think>...</think> blocks with Qwen3's native empty-think format.
 
-Reads JSONL files with a "messages" column (OpenAI chat format), removes
-thinking traces from assistant responses, and writes cleaned JSONL. The
-messages structure is preserved -- only the content of assistant messages
-is modified.
+Reads JSONL files with a "messages" column (OpenAI chat format), replaces
+full thinking traces in assistant responses with ``<think>\\n\\n</think>\\n\\n``
+(Qwen3's ``enable_thinking=False`` format). This preserves the model's
+expected template structure while removing the actual reasoning content,
+so the model can be served with the standard Qwen3 template using
+``enable_thinking=False``.
 """
 
 import logging
 import re
 from dataclasses import dataclass
 
-from zephyr import Dataset, ZephyrContext, load_jsonl, write_jsonl_file
+from zephyr import Dataset, ZephyrContext, load_jsonl
 
 logger = logging.getLogger(__name__)
 
 _THINK_RE = re.compile(r"<think>.*?</think>\s*", flags=re.DOTALL)
+# Qwen3's native no-think format: empty think block with two trailing newlines.
+# Matches the output of apply_chat_template(..., enable_thinking=False).
+_EMPTY_THINK = "<think>\n\n</think>\n\n"
 
 
 @dataclass
@@ -44,7 +52,7 @@ def _strip_thinking_from_record(record: dict) -> dict:
     for msg in messages:
         if msg.get("role") == "assistant":
             content = msg.get("content", "")
-            cleaned_content = _THINK_RE.sub("", content).strip()
+            cleaned_content = _THINK_RE.sub(_EMPTY_THINK, content)
             cleaned_messages.append({**msg, "content": cleaned_content})
         else:
             cleaned_messages.append(msg)
@@ -62,9 +70,9 @@ def strip_thinking(config: StripThinkingConfig) -> None:
         .write_jsonl(f"{config.output_path}/data-{{shard:05d}}-of-{{total:05d}}.jsonl.gz")
     )
 
-    with ZephyrContext(name="strip-thinking") as ctx:
-        ctx.put("config", config)
-        output_files = ctx.execute(pipeline)
+    ctx = ZephyrContext(name="strip-thinking")
+    ctx.put("config", config)
+    output_files = ctx.execute(pipeline)
 
     logger.info(
         "Strip-thinking complete: %d output files written to %s",

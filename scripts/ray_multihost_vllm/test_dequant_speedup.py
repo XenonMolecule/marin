@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright The Marin Authors
+# SPDX-License-Identifier: Apache-2.0
+
 """Standalone test: compare JAX CPU vs NumPy vs TPU for FP8 dequant→requant.
 
 Loads real K2-Instruct expert weights from safetensors, runs the dequant→requant
@@ -20,10 +23,10 @@ import jax.numpy as jnp
 import ml_dtypes
 import numpy as np
 
-
 # ============================================================================
 # Baseline: JAX CPU implementations (copied from tpu_inference source)
 # ============================================================================
+
 
 def dequantize_tensor_jax(tensor_q, scale, axis, out_dtype, block_size=None):
     """Exact copy of tpu_inference dequantize_tensor."""
@@ -91,14 +94,12 @@ def quantize_tensor_jax(dtype, tensor, axis=-1, block_size=None):
     return tensor_q, scale
 
 
-@jax.jit(static_argnames=('block_size_0', 'block_size_1'))
+@jax.jit(static_argnames=("block_size_0", "block_size_1"))
 def baseline_dequant_requant_jax(weight_fp8, weight_scale, block_size_0, block_size_1):
     """Baseline: dequant blockwise FP8 → float32 → requant per-channel FP8.
     Mirrors what process_fp8_moe_weights does for one expert chunk."""
     # Dequantize
-    f32 = dequantize_tensor_jax(
-        weight_fp8, weight_scale, (1, 2), jnp.float32,
-        block_size=(block_size_0, block_size_1))
+    f32 = dequantize_tensor_jax(weight_fp8, weight_scale, (1, 2), jnp.float32, block_size=(block_size_0, block_size_1))
     # Requant per-channel (block_size = contracting dim = last axis)
     q, s = quantize_tensor_jax(jnp.float8_e4m3fn, f32, axis=2, block_size=None)
     return q, s
@@ -107,6 +108,7 @@ def baseline_dequant_requant_jax(weight_fp8, weight_scale, block_size_0, block_s
 # ============================================================================
 # Plan A: Pure NumPy implementation
 # ============================================================================
+
 
 def dequantize_tensor_np(tensor_q_f32, scale, axis, block_size=None):
     """NumPy implementation of dequantize_tensor. Input is already float32."""
@@ -166,7 +168,7 @@ def quantize_tensor_np(tensor, axis=-1, block_size=None):
     abs_max = np.max(np.abs(tensor), axis=tuple(axis), keepdims=True)
     scale = abs_max / FP8_MAX
 
-    with np.errstate(divide='ignore', invalid='ignore'):
+    with np.errstate(divide="ignore", invalid="ignore"):
         scale_inv = np.where(scale == 0, np.inf, 1.0 / scale)
 
     tensor_q = np.clip(tensor * scale_inv, FP8_MIN, FP8_MAX)
@@ -197,6 +199,7 @@ def plan_a_numpy(weight_fp8_np, weight_scale_np, block_size):
 # Plan B: TPU offload
 # ============================================================================
 
+
 def plan_b_tpu(weight_fp8_np, weight_scale_np, block_size):
     """Plan B: Run JAX dequant→requant on TPU instead of CPU.
     Pass numpy arrays — JAX auto-transfers to TPU."""
@@ -216,6 +219,7 @@ def plan_b_tpu(weight_fp8_np, weight_scale_np, block_size):
 # ============================================================================
 # Test harness
 # ============================================================================
+
 
 def load_expert_weights(safetensors_path, num_experts=8):
     """Load a few expert weights from the first safetensors shard."""
@@ -253,8 +257,7 @@ def load_expert_weights(safetensors_path, num_experts=8):
     if not gate_weights:
         raise ValueError("No expert weights found")
 
-    print(f"Loaded {len(gate_weights)} experts, shape={gate_weights[0].shape}, "
-          f"dtype={gate_weights[0].dtype}")
+    print(f"Loaded {len(gate_weights)} experts, shape={gate_weights[0].shape}, " f"dtype={gate_weights[0].dtype}")
     if gate_scales:
         print(f"Scales shape={gate_scales[0].shape}, dtype={gate_scales[0].dtype}")
 
@@ -266,25 +269,27 @@ def load_expert_weights(safetensors_path, num_experts=8):
 
 def create_synthetic_weights(num_experts=8, dim1=2048, dim2=7168, block_size=128):
     """Create synthetic FP8 weights + block scales for testing."""
-    print(f"Creating synthetic weights: {num_experts} experts, [{dim1}, {dim2}], "
-          f"block_size={block_size}")
+    print(f"Creating synthetic weights: {num_experts} experts, [{dim1}, {dim2}], " f"block_size={block_size}")
 
     # Random float32, then quantize to simulate real FP8 data
     rng = np.random.RandomState(42)
     raw = rng.randn(num_experts, dim1, dim2).astype(np.float32) * 0.1
 
     # Quantize to FP8 with block scales [128, 128]
-    scale_shape = (num_experts,
-                   math.ceil(dim1 / block_size),
-                   math.ceil(dim2 / block_size))
+    scale_shape = (num_experts, math.ceil(dim1 / block_size), math.ceil(dim2 / block_size))
     scales = np.abs(rng.randn(*scale_shape).astype(np.float32)) * 0.01 + 0.001
 
     # Simulate FP8 quantized values (just clip to FP8 range)
     fp8_max = 448.0
-    weight_f32 = np.clip(raw / np.expand_dims(scales, axis=(2, 4)).repeat(
-        block_size, axis=2).repeat(block_size, axis=4).reshape(
-            num_experts, scale_shape[1]*block_size, scale_shape[2]*block_size
-        )[:, :dim1, :dim2], -fp8_max, fp8_max)
+    weight_f32 = np.clip(
+        raw
+        / np.expand_dims(scales, axis=(2, 4))
+        .repeat(block_size, axis=2)
+        .repeat(block_size, axis=4)
+        .reshape(num_experts, scale_shape[1] * block_size, scale_shape[2] * block_size)[:, :dim1, :dim2],
+        -fp8_max,
+        fp8_max,
+    )
 
     # Cast to FP8 via ml_dtypes
     weight_fp8 = weight_f32.astype(ml_dtypes.float8_e4m3fn)
@@ -296,17 +301,14 @@ def create_synthetic_weights(num_experts=8, dim1=2048, dim2=7168, block_size=128
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--num-experts", type=int, default=8,
-                        help="Number of experts to test with")
-    parser.add_argument("--safetensors-path", type=str, default=None,
-                        help="Path to model safetensors (uses synthetic if not set)")
+    parser.add_argument("--num-experts", type=int, default=8, help="Number of experts to test with")
+    parser.add_argument(
+        "--safetensors-path", type=str, default=None, help="Path to model safetensors (uses synthetic if not set)"
+    )
     parser.add_argument("--block-size", type=int, default=128)
-    parser.add_argument("--dim1", type=int, default=2048,
-                        help="Expert weight dim1 (for synthetic)")
-    parser.add_argument("--dim2", type=int, default=7168,
-                        help="Expert weight dim2 (for synthetic)")
-    parser.add_argument("--skip-tpu", action="store_true",
-                        help="Skip Plan B (TPU) test")
+    parser.add_argument("--dim1", type=int, default=2048, help="Expert weight dim1 (for synthetic)")
+    parser.add_argument("--dim2", type=int, default=7168, help="Expert weight dim2 (for synthetic)")
+    parser.add_argument("--skip-tpu", action="store_true", help="Skip Plan B (TPU) test")
     args = parser.parse_args()
 
     block_size = (args.block_size, args.block_size)
@@ -322,8 +324,7 @@ def main():
     if args.safetensors_path:
         weight_fp8, scales = load_expert_weights(args.safetensors_path, args.num_experts)
     else:
-        weight_fp8, scales = create_synthetic_weights(
-            args.num_experts, args.dim1, args.dim2, args.block_size)
+        weight_fp8, scales = create_synthetic_weights(args.num_experts, args.dim1, args.dim2, args.block_size)
 
     print(f"\nTest input: {weight_fp8.shape} ({weight_fp8.nbytes / 1e6:.1f} MB FP8)")
     print(f"Block size: {block_size}")
@@ -355,8 +356,7 @@ def main():
 
     q_base_np = np.asarray(q_base)
     s_base_np = np.asarray(s_base)
-    print(f"  Output: weight {q_base_np.shape} {q_base_np.dtype}, "
-          f"scale {s_base_np.shape} {s_base_np.dtype}")
+    print(f"  Output: weight {q_base_np.shape} {q_base_np.dtype}, " f"scale {s_base_np.shape} {s_base_np.dtype}")
 
     # ---- Plan A: NumPy ----
     print()
@@ -437,7 +437,7 @@ def main():
             print(f"  Plan B (TPU compile):        {tpu_compile_time:.2f}s")
             print(f"  Plan B (TPU cached):         {plan_b_time:.2f}s  ({baseline_time/plan_b_time:.1f}x)")
         except NameError:
-            print(f"  Plan B: FAILED")
+            print("  Plan B: FAILED")
     print()
     print("Extrapolation to full K2-Instruct (384 experts, ~14 MoE layers per PP worker):")
     scale_factor = (384 / weight_fp8.shape[0]) * 14

@@ -1,3 +1,6 @@
+# Copyright The Marin Authors
+# SPDX-License-Identifier: Apache-2.0
+
 # Copyright 2025 The Marin Authors
 # SPDX-License-Identifier: Apache-2.0
 
@@ -31,7 +34,6 @@ from urllib.parse import urlparse
 import fsspec
 
 from experiments.rephraser.mathhelpforum_extraction_sft_v2_base import result as math_result
-from fray.cluster import ResourceConfig
 from marin.execution.executor import ExecutorStep, executor_main, output_path_of, this_output_path
 
 logger = logging.getLogger(__name__)

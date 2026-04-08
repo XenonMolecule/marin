@@ -166,8 +166,8 @@ try:
     # The _load_weights method in JaxMoE asserts per-expert names.
     # When preprocessed, we need to load fused tensors directly.
     # Add early return that handles our preprocessed keys.
-    old_load_weights = '    def _load_weights(self, weights: Iterable):'
-    new_load_weights = '''    def _load_weights(self, weights: Iterable):
+    old_load_weights = "    def _load_weights(self, weights: Iterable):"
+    new_load_weights = """    def _load_weights(self, weights: Iterable):
         import os as _os_moe_lw
         if _os_moe_lw.environ.get("PREPROCESSED_WEIGHTS", "0") == "1":
             # Preprocessed: load fused MoE tensors directly into post-processing attributes
@@ -195,7 +195,7 @@ try:
                         except Exception:
                             pass
                         break
-            return loaded'''
+            return loaded"""
 
     if old_load_weights in moe_code:
         moe_code = moe_code.replace(old_load_weights, new_load_weights)

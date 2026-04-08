@@ -1,0 +1,29 @@
+{
+  "created": "2026-03-31T18:42:00-07:00",
+  "deadline": "2026-03-31T19:30:00-07:00",
+  "fallback_triggered": true,
+  "restart_count": 10,
+  "fixes_applied": [
+    "rigging PYTHONPATH in fray v1/v2 deps.py",
+    "pb2/connect gitignore entries commented out",
+    "filter_by_context_length.py and strip_thinking.py restored from michael-distill",
+    "ExecutorStep API -> remote() wrapper",
+    "window_size_bytes removed (not on this branch)",
+    "skip_bad_steps removed (not on this branch)",
+    "kimi dataset registered in instruction_datasets.py (split=data)",
+    "ZephyrContext with->direct usage",
+    "map_shard lambda signature fix (records, _shard_info)",
+    "HF split data vs train/validation"
+  ],
+  "qwen35_jobs": {
+    "9b": "ray-run-michaelryan-exp_qwen35_9b_rephraser_kimi_sft-20260401-022315",
+    "2b": "ray-run-michaelryan-exp_qwen35_2b_rephraser_kimi_sft-20260401-022321"
+  },
+  "qwen3_fallback_jobs": {
+    "8b": "ray-run-michaelryan-exp_qwen3_8b_rephraser_kimi_sft-20260401-022247",
+    "1.7b": "ray-run-michaelryan-exp_qwen3_1_7b_rephraser_kimi_sft-20260401-022256",
+    "4b": "ray-run-michaelryan-exp_qwen3_4b_thinking_rephraser_kimi_sft-20260401-022302",
+    "0.6b": "ray-run-michaelryan-exp_qwen3_0_6b_rephraser_kimi_sft-20260401-022308"
+  },
+  "status": "filter step processing on both Qwen3 and Qwen3.5 - workers alive and active"
+}

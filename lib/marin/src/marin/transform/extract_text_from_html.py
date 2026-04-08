@@ -1,3 +1,6 @@
+# Copyright The Marin Authors
+# SPDX-License-Identifier: Apache-2.0
+
 # Copyright 2025 The Marin Authors
 # SPDX-License-Identifier: Apache-2.0
 
@@ -100,9 +103,9 @@ def extract_text_from_html(config: ExtractTextConfig) -> None:
         .write_jsonl(f"{config.output_path}/data-{{shard:05d}}-of-{{total:05d}}.jsonl.gz")
     )
 
-    with ZephyrContext(name="extract-text-from-html") as ctx:
-        ctx.put("config", config)
-        output_files = ctx.execute(pipeline)
+    ctx = ZephyrContext(name="extract-text-from-html")
+    ctx.put("config", config)
+    output_files = ctx.execute(pipeline)
 
     logger.info(
         "Text extraction complete: %d output files written to %s",

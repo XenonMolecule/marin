@@ -1,3 +1,6 @@
+# Copyright The Marin Authors
+# SPDX-License-Identifier: Apache-2.0
+
 # Copyright 2025 The Marin Authors
 # SPDX-License-Identifier: Apache-2.0
 
@@ -24,7 +27,6 @@ Dry run:
 import logging
 from dataclasses import dataclass
 
-from fray.cluster import ResourceConfig
 from levanter.data.text import DatasetComponent, LmDataConfig, TextLmDatasetFormat
 
 from experiments.llama import llama3_tokenizer

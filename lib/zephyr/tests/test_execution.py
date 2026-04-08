@@ -576,9 +576,7 @@ def test_all_workers_dead_is_fatal(tmp_path):
     coord = ZephyrCoordinator()
     coord.set_chunk_config(str(tmp_path / "chunks"), "test-exec")
 
-    tasks = [
-        ShardTask(shard_idx=0, total_shards=1, shard=ListShard(refs=[]), operations=[], stage_name="test")
-    ]
+    tasks = [ShardTask(shard_idx=0, total_shards=1, shard=ListShard(refs=[]), operations=[], stage_name="test")]
     coord.start_stage("test", tasks)
 
     coord.register_worker("worker-A", None)
@@ -602,9 +600,7 @@ def test_shard_exceeds_max_retries_is_fatal(tmp_path):
     coord = ZephyrCoordinator(max_task_retries=2)
     coord.set_chunk_config(str(tmp_path / "chunks"), "test-exec")
 
-    tasks = [
-        ShardTask(shard_idx=0, total_shards=1, shard=ListShard(refs=[]), operations=[], stage_name="test")
-    ]
+    tasks = [ShardTask(shard_idx=0, total_shards=1, shard=ListShard(refs=[]), operations=[], stage_name="test")]
     coord.start_stage("test", tasks)
 
     # Register 3 workers so all-workers-dead doesn't trigger first

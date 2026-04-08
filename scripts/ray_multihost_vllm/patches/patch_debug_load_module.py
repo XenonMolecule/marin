@@ -1,3 +1,6 @@
+# Copyright The Marin Authors
+# SPDX-License-Identifier: Apache-2.0
+
 # Debug: trace _load_module post-processing to understand why
 # process_weights_after_loading never runs
 

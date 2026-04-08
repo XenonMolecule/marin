@@ -1,3 +1,6 @@
+# Copyright The Marin Authors
+# SPDX-License-Identifier: Apache-2.0
+
 # Copyright 2025 The Marin Authors
 # SPDX-License-Identifier: Apache-2.0
 
@@ -345,7 +348,7 @@ def _run_single_epoch_sft(config: _SFTRunConfig):
             steps_per_eval=min(50, num_train_steps),
             checkpointer=CheckpointerConfig(
                 save_interval=timedelta(minutes=10),
-                keep=[dict(every=min(100, num_train_steps))],
+                keep=[],
             ),
             allow_nondivisible_batch_size=True,
             initialize_from=None,

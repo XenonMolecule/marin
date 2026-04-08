@@ -4,7 +4,7 @@ Generated: Sat Mar 28 07:30 PDT 2026
 ============================================
 
 ## BOTTOM LINE
-Could not get inference running. The core blocker is that pipeline parallelism 
+Could not get inference running. The core blocker is that pipeline parallelism
 (PP) does not distribute layers for DeepSeek V2 architecture on TPU.
 
 ## Definitively Proven

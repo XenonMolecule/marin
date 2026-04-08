@@ -1,3 +1,6 @@
+# Copyright The Marin Authors
+# SPDX-License-Identifier: Apache-2.0
+
 # Copyright 2025 The Marin Authors
 # SPDX-License-Identifier: Apache-2.0
 
@@ -26,7 +29,6 @@ from experiments.rephraser.mathhelpforum_extract import (
     USER_TEMPLATE_FMT,
     filter_html,
 )
-from fray.cluster import ResourceConfig
 from marin.execution.remote import remote
 from marin.execution.executor import ExecutorStep, executor_main, this_output_path
 from marin.generation.inference_v2 import InferenceV2Config, run_inference_v2

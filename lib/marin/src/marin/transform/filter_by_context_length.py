@@ -1,3 +1,6 @@
+# Copyright The Marin Authors
+# SPDX-License-Identifier: Apache-2.0
+
 # Copyright 2025 The Marin Authors
 # SPDX-License-Identifier: Apache-2.0
 
@@ -116,13 +119,13 @@ def filter_by_context_length(config: FilterByContextLengthConfig):
     pipeline = (
         Dataset.from_files(config.input_path)
         .flat_map(load_jsonl)
-        .map_shard(lambda records: _filter_records(config=config, records=records))
+        .map_shard(lambda records, _shard_info: _filter_records(config=config, records=records))
         .write_jsonl(f"{config.output_path}/{{shard:05d}}.jsonl.gz")
     )
 
-    with ZephyrContext(name="filter-by-context-length") as ctx:
-        ctx.put("tokenizer", tokenizer)
-        ctx.execute(pipeline)
+    ctx = ZephyrContext(name="filter-by-context-length")
+    ctx.put("tokenizer", tokenizer)
+    ctx.execute(pipeline)
 
     # Count output records per shard and remove empty shards.  The downstream
     # tokenize step picks the first file for its exemplar computation and crashes
