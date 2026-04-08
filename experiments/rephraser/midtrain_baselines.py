@@ -1,3 +1,6 @@
+# Copyright The Marin Authors
+# SPDX-License-Identifier: Apache-2.0
+
 # Copyright 2025 The Marin Authors
 # SPDX-License-Identifier: Apache-2.0
 
@@ -61,7 +64,6 @@ TRAIN_CONFIG = SimpleTrainConfig(
     weight_decay=WEIGHT_DECAY,
     z_loss_weight=1e-4,
     steps_per_task_eval=NUM_TRAIN_STEPS,  # Eval once at end
-    steps_per_export=100,  # Checkpoint periodically to survive preemptions
 )
 
 # ===========================================================================

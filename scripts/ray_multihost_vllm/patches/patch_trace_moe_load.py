@@ -1,3 +1,6 @@
+# Copyright The Marin Authors
+# SPDX-License-Identifier: Apache-2.0
+
 # Trace: Is JaxMoE.load_weights() ever called during weight loading?
 # Also trace JaxMoE._load_weights() and Fp8FusedMoEMethod.load_weights()
 
@@ -6,7 +9,7 @@ with open(PATH) as f:
     code = f.read()
 
 # Trace JaxMoE.load_weights entry
-old1 = '    def load_weights(self, weights: Iterable):'
+old1 = "    def load_weights(self, weights: Iterable):"
 new1 = """    def load_weights(self, weights: Iterable):
         with open("/tmp/moe_load_trace.txt", "a") as _f:
             _f.write(f"JaxMoE.load_weights CALLED: prefix={self.prefix} qm={type(getattr(self, 'quant_method', None)).__name__}\\n")"""
@@ -16,7 +19,7 @@ if old1 in code:
     print("TRACE 1: JaxMoE.load_weights entry")
 
 # Trace _load_weights entry
-old2 = '    def _load_weights(self, weights: Iterable):'
+old2 = "    def _load_weights(self, weights: Iterable):"
 new2 = """    def _load_weights(self, weights: Iterable):
         with open("/tmp/moe_load_trace.txt", "a") as _f:
             _f.write(f"JaxMoE._load_weights CALLED: prefix={self.prefix}\\n")"""
@@ -33,7 +36,7 @@ PATH2 = "/workspace/tpu_inference/tpu_inference/layers/jax/quantization/fp8.py"
 with open(PATH2) as f:
     code2 = f.read()
 
-old3 = '    def load_weights(self, *, layer: JaxMoE, original_load_weights_fn,'
+old3 = "    def load_weights(self, *, layer: JaxMoE, original_load_weights_fn,"
 new3 = """    def load_weights(self, *, layer: JaxMoE, original_load_weights_fn,"""
 
 # Just add a trace at the start of the method body

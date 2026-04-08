@@ -13,20 +13,20 @@ PATH = "/workspace/tpu_inference/tpu_inference/layers/common/sharding.py"
 with open(PATH) as f:
     code = f.read()
 
-old = '''    axis_order = {
+old = """    axis_order = {
         "data": strategy.get("data_parallelism", 1),
         "expert": strategy.get("expert_parallelism", 1),
         "seq": strategy.get("sequence_parallelism", 1),
         "model": strategy.get("tensor_parallelism", 1),
-    }'''
+    }"""
 
-new = '''    axis_order = {
+new = """    axis_order = {
         "data": strategy.get("data_parallelism", 1),
         "attn_dp": strategy.get("attention_data_parallelism", 1),
         "attn_dp_expert": strategy.get("attention_data_expert_parallelism", 1),
         "expert": strategy.get("expert_parallelism", 1),
         "model": strategy.get("tensor_parallelism", 1),
-    }'''
+    }"""
 
 if old in code:
     code = code.replace(old, new)

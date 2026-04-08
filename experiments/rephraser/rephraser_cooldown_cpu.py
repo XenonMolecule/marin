@@ -1,3 +1,6 @@
+# Copyright The Marin Authors
+# SPDX-License-Identifier: Apache-2.0
+
 # Copyright 2025 The Marin Authors
 # SPDX-License-Identifier: Apache-2.0
 
@@ -29,7 +32,6 @@ import logging
 import os
 from dataclasses import dataclass, replace
 
-from fray.cluster import ResourceConfig
 from levanter.data.text import DatasetComponent, TextLmDatasetFormat, UrlDatasetSourceConfig
 
 from experiments.defaults import default_validation_sets

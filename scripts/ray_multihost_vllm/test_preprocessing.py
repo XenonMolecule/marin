@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright The Marin Authors
+# SPDX-License-Identifier: Apache-2.0
+
 """Tests 1-6: CPU unit tests for preprocessing correctness.
 
 Runs on CPU only (JAX_PLATFORMS=cpu). Validates:
@@ -18,7 +21,6 @@ import tempfile
 os.environ["JAX_PLATFORMS"] = "cpu"
 sys.path.insert(0, "/workspace/tpu_inference")
 
-import jax
 import jax.numpy as jnp
 import ml_dtypes
 import numpy as np
@@ -26,15 +28,18 @@ import numpy as np
 PASSED = 0
 FAILED = 0
 
+
 def test(name):
     print(f"\n{'='*60}")
     print(f"TEST: {name}")
     print(f"{'='*60}")
 
+
 def ok(msg=""):
     global PASSED
     PASSED += 1
     print(f"  PASS: {msg}")
+
 
 def fail(msg):
     global FAILED
@@ -49,27 +54,33 @@ test("1. Import validation")
 t0 = time.time()
 try:
     from tpu_inference.layers.common.quantization import dequantize_tensor, quantize_tensor
+
     ok("dequantize_tensor, quantize_tensor")
 except Exception as e:
     fail(f"quantization imports: {e}")
 
 try:
     from tpu_inference.layers.common.process_weights.moe_weights import (
-        FusedMoEWeights, process_moe_weights, quantize_moe_weights)
+        FusedMoEWeights,
+        process_moe_weights,
+        quantize_moe_weights,
+    )
     from tpu_inference.layers.common.moe import MoEBackend
+
     ok("moe_weights imports")
 except Exception as e:
     fail(f"moe_weights imports: {e}")
 
 try:
     from tpu_inference.layers.common.quantization.fp8 import process_blockwise_fp8_linear_weights
+
     ok("process_blockwise_fp8_linear_weights")
 except Exception as e:
     fail(f"fp8 imports: {e}")
 
 try:
     from safetensors import safe_open
-    from safetensors.numpy import save_file
+
     ok("safetensors")
 except Exception as e:
     fail(f"safetensors: {e}")
@@ -78,6 +89,7 @@ print(f"  Imports done in {time.time()-t0:.1f}s")
 
 # Check we can access model weights
 import glob
+
 SHARD_FILES = sorted(glob.glob("/mnt/gcs-models/*.safetensors"))
 if len(SHARD_FILES) > 0:
     ok(f"Found {len(SHARD_FILES)} safetensors shards")
@@ -92,7 +104,10 @@ test("2. MoE byte-exact round-trip (8 experts)")
 
 import torch
 from tpu_inference.layers.common.process_weights.moe_weights import (
-    FusedMoEWeights, process_moe_weights, quantize_moe_weights)
+    FusedMoEWeights,
+    process_moe_weights,
+    quantize_moe_weights,
+)
 from tpu_inference.layers.common.moe import MoEBackend
 
 E_TEST = 8
@@ -108,7 +123,7 @@ for sf in SHARD_FILES:
         for key in f.keys():
             if not key.startswith(prefix):
                 continue
-            parts = key[len(prefix):].split(".")
+            parts = key[len(prefix) :].split(".")
             eid = int(parts[0])
             if eid >= E_TEST:
                 continue
@@ -119,9 +134,11 @@ for sf in SHARD_FILES:
             else:
                 raw = t.cpu().float().numpy()
 
-            target = {"gate_proj": {"weight": gate_w, "weight_scale_inv": gate_s},
-                      "up_proj": {"weight": up_w, "weight_scale_inv": up_s},
-                      "down_proj": {"weight": down_w, "weight_scale_inv": down_s}}
+            target = {
+                "gate_proj": {"weight": gate_w, "weight_scale_inv": gate_s},
+                "up_proj": {"weight": up_w, "weight_scale_inv": up_s},
+                "down_proj": {"weight": down_w, "weight_scale_inv": down_s},
+            }
             if proj in target and ptype in target[proj]:
                 target[proj][ptype][eid] = raw
 
@@ -151,14 +168,22 @@ else:
 
     # Requant
     fused_online = quantize_moe_weights(
-        FusedMoEWeights(w13_weight=w13_f32, w13_weight_scale=None, w13_bias=None,
-                        w2_weight=w2_f32, w2_weight_scale=None, w2_bias=None),
-        jnp.float8_e4m3fn, None)
+        FusedMoEWeights(
+            w13_weight=w13_f32,
+            w13_weight_scale=None,
+            w13_bias=None,
+            w2_weight=w2_f32,
+            w2_weight_scale=None,
+            w2_bias=None,
+        ),
+        jnp.float8_e4m3fn,
+        None,
+    )
 
     # Reorder
     result_online = process_moe_weights(
-        fused_online, moe_backend=MoEBackend.GMM_TP,
-        w13_reorder_size=4, w13_interleave=False)
+        fused_online, moe_backend=MoEBackend.GMM_TP, w13_reorder_size=4, w13_interleave=False
+    )
     online_time = time.time() - t0
 
     # === PATH 2: Offline (our preprocessing script) ===
@@ -172,13 +197,19 @@ else:
     w2_f32_off = dequantize_tensor(w2_off, s2_off, (1, 2), jnp.float32, block_size=BLOCK_SIZE)
 
     fused_off = quantize_moe_weights(
-        FusedMoEWeights(w13_weight=w13_f32_off, w13_weight_scale=None, w13_bias=None,
-                        w2_weight=w2_f32_off, w2_weight_scale=None, w2_bias=None),
-        jnp.float8_e4m3fn, None)
+        FusedMoEWeights(
+            w13_weight=w13_f32_off,
+            w13_weight_scale=None,
+            w13_bias=None,
+            w2_weight=w2_f32_off,
+            w2_weight_scale=None,
+            w2_bias=None,
+        ),
+        jnp.float8_e4m3fn,
+        None,
+    )
 
-    result_off = process_moe_weights(
-        fused_off, moe_backend=MoEBackend.GMM_TP,
-        w13_reorder_size=4, w13_interleave=False)
+    result_off = process_moe_weights(fused_off, moe_backend=MoEBackend.GMM_TP, w13_reorder_size=4, w13_interleave=False)
     offline_time = time.time() - t0
 
     # === Compare all 4 tensors ===
@@ -203,7 +234,11 @@ else:
         if match:
             ok(f"{name}: byte-exact match {on.shape} {on.dtype}")
         else:
-            n_diff = np.sum(on.view(np.uint8) != off.view(np.uint8)) if on.dtype == ml_dtypes.float8_e4m3fn else np.sum(on != off)
+            n_diff = (
+                np.sum(on.view(np.uint8) != off.view(np.uint8))
+                if on.dtype == ml_dtypes.float8_e4m3fn
+                else np.sum(on != off)
+            )
             fail(f"{name}: {n_diff} values differ")
 
     print(f"  Online: {online_time:.2f}s, Offline: {offline_time:.2f}s")
@@ -232,7 +267,7 @@ try:
             for key in f.keys():
                 if not key.startswith(prefix):
                     continue
-                parts = key[len(prefix):].split(".")
+                parts = key[len(prefix) :].split(".")
                 eid = int(parts[0])
                 proj, ptype = parts[1], parts[2]
                 t = f.get_tensor(key)
@@ -240,9 +275,11 @@ try:
                     raw = t.cpu().view(torch.uint8).numpy().view(ml_dtypes.float8_e4m3fn)
                 else:
                     raw = t.cpu().float().numpy()
-                target = {"gate_proj": {"weight": all_gate_w, "weight_scale_inv": all_gate_s},
-                          "up_proj": {"weight": all_up_w, "weight_scale_inv": all_up_s},
-                          "down_proj": {"weight": all_down_w, "weight_scale_inv": all_down_s}}
+                target = {
+                    "gate_proj": {"weight": all_gate_w, "weight_scale_inv": all_gate_s},
+                    "up_proj": {"weight": all_up_w, "weight_scale_inv": all_up_s},
+                    "down_proj": {"weight": all_down_w, "weight_scale_inv": all_down_s},
+                }
                 if proj in target and ptype in target[proj]:
                     target[proj][ptype][eid] = raw
 
@@ -270,12 +307,18 @@ try:
         w13_f32 = dequantize_tensor(w13, s13, (1, 2), jnp.float32, block_size=BLOCK_SIZE)
         w2_f32 = dequantize_tensor(w2, s2, (1, 2), jnp.float32, block_size=BLOCK_SIZE)
         fused = quantize_moe_weights(
-            FusedMoEWeights(w13_weight=w13_f32, w13_weight_scale=None, w13_bias=None,
-                            w2_weight=w2_f32, w2_weight_scale=None, w2_bias=None),
-            jnp.float8_e4m3fn, None)
-        result = process_moe_weights(
-            fused, moe_backend=MoEBackend.GMM_TP,
-            w13_reorder_size=4, w13_interleave=False)
+            FusedMoEWeights(
+                w13_weight=w13_f32,
+                w13_weight_scale=None,
+                w13_bias=None,
+                w2_weight=w2_f32,
+                w2_weight_scale=None,
+                w2_bias=None,
+            ),
+            jnp.float8_e4m3fn,
+            None,
+        )
+        result = process_moe_weights(fused, moe_backend=MoEBackend.GMM_TP, w13_reorder_size=4, w13_interleave=False)
         print(f"  Processed in {time.time()-t0:.1f}s")
 
         # Validate shapes
@@ -310,6 +353,7 @@ try:
 
 except Exception as e:
     import traceback
+
     fail(f"Test 3 exception: {e}")
     traceback.print_exc()
 
@@ -341,19 +385,31 @@ try:
         w_on = jnp.array(q_weight)
         s_on = jnp.array(q_scale)
         result_on = process_blockwise_fp8_linear_weights(
-            w_on, s_on, bias=None,
-            weight_block_size=BLOCK_SIZE, requant_block_size=None,
-            output_sizes=(q_weight.shape[0],), requant_weight_dtype=jnp.float8_e4m3fn,
-            fuse_matmuls=True, n_shards=1)
+            w_on,
+            s_on,
+            bias=None,
+            weight_block_size=BLOCK_SIZE,
+            requant_block_size=None,
+            output_sizes=(q_weight.shape[0],),
+            requant_weight_dtype=jnp.float8_e4m3fn,
+            fuse_matmuls=True,
+            n_shards=1,
+        )
 
         # Offline path (same — verifies determinism)
         w_off = jnp.array(q_weight)
         s_off = jnp.array(q_scale)
         result_off = process_blockwise_fp8_linear_weights(
-            w_off, s_off, bias=None,
-            weight_block_size=BLOCK_SIZE, requant_block_size=None,
-            output_sizes=(q_weight.shape[0],), requant_weight_dtype=jnp.float8_e4m3fn,
-            fuse_matmuls=True, n_shards=1)
+            w_off,
+            s_off,
+            bias=None,
+            weight_block_size=BLOCK_SIZE,
+            requant_block_size=None,
+            output_sizes=(q_weight.shape[0],),
+            requant_weight_dtype=jnp.float8_e4m3fn,
+            fuse_matmuls=True,
+            n_shards=1,
+        )
 
         on_w = np.asarray(result_on.weight)
         off_w = np.asarray(result_off.weight)
@@ -363,15 +419,16 @@ try:
         if np.array_equal(on_w.view(np.uint8), off_w.view(np.uint8)):
             ok(f"weight: byte-exact match {on_w.shape} {on_w.dtype}")
         else:
-            fail(f"weight: values differ")
+            fail("weight: values differ")
 
         if np.array_equal(on_s, off_s):
             ok(f"scale: exact match {on_s.shape}")
         else:
-            fail(f"scale: values differ")
+            fail("scale: values differ")
 
 except Exception as e:
     import traceback
+
     fail(f"Test 4 exception: {e}")
     traceback.print_exc()
 
@@ -420,8 +477,9 @@ try:
         # v_scale_1 already (N,V) — no transpose needed
 
         # Run again (verify determinism)
-        dequantized2 = dequantize_tensor(jnp.array(kv_weight), jnp.array(kv_scale),
-                                          (0, 1), jnp.float32, block_size=BLOCK_SIZE).T
+        dequantized2 = dequantize_tensor(
+            jnp.array(kv_weight), jnp.array(kv_scale), (0, 1), jnp.float32, block_size=BLOCK_SIZE
+        ).T
         dequantized2 = dequantized2.reshape(KV_LORA_RANK, NUM_HEADS, QK_NOPE + V_HEAD)
         k_weight_2, k_scale_2 = quantize_tensor(jnp.float8_e4m3fn, dequantized2[:, :, :QK_NOPE], axis=-1)
         v_weight_2, v_scale_2 = quantize_tensor(jnp.float8_e4m3fn, dequantized2[:, :, QK_NOPE:], axis=0)
@@ -446,6 +504,7 @@ try:
 
 except Exception as e:
     import traceback
+
     fail(f"Test 5 exception: {e}")
     traceback.print_exc()
 
@@ -488,6 +547,7 @@ try:
 
 except Exception as e:
     import traceback
+
     fail(f"Test 6 exception: {e}")
     traceback.print_exc()
 

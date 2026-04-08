@@ -116,13 +116,24 @@ def _truncate_wandb_name(name: str) -> str:
     return name
 
 
-def _resolve_hf_export_steps(steps_per_hf_export: int | None, steps_per_export: int) -> int | None:
+def _resolve_hf_export_steps(steps_per_hf_export: int | None, steps_per_export: int | None) -> int | None:
     """Resolve the HF export step interval: None means same as checkpoint, -1 means disabled."""
-    if steps_per_hf_export is None:
-        return steps_per_export
     if steps_per_hf_export == -1:
         return None
-    return steps_per_hf_export
+    if steps_per_hf_export is not None:
+        return steps_per_hf_export
+    return steps_per_export
+
+
+def _checkpoint_keep(steps_per_export: int | None) -> list[dict]:
+    """Build the `keep` list for `CheckpointerConfig`.
+
+    None means keep no permanent intermediate checkpoints (only the final checkpoint
+    is saved at end-of-training, plus a rolling temporary checkpoint for resumption).
+    """
+    if steps_per_export is None:
+        return []
+    return [dict(every=steps_per_export)]
 
 
 def _validate_train_length(train_seq_len: int | None, model_config: LmConfig) -> int:
@@ -369,6 +380,8 @@ def default_train(
         harness_config = None
 
     steps_per_export_hf = _resolve_hf_export_steps(train_config.steps_per_hf_export, steps_per_export)
+    if steps_per_export_hf is None and train_config.steps_per_hf_export != -1:
+        steps_per_export_hf = train_config.num_train_steps
 
     model_averaging = None
     if train_config.ema_beta is not None:
@@ -409,7 +422,7 @@ def default_train(
             steps_per_eval=train_config.steps_per_eval if train_config.steps_per_eval is not None else 1000,
             checkpointer=CheckpointerConfig(
                 save_interval=timedelta(minutes=10),
-                keep=[dict(every=steps_per_export)],
+                keep=_checkpoint_keep(steps_per_export),
             ),
             model_averaging=model_averaging,
             mesh=MeshConfig(
@@ -585,6 +598,68 @@ def default_sft(
     )
 
 
+def _single_epoch_train_lm(config: TrainLmOnPodConfig):
+    """Runtime wrapper: resolve num_train_steps from tokenized data, then train for 1 epoch."""
+    import json
+    import math
+
+    import fsspec
+
+    # Find the training data cache path from the first data component
+    data = config.train_config.data
+    cache_dir = next(iter(data.components.values())).source.cache_dir
+
+    # Read the shard ledger to get the total number of training examples
+    ledger_path = f"{cache_dir}/train/shard_ledger.json"
+    fs, _, _ = fsspec.get_fs_token_paths(ledger_path)
+    with fs.open(ledger_path) as f:
+        ledger = json.load(f)
+    total_examples = ledger["total_num_rows"]
+
+    batch_size = config.train_config.trainer.train_batch_size
+    num_train_steps = math.ceil(total_examples / batch_size)
+
+    logger.info(
+        "Single-epoch SFT: %d examples / %d batch_size = %d steps",
+        total_examples,
+        batch_size,
+        num_train_steps,
+    )
+
+    # Update the config with the resolved step count
+    config = dataclasses.replace(
+        config,
+        train_config=dataclasses.replace(
+            config.train_config,
+            trainer=dataclasses.replace(
+                config.train_config.trainer,
+                num_train_steps=num_train_steps,
+            ),
+        ),
+    )
+
+    run_levanter_train_lm(config)
+
+
+def single_epoch_sft(
+    name: str,
+    tokenized: InputName | ExecutorStep | LMMixtureDatasetConfig,
+    model_config: LlamaConfig,
+    sft_config: SimpleSFTConfig,
+    tags: Sequence[str] = (),
+) -> ExecutorStep:
+    """Like default_sft but computes num_train_steps at runtime for exactly 1 epoch.
+
+    The num_train_steps in sft_config is ignored; instead, the step count is
+    derived from the tokenized data's shard_ledger.json at training time.
+    """
+    # Build the step using default_sft with a placeholder num_train_steps.
+    # The actual value is resolved at runtime by _single_epoch_train_lm.
+    placeholder = dataclasses.replace(sft_config, num_train_steps=1)
+    step = default_sft(name, tokenized, model_config, placeholder, tags)
+    return dataclasses.replace(step, fn=_single_epoch_train_lm)
+
+
 def default_dpo(
     name: str,
     tokenized: InputName | ExecutorStep | LMMixtureDatasetConfig,
@@ -627,6 +702,8 @@ def default_dpo(
 
     steps_per_export = dpo_config.steps_per_checkpoint
     steps_per_export_hf = _resolve_hf_export_steps(dpo_config.steps_per_hf_export, steps_per_export)
+    if steps_per_export_hf is None and dpo_config.steps_per_hf_export != -1:
+        steps_per_export_hf = dpo_config.num_train_steps
 
     train_length = _validate_train_length(dpo_config.train_seq_len, model_config)
 
@@ -650,7 +727,7 @@ def default_dpo(
             steps_per_eval=dpo_config.steps_per_eval,
             checkpointer=CheckpointerConfig(
                 save_interval=timedelta(minutes=10),
-                keep=[dict(every=steps_per_export)],
+                keep=_checkpoint_keep(steps_per_export),
             ),
             model_averaging=None,
             mesh=MeshConfig(

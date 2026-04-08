@@ -117,11 +117,13 @@ class SimpleSFTConfig:
     steps_per_eval: int = 1000
     """How often to run validation losses."""
 
-    steps_per_checkpoint: int = 1000
-    """How often to save checkpoints."""
+    steps_per_checkpoint: int | None = None
+    """How often to keep a permanent checkpoint. None (default) keeps only the final
+    checkpoint; rolling temporary checkpoints are still written for resumption."""
 
-    steps_per_hf_export: int = 500
-    """How often to save HuggingFace checkpoints."""
+    steps_per_hf_export: int | None = None
+    """None matches steps_per_checkpoint; if that is also None, HuggingFace export runs once at
+    the final step. -1 disables HF export during training."""
 
     hf_generation_eos_token_ids: list[int] | None = None
     """EOS token IDs to write to generation_config.json. None means no generation config.

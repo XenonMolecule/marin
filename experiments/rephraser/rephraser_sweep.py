@@ -1,3 +1,6 @@
+# Copyright The Marin Authors
+# SPDX-License-Identifier: Apache-2.0
+
 # Copyright 2025 The Marin Authors
 # SPDX-License-Identifier: Apache-2.0
 
@@ -333,7 +336,6 @@ for spec_text in SPECS:
             weight_decay=MIDTRAIN_WEIGHT_DECAY,
             z_loss_weight=1e-4,
             steps_per_task_eval=num_train_steps,  # Eval once at end
-            steps_per_export=num_train_steps,
         ),
         tags=["rephraser-sweep", f"spec-{sid}"],
         eval_harness_tasks=CORE_TASKS,

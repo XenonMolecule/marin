@@ -73,7 +73,9 @@ Ranked by avg_minerva.
 | Config | avg_minerva | GSM8K_flex |
 |---|---|---|
 | Prior sweep best (extract, lr5e-7_bs64) | 30.3% | 60.3% |
-| Untrained baseline (Qwen3-0.6B-Base) | 22.9% | 62.8% |
+| Untrained baseline (Qwen3-0.6B-Base) | 26.7% | 62.8% |
+
+> **Baseline correction (2026-04-08):** The untrained baseline was originally reported as 22.9% avg_minerva, computed before the full 7-subtask baseline eval was run. The correct value is **26.7%**, from a dedicated baseline eval (`math_0_6b_baseline_eval.py`) using the same eval config as this sweep. Per-subtask: Algebra 41.4, PreAlg 49.0, Count/Prob 23.0, Geometry 25.9, Int Algebra 12.8, Num Theory 17.0, Precalc 17.9.
 
 ---
 
@@ -142,7 +144,7 @@ The shape of this curve is characteristic: rapid improvement from high LR down t
 
 **For balanced Minerva + GSM8K:** Use lr=1e-7 (bs=64, extraction data). This sits at 29.66% Minerva and 62.03% GSM8K flex — both above the untrained baseline by comfortable margins, with no clear tradeoff cost.
 
-**For GSM8K-priority objectives:** Use lr=5e-8 (bs=64, extraction data). At 64.27% flex this is the best arithmetic-preserving SFT configuration found, while retaining meaningful Minerva gains (29.42% vs 22.9% baseline).
+**For GSM8K-priority objectives:** Use lr=5e-8 (bs=64, extraction data). At 64.27% flex this is the best arithmetic-preserving SFT configuration found, while retaining meaningful Minerva gains (29.42% vs 26.7% baseline).
 
 **Do not use lr=2e-8 or lower:** lr=2e-8 is a dominated configuration — it costs 1.8pp of Minerva relative to the plateau while recovering only ~1.2pp of GSM8K vs lr=5e-8. The crossover point where further LR reduction becomes net-negative is somewhere between 5e-8 and 2e-8.
 

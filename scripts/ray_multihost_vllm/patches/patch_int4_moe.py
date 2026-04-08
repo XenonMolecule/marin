@@ -19,7 +19,6 @@ Weight format (from vLLM GPU CompressedTensorsWNA16MoEMethod):
   (pack_factor = 32 // num_bits = 8 for INT4)
 """
 
-import os
 import textwrap
 
 # =============================================================================
@@ -36,7 +35,8 @@ if "VllmCompressedTensorsW4A16IntMoEMethod" in code:
     print("SKIP: INT4 MoE method already patched")
 else:
     # --- Add the new class at the end of the file ---
-    new_class = textwrap.dedent('''
+    new_class = textwrap.dedent(
+        '''
 
     class VllmCompressedTensorsW4A16IntMoEMethod(CompressedTensorsMoEMethod,
                                                   VllmQuantConfig):
@@ -194,23 +194,24 @@ else:
                                   quant_method_instance=self,
                                   x=x,
                                   router_logits=router_logits)
-    ''')
+    '''
+    )
 
     code += new_class
 
     # --- Patch get_moe_method to route INT4 to the new class ---
-    old_raise = '''        else:
+    old_raise = """        else:
             raise RuntimeError(
-                f"Unsupported FusedMoe scheme: {weight_quant}, {input_quant}")'''
+                f"Unsupported FusedMoe scheme: {weight_quant}, {input_quant}")"""
 
-    new_check = '''        elif (weight_quant is not None
+    new_check = """        elif (weight_quant is not None
               and getattr(weight_quant, 'num_bits', None) == 4
               and getattr(weight_quant, 'type', None) == 'int'):
             return VllmCompressedTensorsW4A16IntMoEMethod(
                 weight_quant, input_quant, layer.moe_config, quant_config.mesh)
         else:
             raise RuntimeError(
-                f"Unsupported FusedMoe scheme: {weight_quant}, {input_quant}")'''
+                f"Unsupported FusedMoe scheme: {weight_quant}, {input_quant}")"""
 
     if old_raise in code:
         code = code.replace(old_raise, new_check)

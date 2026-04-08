@@ -1,3 +1,6 @@
+# Copyright The Marin Authors
+# SPDX-License-Identifier: Apache-2.0
+
 # Copyright 2025 The Marin Authors
 # SPDX-License-Identifier: Apache-2.0
 
@@ -12,7 +15,6 @@ Launch:
         -- python experiments/rephraser/test_cdx_query_cluster.py
 """
 
-from fray.cluster import ResourceConfig
 from marin.datakit.download.commoncrawl.cdx_query import CDXQueryConfig, query_cdx
 from marin.datakit.download.commoncrawl.download_warc_records import (
     WarcRecordDownloadConfig,

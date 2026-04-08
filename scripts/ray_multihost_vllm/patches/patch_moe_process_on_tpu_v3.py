@@ -15,7 +15,6 @@ Strategy:
   5. Run process_moe_weights (reordering) on the full FP8 tensor
 """
 
-import os
 
 FP8_PATH = "/workspace/tpu_inference/tpu_inference/layers/jax/quantization/fp8.py"
 

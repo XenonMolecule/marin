@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright The Marin Authors
+# SPDX-License-Identifier: Apache-2.0
+
 # Copyright 2025 The Marin Authors
 # SPDX-License-Identifier: Apache-2.0
 
@@ -24,7 +27,6 @@ import logging
 from dataclasses import dataclass
 
 import fsspec
-from fray.cluster import ResourceConfig
 
 from marin.execution.remote import remote
 from marin.execution.executor import ExecutorStep, executor_main, this_output_path

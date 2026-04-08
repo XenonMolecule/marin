@@ -31,17 +31,14 @@ import argparse
 import json
 import os
 import subprocess
-import tempfile
-from pathlib import Path
 
-import numpy as np
 import torch
 from safetensors.torch import load_file, save_file
 
 
-def unpack_int4_symmetric(packed: torch.Tensor, scale: torch.Tensor,
-                          weight_shape: tuple[int, ...],
-                          group_size: int = 32) -> torch.Tensor:
+def unpack_int4_symmetric(
+    packed: torch.Tensor, scale: torch.Tensor, weight_shape: tuple[int, ...], group_size: int = 32
+) -> torch.Tensor:
     """Unpack INT4 packed weights and dequantize to BF16.
 
     Args:
@@ -85,9 +82,7 @@ def unpack_int4_symmetric(packed: torch.Tensor, scale: torch.Tensor,
     return unpacked_bf16
 
 
-def quantize_to_fp8(tensor: torch.Tensor,
-                    block_size: tuple[int, int] = (128, 128)
-                    ) -> tuple[torch.Tensor, torch.Tensor]:
+def quantize_to_fp8(tensor: torch.Tensor, block_size: tuple[int, int] = (128, 128)) -> tuple[torch.Tensor, torch.Tensor]:
     """Quantize a BF16 tensor to FP8 e4m3 with block-wise scales.
 
     K2-Instruct uses weight_block_size=[128, 128], meaning each 128x128 block
@@ -125,9 +120,9 @@ def quantize_to_fp8(tensor: torch.Tensor,
 
         # Remove padding
         if pad_r > 0:
-            scaled = scaled[:rows - pad_r, :]
+            scaled = scaled[: rows - pad_r, :]
         if pad_c > 0:
-            scaled = scaled[:, :cols - pad_c]
+            scaled = scaled[:, : cols - pad_c]
 
         fp8 = scaled.to(torch.float8_e4m3fn)
         scale_inv = (1.0 / scale).to(torch.float32)
@@ -142,8 +137,9 @@ def quantize_to_fp8(tensor: torch.Tensor,
         return fp8, scale_inv
 
 
-def process_shard(input_path: str, shard_name: str, temp_dir: str,
-                  all_weight_shapes: dict) -> tuple[dict[str, torch.Tensor], set[str]]:
+def process_shard(
+    input_path: str, shard_name: str, temp_dir: str, all_weight_shapes: dict
+) -> tuple[dict[str, torch.Tensor], set[str]]:
     """Process a single safetensors shard: dequant INT4, requant FP8, rename.
 
     Returns:
@@ -154,9 +150,7 @@ def process_shard(input_path: str, shard_name: str, temp_dir: str,
     if not os.path.exists(shard_path):
         # Download from GCS
         os.makedirs(os.path.join(temp_dir, "input"), exist_ok=True)
-        subprocess.run(
-            ["gcloud", "storage", "cp", f"{input_path}/{shard_name}", shard_path],
-            check=True)
+        subprocess.run(["gcloud", "storage", "cp", f"{input_path}/{shard_name}", shard_path], check=True)
 
     tensors = load_file(shard_path)
     output = {}
@@ -170,11 +164,11 @@ def process_shard(input_path: str, shard_name: str, temp_dir: str,
         # Strip language_model. prefix
         out_key = key
         if out_key.startswith("language_model."):
-            out_key = out_key[len("language_model."):]
+            out_key = out_key[len("language_model.") :]
 
         # Handle packed INT4 weights
         if key.endswith(".weight_packed"):
-            base = key[:-len(".weight_packed")]
+            base = key[: -len(".weight_packed")]
             if base in processed_bases:
                 continue
             processed_bases.add(base)
@@ -201,9 +195,9 @@ def process_shard(input_path: str, shard_name: str, temp_dir: str,
             # Quantize BF16 -> FP8
             fp8_weight, scale_inv = quantize_to_fp8(bf16_weight)
 
-            out_base = out_key[:-len(".weight_packed")] if out_key.endswith(".weight_packed") else out_key
+            out_base = out_key[: -len(".weight_packed")] if out_key.endswith(".weight_packed") else out_key
             if out_base.startswith("language_model."):
-                out_base = out_base[len("language_model."):]
+                out_base = out_base[len("language_model.") :]
 
             output[out_base + ".weight"] = fp8_weight
             output[out_base + ".weight_scale_inv"] = scale_inv
@@ -238,15 +232,20 @@ def main():
 
     # Download config and index
     print("Downloading config files...")
-    for fname in ["config.json", "model.safetensors.index.json",
-                   "tokenizer_config.json", "tokenization_kimi.py",
-                   "tiktoken.model", "configuration_deepseek.py",
-                   "modeling_deepseek.py", "generation_config.json"]:
+    for fname in [
+        "config.json",
+        "model.safetensors.index.json",
+        "tokenizer_config.json",
+        "tokenization_kimi.py",
+        "tiktoken.model",
+        "configuration_deepseek.py",
+        "modeling_deepseek.py",
+        "generation_config.json",
+    ]:
         src = f"{args.input}/{fname}"
         dst = os.path.join(args.temp_dir, "input", fname)
         try:
-            subprocess.run(["gcloud", "storage", "cp", src, dst],
-                         check=True, capture_output=True)
+            subprocess.run(["gcloud", "storage", "cp", src, dst], check=True, capture_output=True)
         except subprocess.CalledProcessError:
             print(f"  Warning: {fname} not found, skipping")
 
@@ -273,11 +272,10 @@ def main():
     for shard_idx, (shard_name, weights) in enumerate(sorted(shard_to_weights.items())):
         print(f"\n[{shard_idx+1}/{total_shards}] Processing {shard_name} ({len(weights)} weights)...")
 
-        output_tensors, processed_bases = process_shard(
-            args.input, shard_name, args.temp_dir, all_weight_shapes)
+        output_tensors, processed_bases = process_shard(args.input, shard_name, args.temp_dir, all_weight_shapes)
 
         if not output_tensors:
-            print(f"  Skipped (all vision/projector weights)")
+            print("  Skipped (all vision/projector weights)")
             continue
 
         # Save output shard
@@ -286,9 +284,7 @@ def main():
         out_shard_path = os.path.join(args.temp_dir, "output", out_shard_name)
 
         # Skip if already uploaded (resume support)
-        check = subprocess.run(
-            ["gcloud", "storage", "ls", f"{args.output}/{out_shard_name}"],
-            capture_output=True)
+        check = subprocess.run(["gcloud", "storage", "ls", f"{args.output}/{out_shard_name}"], capture_output=True)
         if check.returncode == 0:
             print(f"  SKIP (already in GCS): {out_shard_name}")
             for tensor_name in output_tensors:
@@ -300,9 +296,7 @@ def main():
         print(f"  Wrote {out_shard_name} ({shard_size:.1f} GB, {len(output_tensors)} tensors)")
 
         # Upload to GCS
-        subprocess.run(
-            ["gcloud", "storage", "cp", out_shard_path, f"{args.output}/{out_shard_name}"],
-            check=True)
+        subprocess.run(["gcloud", "storage", "cp", out_shard_path, f"{args.output}/{out_shard_name}"], check=True)
         os.remove(out_shard_path)
 
         # Update weight map
@@ -317,11 +311,11 @@ def main():
         final_weight_map[tensor_name] = final_name
         # Rename on GCS if needed
         if final_name != shard_name:
-            result = subprocess.run([
-                "gcloud", "storage", "mv",
-                f"{args.output}/{shard_name}",
-                f"{args.output}/{final_name}"
-            ], capture_output=True, text=True)
+            result = subprocess.run(
+                ["gcloud", "storage", "mv", f"{args.output}/{shard_name}", f"{args.output}/{final_name}"],
+                capture_output=True,
+                text=True,
+            )
             if result.returncode != 0:
                 print(f"  Warning: rename failed for {shard_name}: {result.stderr.strip()[:100]}")
             else:
@@ -335,8 +329,7 @@ def main():
     index_out = os.path.join(args.temp_dir, "output", "model.safetensors.index.json")
     with open(index_out, "w") as f:
         json.dump(new_index, f, indent=2)
-    subprocess.run(["gcloud", "storage", "cp", index_out,
-                   f"{args.output}/model.safetensors.index.json"], check=True)
+    subprocess.run(["gcloud", "storage", "cp", index_out, f"{args.output}/model.safetensors.index.json"], check=True)
 
     # Create new config.json matching K2-Instruct format
     config_path = os.path.join(args.temp_dir, "input", "config.json")
@@ -363,13 +356,17 @@ def main():
     config_out = os.path.join(args.temp_dir, "output", "config.json")
     with open(config_out, "w") as f:
         json.dump(new_config, f, indent=2)
-    subprocess.run(["gcloud", "storage", "cp", config_out,
-                   f"{args.output}/config.json"], check=True)
+    subprocess.run(["gcloud", "storage", "cp", config_out, f"{args.output}/config.json"], check=True)
 
     # Copy tokenizer files
-    for fname in ["tokenizer_config.json", "tokenization_kimi.py",
-                   "tiktoken.model", "configuration_deepseek.py",
-                   "modeling_deepseek.py", "generation_config.json"]:
+    for fname in [
+        "tokenizer_config.json",
+        "tokenization_kimi.py",
+        "tiktoken.model",
+        "configuration_deepseek.py",
+        "modeling_deepseek.py",
+        "generation_config.json",
+    ]:
         src = os.path.join(args.temp_dir, "input", fname)
         if os.path.exists(src):
             # Fix tokenizer_config.json vocab_file issue
@@ -381,11 +378,10 @@ def main():
                 with open(src, "w") as f:
                     json.dump(tc, f, indent=2, ensure_ascii=False)
 
-            subprocess.run(["gcloud", "storage", "cp", src,
-                           f"{args.output}/{fname}"], check=True)
+            subprocess.run(["gcloud", "storage", "cp", src, f"{args.output}/{fname}"], check=True)
 
     print(f"\n{'='*60}")
-    print(f"Conversion complete!")
+    print("Conversion complete!")
     print(f"Output: {args.output}")
     print(f"Total output shards: {total_output_shards}")
     print(f"Total output weights: {len(final_weight_map)}")

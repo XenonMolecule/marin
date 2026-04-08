@@ -16,13 +16,7 @@ gcloud storage ls gs://marin-us-central1/checkpoints/<run-name>/hf/
 gcloud storage ls gs://marin-us-central1/checkpoints/ | grep "rephraser"
 ```
 
-Example:
-
-```bash
-gcloud storage ls gs://marin-us-central1/checkpoints/qwen3-0.6b-rephraser-sft-875a72/hf/
-```
-
-Pick the step you want (e.g. `step-250`).
+Pick the step you want (e.g. `step-903` for the final step).
 
 ## 2. Download locally
 
@@ -33,66 +27,81 @@ gcloud storage cp -r \
   ~/models/<model-name>/
 ```
 
-Example:
-```bash
-mkdir -p ~/models/qwen3-0.6b-rephraser-sft
-gcloud storage cp -r \
-  "gs://marin-us-central1/checkpoints/qwen3-0.6b-rephraser-sft-v6-5a8b19/hf/step-1318/" \
-  ~/models/qwen3-0.6b-rephraser-sft/
-```
-
-Example:
-
-
 ## 3. Transfer to the serving machine
 
 ```bash
+# Create remote directory first
+ssh <user>@<host> "mkdir -p <remote-path>/<model-name>"
+
 rsync -avP ~/models/<model-name>/ \
   <user>@<host>:<remote-path>/<model-name>/
 ```
 
-Example:
+### Batch transfer script
+
+For multiple checkpoints, use `scripts/transfer_checkpoints_to_stanford.sh`.
+Edit the `NAMES` and `GCS_PATHS` arrays, then run:
 
 ```bash
-rsync -avP ~/models/qwen3-0.6b-rephraser-sft/ \
-  mryan0@scdt.stanford.edu:/nlp/scr2/nlp/personal-rm/small-rephraser/small-rephraser/models/qwen3-0.6b-rephraser-sft-ckpt250/
+bash scripts/transfer_checkpoints_to_stanford.sh
 ```
 
-## 4. Serve with vLLM
+## 4. Transfer the no-think chat template (for stripped models)
 
-For a model using **Qwen's native tokenizer/chat template**:
+Stripped (no-thinking) models were trained without `<think>` blocks. They need
+a custom chat template that doesn't emit any think tokens at generation time.
+
+```bash
+rsync -avP experiments/chat_templates/qwen3_no_think_serving.jinja \
+  <user>@<host>:<remote-path>/qwen3_no_think_serving.jinja
+```
+
+## 5. Serve with vLLM
+
+### Think models (trained with `<think>` reasoning traces)
+
+Use `--reasoning-parser qwen3` to handle `<think>` token parsing:
 
 ```bash
 vllm serve <model-path> --reasoning-parser qwen3
 ```
 
-For a model using the **Marin custom tokenizer** (which requires a plugin for the `<think>` token handling):
+### Stripped models (trained WITHOUT `<think>` traces)
+
+Use `--chat-template` with the no-think template. Do NOT use `--reasoning-parser`
+or `enable_thinking` -- think tokens are out of distribution for these models.
 
 ```bash
 vllm serve <model-path> \
-  --reasoning-parser marin_think \
-  --reasoning-parser-plugin <path-to>/marin_think_parser.py
+  --chat-template <remote-path>/qwen3_no_think_serving.jinja
 ```
 
-## Concrete example (Qwen3-0.6B rephraser SFT)
+## Concrete examples (Kimi-distilled rephraser SFT)
+
+### Serving
 
 ```bash
-# 1. List checkpoints
-gcloud storage ls gs://marin-us-central1/checkpoints/qwen3-0.6b-rephraser-sft-875a72/hf/
+MODELS=/nlp/scr2/nlp/personal-rm/small-rephraser/small-rephraser/models
+TEMPLATE=$MODELS/qwen3_no_think_serving.jinja
 
-# 2. Download step-250
-mkdir -p ~/models/qwen3-0.6b-rephraser-sft
-gcloud storage cp -r \
-  "gs://marin-us-central1/checkpoints/qwen3-0.6b-rephraser-sft-875a72/hf/step-250/*" \
-  ~/models/qwen3-0.6b-rephraser-sft/
+# Q3-0.6B Think
+vllm serve $MODELS/qwen3-0.6b-rephraser-kimi-think-sft/ --reasoning-parser qwen3
 
-# 3. Rsync to Stanford cluster
-rsync -avP ~/models/qwen3-0.6b-rephraser-sft/ \
-  mryan0@scdt.stanford.edu:/nlp/scr2/nlp/personal-rm/small-rephraser/small-rephraser/models/qwen3-0.6b-rephraser-sft-ckpt250/
+# Q3-0.6B Stripped
+vllm serve $MODELS/qwen3-0.6b-rephraser-kimi-stripped-sft/ --chat-template $TEMPLATE
 
-# 4. Serve (Qwen tokenizer)
-vllm serve small-rephraser/models/qwen3-0.6b-rephraser-sft-ckpt250/ --reasoning-parser qwen3
+# Q3-1.7B Think
+vllm serve $MODELS/qwen3-1.7b-rephraser-kimi-think-sft/ --reasoning-parser qwen3
 
-# 4. Serve (Marin tokenizer)
-vllm serve small-rephraser/models/qwen3-0.6b-rephraser-sft-ckpt250/ --reasoning-parser marin_think --reasoning-parser-plugin /nlp/scr2/nlp/personal-rm/small-rephraser/small-rephraser/utils/marin_think_parser.py
+# Q3-1.7B Stripped
+vllm serve $MODELS/qwen3-1.7b-rephraser-kimi-stripped-sft/ --chat-template $TEMPLATE
 ```
+
+### GCS checkpoint paths
+
+| Model | Variant | GCS Path |
+|-------|---------|----------|
+| Q3-0.6B | think | `gs://marin-us-central1/checkpoints/qwen3-0.6b-rephraser-kimi-think-sft-f7321d/hf/step-903/` |
+| Q3-0.6B | stripped | `gs://marin-us-central1/checkpoints/qwen3-0.6b-rephraser-kimi-stripped-sft-2a6763/hf/step-903/` |
+| Q3-1.7B | think | `gs://marin-us-central1/checkpoints/qwen3-1.7b-rephraser-kimi-think-sft-777825/hf/step-903/` |
+| Q3-1.7B | stripped | `gs://marin-us-central1/checkpoints/qwen3-1.7b-rephraser-kimi-stripped-sft-5b3958/hf/step-903/` |

@@ -12,7 +12,6 @@ Instruments assign_and_shard_param to log:
 This helps diagnose why TP sharding might not be distributing weights.
 """
 
-import re
 
 PATH = "/workspace/tpu_inference/tpu_inference/models/jax/utils/weight_utils.py"
 

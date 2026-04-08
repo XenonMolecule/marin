@@ -1,3 +1,6 @@
+# Copyright The Marin Authors
+# SPDX-License-Identifier: Apache-2.0
+
 # Allow dummy/random weights for MoE backends.
 # The check spans lines 1133-1136 in deepseek_v3.py (multiline).
 
@@ -8,7 +11,10 @@ with open(PATH) as f:
 # The check is: if vllm_config.load_config.load_format == "dummy" and self.moe_backend in MoEBackend.fused_moe_backends(\n        ):
 # Just find and neutralize it
 import re
-pattern = r'if vllm_config\.load_config\.load_format == "dummy" and self\.moe_backend in MoEBackend\.fused_moe_backends\('
+
+pattern = (
+    r'if vllm_config\.load_config\.load_format == "dummy" and self\.moe_backend in MoEBackend\.fused_moe_backends\('
+)
 match = re.search(pattern, code)
 if match:
     # Replace the condition with False
@@ -22,9 +28,9 @@ if match:
         depth = 1
         i = end_raise + len("raise ValueError(")
         while i < len(code) and depth > 0:
-            if code[i] == '(':
+            if code[i] == "(":
                 depth += 1
-            elif code[i] == ')':
+            elif code[i] == ")":
                 depth -= 1
             i += 1
         # Comment out the entire if block

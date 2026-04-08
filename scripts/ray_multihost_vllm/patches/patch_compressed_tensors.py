@@ -12,7 +12,6 @@ This enables serving models like unsloth/Kimi-K2.5 (INT4 quantized via QAT)
 on TPU, at the cost of running in BF16 precision in HBM.
 """
 
-import os
 
 PATH = "/workspace/tpu_inference/tpu_inference/layers/jax/quantization/__init__.py"
 

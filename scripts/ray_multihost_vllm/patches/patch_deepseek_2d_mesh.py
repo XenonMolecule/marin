@@ -27,17 +27,17 @@ with open(PATH) as f:
 # and compute axes become "model"
 replacements = [
     # Expert sharding -> replicate (can't do EP with only 2 axes)
-    ('ShardingAxisName.ATTN_DATA_EXPERT', 'None'),
-    ('ShardingAxisName.EXPERT_DATA', 'None'),
-    ('ShardingAxisName.EXPERT', 'None'),
+    ("ShardingAxisName.ATTN_DATA_EXPERT", "None"),
+    ("ShardingAxisName.EXPERT_DATA", "None"),
+    ("ShardingAxisName.EXPERT", "None"),
     # Compute sharding -> "model"
-    ('ShardingAxisName.ATTN_HEAD', '"model"'),
-    ('ShardingAxisName.MOE_TENSOR', '"model"'),
-    ('ShardingAxisName.MLP_TENSOR', '"model"'),
-    ('ShardingAxisName.VOCAB', '"model"'),
+    ("ShardingAxisName.ATTN_HEAD", '"model"'),
+    ("ShardingAxisName.MOE_TENSOR", '"model"'),
+    ("ShardingAxisName.MLP_TENSOR", '"model"'),
+    ("ShardingAxisName.VOCAB", '"model"'),
     # Data parallelism -> "data"
-    ('ShardingAxisName.ATTN_DATA', '"data"'),
-    ('ShardingAxisName.MLP_DATA', '"data"'),
+    ("ShardingAxisName.ATTN_DATA", '"data"'),
+    ("ShardingAxisName.MLP_DATA", '"data"'),
 ]
 
 patched = 0
@@ -50,11 +50,13 @@ for old, new in replacements:
 # Also handle the case where previous patch already replaced to "model"
 # Fix any P(..., "model", "model") -> P(..., None, "model")
 import re
+
+
 # Find P() calls with duplicate "model"
 def fix_duplicate_model(match):
     spec = match.group(0)
     # Count "model" occurrences
-    parts = spec.split(',')
+    parts = spec.split(",")
     model_count = sum(1 for p in parts if '"model"' in p)
     if model_count > 1:
         # Replace first "model" with None
@@ -62,33 +64,36 @@ def fix_duplicate_model(match):
         new_parts = []
         for p in parts:
             if '"model"' in p and not fixed:
-                new_parts.append(p.replace('"model"', 'None'))
+                new_parts.append(p.replace('"model"', "None"))
                 fixed = True
             else:
                 new_parts.append(p)
-        return ','.join(new_parts)
+        return ",".join(new_parts)
     return spec
 
-code = re.sub(r'P\([^)]+\)', fix_duplicate_model, code)
+
+code = re.sub(r"P\([^)]+\)", fix_duplicate_model, code)
+
 
 # Also fix P("data", "data", ...) duplicates
 def fix_duplicate_data(match):
     spec = match.group(0)
-    parts = spec.split(',')
+    parts = spec.split(",")
     data_count = sum(1 for p in parts if '"data"' in p)
     if data_count > 1:
         fixed = False
         new_parts = []
         for p in parts:
             if '"data"' in p and not fixed:
-                new_parts.append(p.replace('"data"', 'None'))
+                new_parts.append(p.replace('"data"', "None"))
                 fixed = True
             else:
                 new_parts.append(p)
-        return ','.join(new_parts)
+        return ",".join(new_parts)
     return spec
 
-code = re.sub(r'P\([^)]+\)', fix_duplicate_data, code)
+
+code = re.sub(r"P\([^)]+\)", fix_duplicate_data, code)
 
 if patched > 0:
     with open(PATH, "w") as f:

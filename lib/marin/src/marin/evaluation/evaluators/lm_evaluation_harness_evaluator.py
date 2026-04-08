@@ -88,6 +88,10 @@ class LMEvaluationHarnessEvaluator(Evaluator):
 
         mode_str = resolve_vllm_mode(None)
         pip_packages = VLLM_NATIVE_PIP_PACKAGES if mode_str == "native" else ()
+        # Native mode needs the "vllm" extra so vllm-tpu is installed in the
+        # worker environment.  On Ray this was unnecessary because Docker mode
+        # ran vLLM in a sidecar container, but Iris workers don't have Docker.
+        extras: tuple[str, ...] = ("eval", "tpu", "vllm") if mode_str == "native" else ("eval", "tpu")
         eval_env_vars: dict[str, str] = {"HF_ALLOW_CODE_EVAL": "1"}
         # Forward MARIN_VLLM_MODE so the TPU worker uses the same vLLM backend
         vllm_mode = os.environ.get("MARIN_VLLM_MODE")
@@ -102,7 +106,7 @@ class LMEvaluationHarnessEvaluator(Evaluator):
             resource_config=resource_config,
             max_eval_instances=max_eval_instances,
             wandb_tags=wandb_tags,
-            extras=("eval", "tpu"),
+            extras=extras,
             pip_packages=pip_packages,
             env_vars=eval_env_vars,
         )

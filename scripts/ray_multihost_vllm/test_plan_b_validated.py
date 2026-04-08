@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright The Marin Authors
+# SPDX-License-Identifier: Apache-2.0
+
 """Validated Plan B test: numerical correctness + real tpu_inference functions.
 
 Tests:
@@ -11,7 +14,6 @@ Usage (inside Docker on TPU host, with single-host env vars):
     CLOUD_TPU_TASK_ID=0 python test_plan_b_validated.py
 """
 
-import itertools
 import sys
 import time
 
@@ -23,7 +25,6 @@ import numpy as np
 # Import the REAL functions from tpu_inference
 sys.path.insert(0, "/workspace/tpu_inference")
 from tpu_inference.layers.common.quantization import dequantize_tensor, quantize_tensor
-from tpu_inference.layers.common.utils import cpu_mesh, cpu_mesh_context
 
 
 def time_fn(fn, name, warmup=1, repeats=3):
@@ -32,9 +33,9 @@ def time_fn(fn, name, warmup=1, repeats=3):
         result = fn()
         if isinstance(result, tuple):
             for r in result:
-                if hasattr(r, 'block_until_ready'):
+                if hasattr(r, "block_until_ready"):
                     r.block_until_ready()
-        elif hasattr(result, 'block_until_ready'):
+        elif hasattr(result, "block_until_ready"):
             result.block_until_ready()
 
     times = []
@@ -43,9 +44,9 @@ def time_fn(fn, name, warmup=1, repeats=3):
         result = fn()
         if isinstance(result, tuple):
             for r in result:
-                if hasattr(r, 'block_until_ready'):
+                if hasattr(r, "block_until_ready"):
                     r.block_until_ready()
-        elif hasattr(result, 'block_until_ready'):
+        elif hasattr(result, "block_until_ready"):
             result.block_until_ready()
         times.append(time.time() - t0)
 
@@ -74,7 +75,7 @@ def create_realistic_fp8_data(num_experts, dim1, dim2, block_size):
 
     # Quantize
     scales_expanded = scales[:, :, np.newaxis, :, np.newaxis]
-    with np.errstate(divide='ignore', invalid='ignore'):
+    with np.errstate(divide="ignore", invalid="ignore"):
         scales_inv = np.where(scales_expanded == 0, 0.0, 1.0 / scales_expanded)
     quantized = np.clip(raw_blocked * scales_inv, -fp8_max, fp8_max)
     quantized = quantized.reshape(num_experts, dim1, dim2)
@@ -86,10 +87,10 @@ def create_realistic_fp8_data(num_experts, dim1, dim2, block_size):
 
 
 def main():
-    E = 384      # num experts (K2-Instruct)
-    D1 = 2048    # intermediate size per expert
-    D2 = 7168    # hidden size
-    BS = 128     # block size
+    E = 384  # num experts (K2-Instruct)
+    D1 = 2048  # intermediate size per expert
+    D2 = 7168  # hidden size
+    BS = 128  # block size
 
     print("=" * 70)
     print("Validated Plan B: CPU vs TPU with REAL tpu_inference functions")
@@ -108,10 +109,12 @@ def main():
 
     # Verify scales are reasonable
     print(f"  scale range: [{scales.min():.6f}, {scales.max():.6f}]")
-    print(f"  weight range (as float): [{weight_fp8.astype(np.float32).min():.1f}, {weight_fp8.astype(np.float32).max():.1f}]")
+    print(
+        f"  weight range (as float): [{weight_fp8.astype(np.float32).min():.1f}, {weight_fp8.astype(np.float32).max():.1f}]"
+    )
 
     # Create per-expert numpy arrays (simulating what t2j produces)
-    expert_list_np = [weight_fp8[i:i+1] for i in range(E)]
+    expert_list_np = [weight_fp8[i : i + 1] for i in range(E)]
 
     # ================================================================
     # TEST 1: CPU baseline using REAL tpu_inference dequantize_tensor
@@ -122,7 +125,7 @@ def main():
 
     cpu_device = jax.devices("cpu")[0]
 
-    @jax.jit(static_argnames=('bs0', 'bs1'))
+    @jax.jit(static_argnames=("bs0", "bs1"))
     def real_dequant_requant_cpu(w, s, bs0, bs1):
         """Use the REAL tpu_inference functions."""
         # Dequantize (matches process_fp8_moe_weights)
@@ -170,7 +173,9 @@ def main():
         s_tpu_np = np.asarray(s_tpu)
         print(f"  Output weight: {q_tpu_np.shape} {q_tpu_np.dtype}")
         print(f"  Output scale:  {s_tpu_np.shape} {s_tpu_np.dtype}")
-        print(f"  Weight value range: [{q_tpu_np.astype(np.float32).min():.1f}, {q_tpu_np.astype(np.float32).max():.1f}]")
+        print(
+            f"  Weight value range: [{q_tpu_np.astype(np.float32).min():.1f}, {q_tpu_np.astype(np.float32).max():.1f}]"
+        )
         print(f"  Scale value range:  [{s_tpu_np.min():.8f}, {s_tpu_np.max():.8f}]")
 
         # ================================================================
@@ -200,8 +205,10 @@ def main():
             # Most diffs should be ±1 in FP8 (rounding)
             if num_diff > 0:
                 diff_vals = diff[diff > 0]
-                print(f"  Diff distribution: min={diff_vals.min():.4f}, "
-                      f"max={diff_vals.max():.4f}, mean={diff_vals.mean():.4f}")
+                print(
+                    f"  Diff distribution: min={diff_vals.min():.4f}, "
+                    f"max={diff_vals.max():.4f}, mean={diff_vals.mean():.4f}"
+                )
 
         # Scale comparison (float32)
         s_exact = np.array_equal(s_cpu_np, s_tpu_np)
@@ -222,11 +229,12 @@ def main():
         print(f"  Reconstructed mean diff: {recon_diff.mean():.8f}")
         # Compare to original float32 (before FP8 quantization)
         # This tells us total quantization error, not CPU vs TPU diff
-        print(f"  (This measures whether CPU and TPU produce the same quantized representation)")
+        print("  (This measures whether CPU and TPU produce the same quantized representation)")
 
     except Exception as e:
         t_tpu = None
         import traceback
+
         print(f"  FAILED: {type(e).__name__}: {e}")
         traceback.print_exc()
 
@@ -240,28 +248,33 @@ def main():
     # np.concatenate
     def np_concat():
         return np.concatenate(expert_list_np, axis=0)
+
     t_np_concat, w_np_full = time_fn(np_concat, "np.concatenate", warmup=1, repeats=2)
 
     # CPU→TPU transfer
     w_np_full_val = w_np_full
     s_np_val = scales
+
     def transfer():
         w = jnp.array(w_np_full_val)
         s = jnp.array(s_np_val)
         w.block_until_ready()
         s.block_until_ready()
         return w, s
+
     t_transfer, (w_tpu_ready, s_tpu_ready) = time_fn(transfer, "CPU→TPU transfer", warmup=1, repeats=2)
 
     # TPU compute only
     def tpu_compute():
         return real_dequant_requant_cpu(w_tpu_ready, s_tpu_ready, BS, BS)
+
     t_tpu_compute, _ = time_fn(tpu_compute, "TPU compute only", warmup=1, repeats=2)
 
     # jnp.concatenate on CPU (current bottleneck)
     def jnp_concat_cpu():
         with jax.default_device(cpu_device):
             return jnp.concatenate(expert_list_np, axis=0)
+
     t_jnp_concat, _ = time_fn(jnp_concat_cpu, "jnp.concatenate CPU (current)", warmup=1, repeats=2)
 
     # ================================================================
@@ -271,13 +284,13 @@ def main():
     print("SUMMARY")
     print("=" * 70)
 
-    print(f"\n  Current path (all CPU):")
+    print("\n  Current path (all CPU):")
     print(f"    jnp.concatenate: {t_jnp_concat:.1f}s")
     print(f"    JIT dequant+requant: {t_cpu - t_jnp_concat:.1f}s")  # rough estimate
     print(f"    Total: {t_cpu:.1f}s")
 
     optimal = t_np_concat + t_transfer + t_tpu_compute
-    print(f"\n  Optimal path (np.concat → transfer → TPU):")
+    print("\n  Optimal path (np.concat → transfer → TPU):")
     print(f"    np.concatenate:  {t_np_concat:.1f}s")
     print(f"    CPU→TPU transfer: {t_transfer:.1f}s")
     print(f"    TPU compute:     {t_tpu_compute:.3f}s")

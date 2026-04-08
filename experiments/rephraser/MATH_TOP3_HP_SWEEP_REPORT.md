@@ -23,10 +23,10 @@ while modestly degrading GSM8K (-2.5pp flex, from 62.8% -> 60.3%).
 ## Reference Baselines
 
 
-| Source                    | Algebra | PreAlg | GSM8K Flex | GSM8K Strict |
-| ------------------------- | ------- | ------ | ---------- | ------------ |
-| Untrained Qwen3-0.6B-Base | 41.4    | 49.0   | 62.8       | 58.1         |
-| V1 top3 math best         | 50.8    | 54.1   | 60.2       | 54.7         |
+| Source                    | Algebra | PreAlg | Cnt/Prob | Geometry | Int Alg | Num Thy | Precalc | avg_minerva | GSM8K Flex | GSM8K Strict |
+| ------------------------- | ------- | ------ | -------- | -------- | ------- | ------- | ------- | ----------- | ---------- | ------------ |
+| Untrained Qwen3-0.6B-Base | 41.4    | 49.0   | 23.0     | 25.9     | 12.8    | 17.0    | 17.9    | **26.7**    | 62.8       | 58.1         |
+| V1 top3 math best         | 50.8    | 54.1   | —        | —        | —       | —       | —       | —           | 60.2       | 54.7         |
 
 
 ## Full Extraction Scorecard (ranked by avg_minerva)

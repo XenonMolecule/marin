@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright The Marin Authors
+# SPDX-License-Identifier: Apache-2.0
+
 """Profile each phase of FP8 weight loading to find the real bottleneck.
 
 Tests each component in isolation with synthetic data (no caching effects):
@@ -15,7 +18,6 @@ Usage (inside Docker, JAX_PLATFORMS=cpu for isolation):
 """
 
 import argparse
-import itertools
 import time
 
 import jax
@@ -29,18 +31,18 @@ def time_fn(fn, name, warmup=1, repeats=3):
     """Time a function with warmup and repeats. Returns median time."""
     for _ in range(warmup):
         result = fn()
-        if hasattr(result, 'block_until_ready'):
+        if hasattr(result, "block_until_ready"):
             result.block_until_ready()
-        elif isinstance(result, tuple) and hasattr(result[0], 'block_until_ready'):
+        elif isinstance(result, tuple) and hasattr(result[0], "block_until_ready"):
             result[0].block_until_ready()
 
     times = []
     for _ in range(repeats):
         t0 = time.time()
         result = fn()
-        if hasattr(result, 'block_until_ready'):
+        if hasattr(result, "block_until_ready"):
             result.block_until_ready()
-        elif isinstance(result, tuple) and hasattr(result[0], 'block_until_ready'):
+        elif isinstance(result, tuple) and hasattr(result[0], "block_until_ready"):
             result[0].block_until_ready()
         times.append(time.time() - t0)
 
@@ -52,16 +54,14 @@ def time_fn(fn, name, warmup=1, repeats=3):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--num-experts", type=int, default=384)
-    parser.add_argument("--dim1", type=int, default=2048,
-                        help="MoE intermediate size per expert")
-    parser.add_argument("--dim2", type=int, default=7168,
-                        help="Hidden size")
+    parser.add_argument("--dim1", type=int, default=2048, help="MoE intermediate size per expert")
+    parser.add_argument("--dim2", type=int, default=7168, help="Hidden size")
     parser.add_argument("--block-size", type=int, default=128)
     args = parser.parse_args()
 
     E, D1, D2, BS = args.num_experts, args.dim1, args.dim2, args.block_size
     print("=" * 70)
-    print(f"FP8 Weight Loading Profile")
+    print("FP8 Weight Loading Profile")
     print(f"  Experts: {E}, Dims: [{D1}, {D2}], Block: {BS}")
     print(f"  FP8 size: {E * D1 * D2 / 1e9:.2f} GB")
     print(f"  Float32 size: {E * D1 * D2 * 4 / 1e9:.2f} GB")
@@ -117,8 +117,9 @@ def main():
     print(f"\n--- Phase 2: jnp.concatenate ({E} experts) ---")
 
     # Create list of expert arrays (as numpy, simulating our patch)
-    expert_list_np = [np.random.randint(0, 255, (1, D1, D2), dtype=np.uint8).view(
-        ml_dtypes.float8_e4m3fn) for _ in range(E)]
+    expert_list_np = [
+        np.random.randint(0, 255, (1, D1, D2), dtype=np.uint8).view(ml_dtypes.float8_e4m3fn) for _ in range(E)
+    ]
 
     # Create list as JAX arrays (simulating original code)
     expert_list_jax = [jnp.array(e) for e in expert_list_np]
@@ -139,26 +140,25 @@ def main():
     print(f"\n--- Phase 3: dequantize ({E} experts, blockwise [{BS},{BS}] → float32) ---")
 
     # Create realistic FP8 weight + block scales
-    weight_fp8 = np.random.randint(0, 255, (E, D1, D2), dtype=np.uint8).view(
-        ml_dtypes.float8_e4m3fn)
+    weight_fp8 = np.random.randint(0, 255, (E, D1, D2), dtype=np.uint8).view(ml_dtypes.float8_e4m3fn)
     scale = np.abs(np.random.randn(E, D1 // BS, D2 // BS).astype(np.float32)) * 0.01 + 0.001
 
     weight_jax = jnp.array(weight_fp8)
     scale_jax = jnp.array(scale)
 
-    @jax.jit(static_argnames=('bs',))
+    @jax.jit(static_argnames=("bs",))
     def dequant_jit(w, s, bs):
         orig = w.shape
         aligned = w.shape  # assuming already aligned to block_size
         n, h, k = aligned
         w = w.reshape(n, h // bs, bs, k // bs, bs)
         s_exp = s[:, :, jnp.newaxis, :, jnp.newaxis]
-        result = (w.astype(jnp.float32) * s_exp)
+        result = w.astype(jnp.float32) * s_exp
         return result.reshape(aligned)
 
     t_dequant, r_dequant = time_fn(
-        lambda: dequant_jit(weight_jax, scale_jax, BS),
-        "JAX JIT dequant", warmup=1, repeats=2)
+        lambda: dequant_jit(weight_jax, scale_jax, BS), "JAX JIT dequant", warmup=1, repeats=2
+    )
 
     # ================================================================
     # Phase 4: quantize_tensor — float32 → per-channel FP8
@@ -181,16 +181,14 @@ def main():
         scale = jnp.squeeze(scale, 2).astype(jnp.float32)
         return tensor_q, scale
 
-    t_quant, _ = time_fn(
-        lambda: quant_jit(float32_weight),
-        "JAX JIT quantize", warmup=1, repeats=2)
+    t_quant, _ = time_fn(lambda: quant_jit(float32_weight), "JAX JIT quantize", warmup=1, repeats=2)
 
     # ================================================================
     # Phase 5: Full pipeline — concat → dequant → requant
     # ================================================================
-    print(f"\n--- Phase 5: Full pipeline (concat + dequant + requant) ---")
+    print("\n--- Phase 5: Full pipeline (concat + dequant + requant) ---")
 
-    @jax.jit(static_argnames=('bs',))
+    @jax.jit(static_argnames=("bs",))
     def full_pipeline_jit(w, s, bs):
         # Dequant
         n, h, k = w.shape
@@ -217,12 +215,12 @@ def main():
         s = scale_jax
         return full_pipeline_jit(w, s, BS)
 
-    t_full_np, _ = time_fn(full_pipeline_from_numpy_experts,
-                           "Full (numpy experts → concat → dequant → requant)",
-                           warmup=1, repeats=2)
-    t_full_jax, _ = time_fn(full_pipeline_from_jax_experts,
-                            "Full (jax experts → concat → dequant → requant)",
-                            warmup=1, repeats=2)
+    t_full_np, _ = time_fn(
+        full_pipeline_from_numpy_experts, "Full (numpy experts → concat → dequant → requant)", warmup=1, repeats=2
+    )
+    t_full_jax, _ = time_fn(
+        full_pipeline_from_jax_experts, "Full (jax experts → concat → dequant → requant)", warmup=1, repeats=2
+    )
 
     # ================================================================
     # Summary
@@ -238,13 +236,13 @@ def main():
     print(f"    From jax:    {t_concat_jax:.1f}s")
     print(f"  Phase 3 (dequant):     {t_dequant:.1f}s")
     print(f"  Phase 4 (requant):     {t_quant:.1f}s")
-    print(f"  Phase 5 (full pipeline):")
+    print("  Phase 5 (full pipeline):")
     print(f"    NumPy experts: {t_full_np:.1f}s")
     print(f"    JAX experts:   {t_full_jax:.1f}s")
 
     total_np = t_np * E + t_full_np
     total_jax = t_jax * E + t_full_jax
-    print(f"\n  TOTAL per MoE layer (t2j + pipeline):")
+    print("\n  TOTAL per MoE layer (t2j + pipeline):")
     print(f"    With numpy t2j patch: {total_np:.1f}s")
     print(f"    Without (original):   {total_jax:.1f}s")
     print(f"    Speedup: {total_jax / total_np:.1f}x")
