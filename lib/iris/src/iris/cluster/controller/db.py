@@ -19,7 +19,6 @@ from iris.cluster.constraints import AttributeValue
 from iris.cluster.controller.schema import decode_timestamp_ms, decode_worker_id
 from iris.cluster.types import JobName, WorkerId
 from iris.rpc import job_pb2
-from iris.rpc import controller_pb2
 from rigging.timing import Deadline, Duration, Timestamp
 
 logger = logging.getLogger(__name__)
@@ -124,31 +123,6 @@ def task_is_finished(
     return False
 
 
-def task_can_be_scheduled(
-    state: int,
-    current_attempt_id: int,
-    failure_count: int,
-    max_retries_failure: int,
-    preemption_count: int,
-    max_retries_preemption: int,
-) -> bool:
-    if state != job_pb2.TASK_STATE_PENDING:
-        return False
-    return current_attempt_id < 0 or not task_is_finished(
-        state, failure_count, max_retries_failure, preemption_count, max_retries_preemption
-    )
-
-
-def task_is_retry_exhausted(
-    state: int, failure_count: int, max_retries_failure: int, preemption_count: int, max_retries_preemption: int
-) -> bool:
-    if state == job_pb2.TASK_STATE_FAILED:
-        return failure_count > max_retries_failure
-    if state in (job_pb2.TASK_STATE_WORKER_FAILED, job_pb2.TASK_STATE_PREEMPTED):
-        return preemption_count > max_retries_preemption
-    return False
-
-
 def task_row_is_finished(task: Any) -> bool:
     return task_is_finished(
         task.state, task.failure_count, task.max_retries_failure, task.preemption_count, task.max_retries_preemption
@@ -156,30 +130,11 @@ def task_row_is_finished(task: Any) -> bool:
 
 
 def task_row_can_be_scheduled(task: Any) -> bool:
-    return task_can_be_scheduled(
-        task.state,
-        task.current_attempt_id,
-        task.failure_count,
-        task.max_retries_failure,
-        task.preemption_count,
-        task.max_retries_preemption,
+    if task.state != job_pb2.TASK_STATE_PENDING:
+        return False
+    return task.current_attempt_id < 0 or not task_is_finished(
+        task.state, task.failure_count, task.max_retries_failure, task.preemption_count, task.max_retries_preemption
     )
-
-
-def worker_available_cpu_millicores(total_cpu_millicores: int, committed_cpu_millicores: int) -> int:
-    return total_cpu_millicores - committed_cpu_millicores
-
-
-def worker_available_memory(total_memory_bytes: int, committed_mem_bytes: int) -> int:
-    return total_memory_bytes - committed_mem_bytes
-
-
-def worker_available_gpus(total_gpu_count: int, committed_gpu: int) -> int:
-    return total_gpu_count - committed_gpu
-
-
-def worker_available_tpus(total_tpu_count: int, committed_tpu: int) -> int:
-    return total_tpu_count - committed_tpu
 
 
 TERMINAL_TASK_STATES: frozenset[int] = frozenset(
@@ -875,40 +830,33 @@ class TimedOutTask:
 def timed_out_executing_tasks(db: ControllerDB, now: Timestamp) -> list[TimedOutTask]:
     """Find executing tasks whose current attempt has exceeded the job's execution timeout.
 
-    Reads the timeout from the job's request_proto. Uses the current attempt's
+    Reads the timeout from job_config.timeout_ms. Uses the current attempt's
     started_at_ms so that retried tasks get a fresh timeout budget per attempt.
     """
-    from iris.cluster.controller.schema import proto_cache, proto_decoder
-
-    decoder = proto_decoder(controller_pb2.Controller.LaunchJobRequest)
     now_ms = now.epoch_ms()
     executing_states = tuple(sorted(EXECUTING_TASK_STATES))
     placeholders = ",".join("?" for _ in executing_states)
     with db.read_snapshot() as q:
         rows = q.raw(
             f"SELECT t.task_id, t.current_worker_id AS worker_id, "
-            f"ta.started_at_ms AS attempt_started_at_ms, j.request_proto "
+            f"ta.started_at_ms AS attempt_started_at_ms, jc.timeout_ms "
             f"FROM tasks t "
-            f"JOIN jobs j ON j.job_id = t.job_id "
+            f"JOIN job_config jc ON jc.job_id = t.job_id "
             f"JOIN task_attempts ta ON ta.task_id = t.task_id AND ta.attempt_id = t.current_attempt_id "
             f"WHERE t.state IN ({placeholders}) "
-            f"AND j.request_proto IS NOT NULL "
+            f"AND jc.timeout_ms IS NOT NULL AND jc.timeout_ms > 0 "
             f"AND ta.started_at_ms IS NOT NULL",
             (*executing_states,),
             decoders={
                 "task_id": JobName.from_wire,
                 "worker_id": lambda v: WorkerId(v) if v is not None else None,
                 "attempt_started_at_ms": int,
-                "request_proto": bytes,
+                "timeout_ms": int,
             },
         )
     result: list[TimedOutTask] = []
     for row in rows:
-        request = proto_cache.get_or_decode(row.request_proto, decoder)
-        if not request.HasField("timeout") or request.timeout.milliseconds <= 0:
-            continue
-        timeout_ms = int(request.timeout.milliseconds)
-        if row.attempt_started_at_ms + timeout_ms <= now_ms:
+        if row.attempt_started_at_ms + row.timeout_ms <= now_ms:
             result.append(TimedOutTask(task_id=row.task_id, worker_id=row.worker_id))
     return result
 
@@ -946,7 +894,7 @@ def _worker_row_select() -> str:
 def healthy_active_workers_with_attributes(db: ControllerDB) -> list:
     """Fetch all healthy, active workers with their attributes populated.
 
-    Returns WorkerRow (scalar-only) so the scheduling loop never decodes metadata_proto.
+    Returns WorkerRow (scalar-only) so the scheduling loop avoids loading metadata columns.
     Uses the in-memory attribute cache to avoid a per-cycle SQL join.
     """
     from iris.cluster.controller.schema import WORKER_ROW_PROJECTION
@@ -962,10 +910,10 @@ def healthy_active_workers_with_attributes(db: ControllerDB) -> list:
         dc_replace(
             w,
             attributes=attrs_by_worker.get(w.worker_id, {}),
-            available_cpu_millicores=worker_available_cpu_millicores(w.total_cpu_millicores, w.committed_cpu_millicores),
-            available_memory=worker_available_memory(w.total_memory_bytes, w.committed_mem),
-            available_gpus=worker_available_gpus(w.total_gpu_count, w.committed_gpu),
-            available_tpus=worker_available_tpus(w.total_tpu_count, w.committed_tpu),
+            available_cpu_millicores=w.total_cpu_millicores - w.committed_cpu_millicores,
+            available_memory=w.total_memory_bytes - w.committed_mem,
+            available_gpus=w.total_gpu_count - w.committed_gpu,
+            available_tpus=w.total_tpu_count - w.committed_tpu,
         )
         for w in workers
     ]

@@ -504,6 +504,48 @@ def test_env_merge_precedence(mock_bundle_store, mock_runtime, tmp_path):
     assert "IRIS_TASK_ID" in env
 
 
+def test_task_image_override_uses_request_value(mock_bundle_store, mock_runtime, tmp_path):
+    """Per-task task_image overrides the worker's default_task_image."""
+    config = WorkerConfig(
+        port=0,
+        port_range=(50000, 50100),
+        poll_interval=Duration.from_seconds(0.1),
+        cache_dir=tmp_path / "cache",
+        default_task_image="default/cluster-image:latest",
+    )
+    w = Worker(config, bundle_store=mock_bundle_store, container_runtime=mock_runtime)
+
+    request = create_run_task_request(task_image="custom/swetrace:dev")
+    task_id = w.submit_task(request)
+    task = w.get_task(task_id)
+    task.thread.join(timeout=15.0)
+
+    assert mock_runtime.create_container.called
+    container_config = mock_runtime.create_container.call_args[0][0]
+    assert container_config.image == "custom/swetrace:dev"
+
+
+def test_task_image_default_used_when_override_empty(mock_bundle_store, mock_runtime, tmp_path):
+    """Empty task_image falls back to the cluster default."""
+    config = WorkerConfig(
+        port=0,
+        port_range=(50000, 50100),
+        poll_interval=Duration.from_seconds(0.1),
+        cache_dir=tmp_path / "cache",
+        default_task_image="default/cluster-image:latest",
+    )
+    w = Worker(config, bundle_store=mock_bundle_store, container_runtime=mock_runtime)
+
+    request = create_run_task_request()  # task_image="" by default
+    task_id = w.submit_task(request)
+    task = w.get_task(task_id)
+    task.thread.join(timeout=15.0)
+
+    assert mock_runtime.create_container.called
+    container_config = mock_runtime.create_container.call_args[0][0]
+    assert container_config.image == "default/cluster-image:latest"
+
+
 def test_port_binding_failure(mock_bundle_store, tmp_path):
     """Test that task fails when port binding fails.
 
@@ -868,7 +910,7 @@ def test_docker_container_has_adoption_labels(docker_runtime, tmp_path):
     config = ContainerConfig(
         image="iris-task:latest",
         entrypoint=job_pb2.RuntimeEntrypoint(
-            run_command=job_pb2.RuntimeEntrypoint.RunCommand(argv=["echo", "hello"]),
+            run_command=job_pb2.CommandEntrypoint(argv=["echo", "hello"]),
         ),
         env={},
         mounts=[MountSpec("/app", kind=MountKind.WORKDIR)],
@@ -916,7 +958,7 @@ def test_docker_discover_containers(docker_runtime, tmp_path):
     config = ContainerConfig(
         image="iris-task:latest",
         entrypoint=job_pb2.RuntimeEntrypoint(
-            run_command=job_pb2.RuntimeEntrypoint.RunCommand(argv=["sleep", "60"]),
+            run_command=job_pb2.CommandEntrypoint(argv=["sleep", "60"]),
         ),
         env={},
         mounts=[MountSpec("/app", kind=MountKind.WORKDIR)],
@@ -956,7 +998,7 @@ def test_docker_adopt_container(docker_runtime, tmp_path):
     config = ContainerConfig(
         image="iris-task:latest",
         entrypoint=job_pb2.RuntimeEntrypoint(
-            run_command=job_pb2.RuntimeEntrypoint.RunCommand(argv=["sleep", "60"]),
+            run_command=job_pb2.CommandEntrypoint(argv=["sleep", "60"]),
         ),
         env={},
         mounts=[MountSpec("/app", kind=MountKind.WORKDIR)],

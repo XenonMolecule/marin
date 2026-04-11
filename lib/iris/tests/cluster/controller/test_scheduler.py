@@ -11,6 +11,7 @@ modify state, or run threads.
 import pytest
 
 from iris.cluster.constraints import WellKnownAttribute
+from iris.cluster.controller.codec import constraints_from_json, resource_spec_from_scalars
 from iris.cluster.controller.db import (
     _decode_attribute_rows,
 )
@@ -21,7 +22,7 @@ from iris.cluster.controller.scheduler import (
 )
 from iris.cluster.controller.transitions import Assignment, ControllerTransitions, HeartbeatApplyRequest, TaskUpdate
 from iris.cluster.types import JobName, WorkerId
-from iris.cluster.controller.pending_diagnostics import PendingHint, build_job_pending_hints
+from iris.cluster.controller.autoscaler.status import PendingHint, build_job_pending_hints
 from iris.rpc import config_pb2, vm_pb2
 from iris.rpc import job_pb2
 from iris.rpc import controller_pb2
@@ -49,10 +50,12 @@ from .conftest import (
 
 def _job_requirements_from_job(job) -> JobRequirements:
     return JobRequirements(
-        resources=job.request.resources,
-        constraints=list(job.request.constraints),
-        is_coscheduled=job.request.HasField("coscheduling"),
-        coscheduling_group_by=job.request.coscheduling.group_by if job.request.HasField("coscheduling") else None,
+        resources=resource_spec_from_scalars(
+            job.res_cpu_millicores, job.res_memory_bytes, job.res_disk_bytes, job.res_device_json
+        ),
+        constraints=constraints_from_json(job.constraints_json),
+        is_coscheduled=job.has_coscheduling,
+        coscheduling_group_by=job.coscheduling_group_by if job.has_coscheduling else None,
     )
 
 

@@ -154,12 +154,13 @@ message ProcessInfo {
   int64 uptime_ms = 4;          // Process uptime in milliseconds
   int64 memory_rss_bytes = 5;   // Resident set size
   int64 memory_vms_bytes = 6;   // Virtual memory size
-  float cpu_percent = 7;        // CPU utilization (0-100)
   int32 thread_count = 8;
   int32 open_fd_count = 9;      // Open file descriptors
   int64 memory_total_bytes = 10; // Total system memory
   int32 cpu_count = 11;          // Number of CPU cores
   string git_hash = 12;          // Git commit hash baked in at image build time (IRIS_GIT_HASH)
+  reserved 7;                    // Formerly process cpu_percent; use cpu_millicores instead.
+  int32 cpu_millicores = 13;     // Process CPU usage over the sample window
 }
 
 message GetProcessStatusRequest {
@@ -231,6 +232,8 @@ message TaskStatus {
   bool can_be_scheduled = 17;         // Whether task is currently schedulable
   // field 18 was log_directory, removed
   string container_id = 19;           // Platform container identifier (Docker container ID, K8s pod name)
+  // Historical resource snapshots (oldest first). Populated only in GetTaskStatus detail view.
+  repeated ResourceUsage resource_history = 20;
 }
 
 // Record of a single task execution attempt
@@ -250,7 +253,7 @@ message ResourceUsage {
   int64 disk_mb = 2;
   int32 cpu_millicores = 3;
   int64 memory_peak_mb = 4;
-  int32 cpu_percent = 5;
+  reserved 5;                  // Formerly task cpu_percent; use cpu_millicores instead.
   int32 process_count = 6;
 }
 
@@ -258,7 +261,7 @@ message ResourceUsage {
 message WorkerResourceSnapshot {
   iris.time.Timestamp timestamp = 1;
   // Host CPU utilization as percentage (0-100 averaged across cores)
-  int32 cpu_percent = 2;
+  int32 host_cpu_percent = 2;
   // Host memory
   int64 memory_used_bytes = 3;
   int64 memory_total_bytes = 4;
@@ -322,7 +325,7 @@ message JobStatus {
   // Diagnostic message for pending/failed jobs (e.g., "No workers match constraint: gpu=true")
   string pending_reason = 31;
 
-  // True if this job has child jobs (for lazy-loading in the dashboard).
+  // Whether this job currently has direct child jobs.
   bool has_children = 32;
 }
 
@@ -528,10 +531,7 @@ message WorkerMetadata {
   // using format: key1=value1,key2=value2 (e.g., taint:maintenance=true,pool=large-jobs)
   map<string, AttributeValue> attributes = 40;
 
-  // DEPRECATED: No longer used for worker identification.
-  // Worker identity is now set via RegisterRequest.worker_id.
-  // Field kept for proto wire compatibility but ignored by the controller.
-  string vm_address = 41;
+  reserved 41;  // was vm_address, removed
 
   // Git commit hash baked into the worker image at build time (IRIS_GIT_HASH).
   // Allows the controller to surface per-worker version info for debugging.
@@ -577,6 +577,12 @@ message RunTaskRequest {
   repeated string ports = 8;
   int32 attempt_id = 9;
   repeated Constraint constraints = 10; // Original job constraints for child-job inheritance metadata
+
+  // Per-task task container image. When empty, the worker uses its
+  // cluster-configured default_task_image. Used for jobs that need a
+  // custom runtime (e.g. an image with runsc/skopeo for sandboxing
+  // untrusted child workloads).
+  string task_image = 11;
 }
 
 // Lean task status reported by the worker during heartbeat.

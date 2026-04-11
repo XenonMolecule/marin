@@ -28,7 +28,13 @@ from iris.cluster.constraints import (
     extract_placement_requirements,
     merge_constraints,
 )
-from iris.cluster.controller.autoscaler import Autoscaler, DemandEntry
+from iris.cluster.controller.autoscaler import Autoscaler
+from iris.cluster.controller.codec import (
+    constraints_from_json,
+    reservation_entries_from_json,
+    resource_spec_from_scalars,
+)
+from iris.cluster.controller.autoscaler.models import DemandEntry
 from iris.cluster.controller.checkpoint import (
     CheckpointResult,
     backup_databases,
@@ -47,18 +53,19 @@ from iris.cluster.controller.db import (
 )
 from iris.cluster.controller.schema import (
     ATTEMPT_PROJECTION,
+    JOB_CONFIG_JOIN,
     JOB_DETAIL_PROJECTION,
     JOB_SCHEDULING_PROJECTION,
     TASK_DETAIL_PROJECTION,
     TASK_ROW_PROJECTION,
     WORKER_DETAIL_PROJECTION,
     JobDetailRow,
+    JobRow,
     JobSchedulingRow,
     TaskDetailRow,
     TaskRow,
     WorkerDetailRow,
     WorkerRow,
-    proto_cache,
     proto_decoder,
     tasks_with_attempts,
 )
@@ -152,6 +159,9 @@ class SchedulingOutcome(enum.Enum):
 
 _HEALTH_SUMMARY_INTERVAL = RateLimiter(interval_seconds=30)
 
+# Log a detailed per-phase scheduling trace every this many rounds.
+_SCHEDULING_TRACE_INTERVAL = 50
+
 # Taint attribute injected onto claimed workers to prevent non-reservation
 # jobs from landing on them.  Non-reservation jobs get a NOT_EXISTS constraint
 # for this key; reservation jobs do not, so they naturally prefer claimed
@@ -220,11 +230,18 @@ class _SchedulingOrder:
     user_budget_limits: dict[str, int]
 
 
+def _resource_spec_from_row(job: JobRow | JobSchedulingRow) -> job_pb2.ResourceSpecProto:
+    """Reconstruct a ResourceSpecProto from native job columns."""
+    return resource_spec_from_scalars(
+        job.res_cpu_millicores, job.res_memory_bytes, job.res_disk_bytes, job.res_device_json
+    )
+
+
 def job_requirements_from_job(job: JobSchedulingRow) -> JobRequirements:
     """Convert a job row to scheduler-compatible JobRequirements."""
     return JobRequirements(
-        resources=job.resources or job_pb2.ResourceSpecProto(),
-        constraints=job.constraints,
+        resources=_resource_spec_from_row(job),
+        constraints=constraints_from_json(job.constraints_json),
         is_coscheduled=job.has_coscheduling,
         coscheduling_group_by=job.coscheduling_group_by if job.has_coscheduling else None,
     )
@@ -328,8 +345,8 @@ def compute_demand_entries(
         if job_is_finished(job.state):
             continue
 
-        job_constraints = job.constraints
-        job_resources = job.resources or job_pb2.ResourceSpecProto()
+        job_constraints = constraints_from_json(job.constraints_json)
+        job_resources = _resource_spec_from_row(job)
 
         invalid_reason: str | None = None
         try:
@@ -404,7 +421,8 @@ def _jobs_by_id(queries: ControllerDB, job_ids: set[JobName]) -> dict[JobName, J
     with queries.read_snapshot() as snapshot:
         jobs = JOB_SCHEDULING_PROJECTION.decode(
             snapshot.fetchall(
-                f"SELECT {JOB_SCHEDULING_PROJECTION.select_clause()} FROM jobs j WHERE j.job_id IN ({placeholders})",
+                f"SELECT {JOB_SCHEDULING_PROJECTION.select_clause()} "
+                f"FROM jobs j {JOB_CONFIG_JOIN} WHERE j.job_id IN ({placeholders})",
                 tuple(wires),
             ),
         )
@@ -414,13 +432,14 @@ def _jobs_by_id(queries: ControllerDB, job_ids: set[JobName]) -> dict[JobName, J
 def _jobs_with_reservations(queries: ControllerDB, states: tuple[int, ...]) -> list[JobDetailRow]:
     """Fetch only jobs that have reservations, filtering at the SQL level.
 
-    Uses the denormalized has_reservation column to avoid deserializing
-    request_proto for all active jobs.
+    Uses the has_reservation column on the jobs table to filter without a JOIN.
     """
     placeholders = ",".join("?" for _ in states)
     with queries.read_snapshot() as snapshot:
         rows = snapshot._fetchall(
-            f"SELECT * FROM jobs WHERE state IN ({placeholders}) AND has_reservation = 1",
+            f"SELECT {JOB_DETAIL_PROJECTION.select_clause()} "
+            f"FROM jobs j {JOB_CONFIG_JOIN} "
+            f"WHERE j.state IN ({placeholders}) AND j.has_reservation = 1",
             list(states),
         )
     return JOB_DETAIL_PROJECTION.decode(rows)
@@ -441,9 +460,10 @@ def _get_running_tasks_with_band_and_value(
     with db.read_snapshot() as q:
         rows = q.raw(
             "SELECT t.task_id, t.priority_band, t.current_worker_id AS worker_id, "
-            "j.resources_proto, j.has_coscheduling "
+            "jc.res_cpu_millicores, jc.res_memory_bytes, jc.res_disk_bytes, jc.res_device_json, "
+            "jc.has_coscheduling "
             "FROM tasks t "
-            "JOIN jobs j ON j.job_id = t.job_id "
+            "JOIN job_config jc ON jc.job_id = t.job_id "
             "WHERE t.state = ? AND t.current_worker_id IS NOT NULL",
             (job_pb2.TASK_STATE_RUNNING,),
             decoders={
@@ -459,7 +479,12 @@ def _get_running_tasks_with_band_and_value(
         wid = row.worker_id
         if wid in claimed_workers:
             continue
-        resources = proto_cache.get_or_decode(row.resources_proto, _RESOURCE_SPEC_DECODER)
+        resources = resource_spec_from_scalars(
+            row.res_cpu_millicores,
+            row.res_memory_bytes,
+            row.res_disk_bytes,
+            row.res_device_json,
+        )
         band = compute_effective_band(row.priority_band, row.task_id.user, _spend, _limits)
         result.append(
             RunningTaskInfo(
@@ -564,14 +589,16 @@ def _tasks_by_ids_with_attempts(queries: ControllerDB, task_ids: set[JobName]) -
     with queries.read_snapshot() as snapshot:
         tasks = TASK_DETAIL_PROJECTION.decode(
             snapshot.fetchall(
-                f"SELECT * FROM tasks t WHERE t.task_id IN ({placeholders}) ORDER BY t.task_id ASC",
+                f"SELECT {TASK_DETAIL_PROJECTION.select_clause()} "
+                f"FROM tasks t WHERE t.task_id IN ({placeholders}) ORDER BY t.task_id ASC",
                 tuple(task_wires),
             ),
         )
         attempts = ATTEMPT_PROJECTION.decode(
             snapshot.fetchall(
-                f"SELECT * FROM task_attempts a WHERE a.task_id IN ({placeholders}) "
-                "ORDER BY a.task_id ASC, a.attempt_id ASC",
+                f"SELECT {ATTEMPT_PROJECTION.select_clause()} FROM task_attempts ta "
+                f"WHERE ta.task_id IN ({placeholders}) "
+                "ORDER BY ta.task_id ASC, ta.attempt_id ASC",
                 tuple(task_wires),
             ),
         )
@@ -608,7 +635,11 @@ def _workers_by_id(queries: ControllerDB, worker_ids: set[WorkerId]) -> dict[Wor
     placeholders = ",".join("?" for _ in wires)
     with queries.read_snapshot() as snapshot:
         workers = WORKER_DETAIL_PROJECTION.decode(
-            snapshot.fetchall(f"SELECT * FROM workers w WHERE w.worker_id IN ({placeholders})", tuple(wires)),
+            snapshot.fetchall(
+                f"SELECT {WORKER_DETAIL_PROJECTION.select_clause()} "
+                f"FROM workers w WHERE w.worker_id IN ({placeholders})",
+                tuple(wires),
+            ),
         )
     return {worker.worker_id: worker for worker in workers}
 
@@ -732,7 +763,7 @@ def _find_reservation_ancestor(queries: ControllerDB, job_id: JobName) -> JobNam
     """Walk up the job hierarchy to find the nearest ancestor with a reservation.
 
     Returns the ancestor's JobName, or None if no ancestor has a reservation.
-    Uses the denormalized has_reservation column to avoid decoding request_proto.
+    Uses the has_reservation column on the jobs table.
     """
     current = job_id.parent
     with queries.read_snapshot() as q:
@@ -948,10 +979,6 @@ class ControllerConfig:
     dry_run: bool = False
     """Start in dry-run mode: compute scheduling but suppress all side effects."""
 
-    max_tasks_per_user_per_cycle: int = 8
-    """Maximum tasks from a single user to consider per scheduling cycle.
-    Ensures fairness even without full interleaving. 0 = unlimited."""
-
     user_budget_defaults: UserBudgetDefaults = field(default_factory=UserBudgetDefaults)
     """Default budget settings applied when a new user is first seen."""
 
@@ -1090,6 +1117,7 @@ class Controller:
         # RPC handlers read this dict instead of recomputing diagnostics,
         # avoiding expensive scheduler work on every CLI poll.
         self._scheduling_diagnostics: dict[str, str] = {}
+        self._scheduling_round: int = 0
 
         # Set to True once start() is called. Used to gate operations that
         # are only valid before the controller loops begin (e.g. LoadCheckpoint).
@@ -1266,6 +1294,7 @@ class Controller:
     def _run_prune_loop(self, stop_event: threading.Event) -> None:
         """Background pruning loop: history cleanup every 60s, full data prune on the configured interval."""
         last_full_prune = 0.0
+        resource_history_limiter = RateLimiter(interval_seconds=600.0)
         full_prune_interval = self._config.prune_interval.to_seconds()
 
         while not stop_event.is_set():
@@ -1277,6 +1306,16 @@ class Controller:
                 self._transitions.prune_worker_task_history()
             except Exception:
                 logger.exception("Worker task history cleanup failed")
+
+            if resource_history_limiter.should_run():
+                try:
+                    self._transitions.prune_worker_resource_history()
+                except Exception:
+                    logger.exception("Worker resource history cleanup failed")
+                try:
+                    self._transitions.prune_task_resource_history()
+                except Exception:
+                    logger.exception("Task resource history cleanup failed")
 
             now = time.monotonic()
             if now - last_full_prune >= full_prune_interval:
@@ -1491,18 +1530,15 @@ class Controller:
         return sum(1 for c in claims.values() if c.job_id == job_id_wire)
 
     def _reservation_entry_count(self, job_id: JobName) -> int:
-        """Get the number of reservation entries for a job by decoding request_proto.
+        """Get the number of reservation entries for a job from job_config.
 
-        Only called for the rare jobs that have reservations; the proto decode
-        cost is negligible compared to the worker claim logic.
+        Only called for the rare jobs that have reservations.
         """
         with self._db.read_snapshot() as q:
-            row = q.fetchone("SELECT request_proto FROM jobs WHERE job_id = ?", (job_id.to_wire(),))
-        if row is None:
+            row = q.fetchone("SELECT reservation_json FROM job_config WHERE job_id = ?", (job_id.to_wire(),))
+        if row is None or row[0] is None:
             return 0
-        req = controller_pb2.Controller.LaunchJobRequest()
-        req.ParseFromString(row[0])
-        return len(req.reservation.entries) if req.HasField("reservation") else 0
+        return len(reservation_entries_from_json(row[0]))
 
     def _cleanup_stale_claims(self, claims: dict[WorkerId, ReservationClaim] | None = None) -> bool:
         """Remove claims for workers that disappeared or jobs that finished."""
@@ -1555,7 +1591,7 @@ class Controller:
         reservation_jobs = _jobs_with_reservations(self._db, reservable_states)
         for job in reservation_jobs:
             job_wire = job.job_id.to_wire()
-            for idx, res_entry in enumerate(job.request.reservation.entries):
+            for idx, res_entry in enumerate(reservation_entries_from_json(job.reservation_json)):
                 if (job_wire, idx) in claimed_entries:
                     continue
 
@@ -1589,7 +1625,7 @@ class Controller:
            reservation gates, and per-job cap.
         3. Budget/band interleaving: compute user spend, map tasks to effective
            priority bands (down-weighting over-budget users), round-robin users
-           within each band, and apply per-user cap.
+           within each band.
         4. Preference pass: steer reservation tasks toward their claimed workers
            (skips coscheduled jobs which need atomic assignment).
         5. Normal scheduling: run find_assignments for all remaining tasks.
@@ -1604,16 +1640,28 @@ class Controller:
         is serialized by ControllerDB._lock with multi-statement mutations
         wrapped in BEGIN IMMEDIATE transactions.
         """
+        self._scheduling_round += 1
+        trace = self._scheduling_round % _SCHEDULING_TRACE_INTERVAL == 0
+
         claims = self._refresh_reservation_claims()
 
         timer = Timer()
         state = self._read_scheduling_state()
 
+        if trace:
+            logger.info(
+                "[TRACE round=%d] Phase 0: %d pending tasks, %d workers, %d reservation claims",
+                self._scheduling_round,
+                len(state.pending_tasks),
+                len(state.workers),
+                len(claims),
+            )
+
         if not state.pending_tasks:
             self._scheduling_diagnostics = {}
             return SchedulingOutcome.NO_PENDING_TASKS
 
-        gated = self._apply_scheduling_gates(state.pending_tasks, claims)
+        gated = self._apply_scheduling_gates(state.pending_tasks, claims, trace=trace)
 
         if not gated.schedulable_task_ids:
             self._scheduling_diagnostics = {}
@@ -1623,9 +1671,12 @@ class Controller:
             gated.schedulable_task_ids,
             state.pending_tasks,
             gated.jobs,
+            trace=trace,
         )
 
-        all_assignments, context, tainted_jobs = self._run_scheduler_pass(order, gated, state, claims, timer)
+        all_assignments, context, tainted_jobs = self._run_scheduler_pass(
+            order, gated, state, claims, timer, trace=trace
+        )
 
         preemptions = self._apply_preemptions(order, tainted_jobs, all_assignments, claims, context)
 
@@ -1667,6 +1718,7 @@ class Controller:
         self,
         pending_tasks: list[TaskRow],
         claims: dict[WorkerId, ReservationClaim],
+        trace: bool = False,
     ) -> _GatedCandidates:
         """Filter tasks by deadline, reservation satisfaction, and per-job cap."""
         schedulable_task_ids: list[JobName] = []
@@ -1675,22 +1727,28 @@ class Controller:
         has_direct_reservation: set[JobName] = set()
         tasks_per_job: dict[JobName, int] = defaultdict(int)
         cap = self._config.max_tasks_per_job_per_cycle
+        filter_counts: dict[str, int] = defaultdict(int)
         jobs_by_id = _jobs_by_id(self._db, {task.job_id for task in pending_tasks})
         for task in pending_tasks:
             if not task_row_can_be_scheduled(task):
+                filter_counts["task_not_schedulable"] += 1
                 continue
             job = jobs_by_id.get(task.job_id)
             if not job:
+                filter_counts["job_not_found"] += 1
                 continue
             deadline = job_scheduling_deadline(job.scheduling_deadline_epoch_ms)
             if deadline is not None and deadline.expired():
+                filter_counts["deadline_expired"] += 1
                 self._mark_task_unschedulable(task)
                 continue
             # Gate: skip real tasks whose job has an unsatisfied reservation.
             # Holder tasks are always schedulable (they ARE the reservation).
             if not job.is_reservation_holder and not self._is_reservation_satisfied(job, claims):
+                filter_counts["reservation_unsatisfied"] += 1
                 continue
             if cap > 0 and not job.has_coscheduling and tasks_per_job[task.job_id] >= cap:
+                filter_counts["per_job_cap"] += 1
                 continue
             tasks_per_job[task.job_id] += 1
             schedulable_task_ids.append(task.task_id)
@@ -1701,6 +1759,14 @@ class Controller:
                     has_direct_reservation.add(task.job_id)
                 elif _find_reservation_ancestor(self._db, task.job_id) is not None:
                     has_reservation.add(task.job_id)
+        if trace:
+            logger.info(
+                "[TRACE] Phase 2 gates: %d/%d tasks passed, %d distinct jobs; filtered: %s",
+                len(schedulable_task_ids),
+                len(pending_tasks),
+                len(jobs),
+                dict(filter_counts),
+            )
         return _GatedCandidates(
             schedulable_task_ids=schedulable_task_ids,
             jobs=jobs,
@@ -1713,11 +1779,12 @@ class Controller:
         schedulable_task_ids: list[JobName],
         pending_tasks: list[TaskRow],
         jobs: dict[JobName, JobRequirements],
+        trace: bool = False,
     ) -> _SchedulingOrder:
-        """Compute priority-band interleaving and per-user cap.
+        """Compute priority-band interleaving order.
 
-        Maps tasks to effective bands (down-weighting over-budget users),
-        round-robins users within each band, and applies the per-user cap.
+        Maps tasks to effective bands (down-weighting over-budget users) and
+        round-robins users within each band.
         """
         with self._db.read_snapshot() as budget_snapshot:
             user_spend = compute_user_spend(budget_snapshot)
@@ -1737,18 +1804,16 @@ class Controller:
             user_tasks = [UserTask(user_id=tid.user, task=tid) for tid in band_tasks]
             interleaved.extend(interleave_by_user(user_tasks, user_spend))
 
-        # Per-user cap: limit how many tasks a single user can have considered
-        # per scheduling cycle, ensuring fairness.
-        user_cap = self._config.max_tasks_per_user_per_cycle
-        if user_cap > 0:
-            tasks_per_user: dict[str, int] = defaultdict(int)
-            capped: list[JobName] = []
-            for task_id in interleaved:
-                if tasks_per_user[task_id.user] < user_cap:
-                    capped.append(task_id)
-                    tasks_per_user[task_id.user] += 1
-            interleaved = capped
-
+        if trace:
+            band_summary = {band: len(tids) for band, tids in tasks_by_band.items()}
+            active_spend = {u: v for u, v in user_spend.items() if v > 0}
+            logger.info(
+                "[TRACE] Phase 3 order: %d tasks after interleaving+cap; bands=%s user_spend=%s budget_limits=%s",
+                len(interleaved),
+                band_summary,
+                active_spend,
+                user_budget_limits,
+            )
         return _SchedulingOrder(
             ordered_task_ids=interleaved,
             task_band_map=task_band_map,
@@ -1763,6 +1828,7 @@ class Controller:
         state: _SchedulingStateRead,
         claims: dict[WorkerId, ReservationClaim],
         timer: Timer,
+        trace: bool = False,
     ) -> tuple[list[tuple[JobName, WorkerId]], SchedulingContext, dict[JobName, JobRequirements]]:
         """Run preference + normal assignment passes. Returns (assignments, context, taint-injected jobs)."""
         modified_workers = _inject_reservation_taints(state.workers, claims)
@@ -1777,6 +1843,14 @@ class Controller:
             jobs=modified_jobs,
         )
 
+        if trace:
+            logger.info(
+                "[TRACE] Phase 4 context: %d workers, %d pending tasks, %d jobs",
+                len(context.capacities),
+                len(context.pending_tasks),
+                len(context.jobs),
+            )
+
         # Soft preference — steer reservation tasks toward claimed workers.
         # Skips coscheduled jobs (they need atomic all-or-nothing via find_assignments).
         preference_assignments = _preference_pass(context, gated.has_reservation, claims)
@@ -1784,6 +1858,13 @@ class Controller:
         result = self._scheduler.find_assignments(context)
 
         all_assignments = preference_assignments + result.assignments
+        if trace:
+            logger.info(
+                "[TRACE] Phase 5 assignments: %d total (%d preferred, %d normal)",
+                len(all_assignments),
+                len(preference_assignments),
+                len(result.assignments),
+            )
         if all_assignments:
             with slow_log(logger, "buffer_assignments", threshold_ms=200):
                 self._buffer_assignments(all_assignments)

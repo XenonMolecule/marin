@@ -14,12 +14,14 @@ import pytest
 from starlette.testclient import TestClient
 
 from iris.cluster.bundle import BundleStore
+from iris.cluster.controller.codec import constraints_from_json, resource_spec_from_scalars
 from iris.cluster.controller.dashboard import ControllerDashboard
 from iris.log_server.server import LogServiceImpl
 from iris.cluster.controller.db import (
     healthy_active_workers_with_attributes,
 )
 from iris.cluster.controller.schema import (
+    JOB_CONFIG_JOIN,
     JOB_DETAIL_PROJECTION,
     EndpointRow,
 )
@@ -27,6 +29,7 @@ from iris.cluster.controller.scheduler import JobRequirements, Scheduler
 from iris.cluster.controller.service import ControllerServiceImpl
 from iris.cluster.controller.transitions import Assignment, ControllerTransitions, HeartbeatApplyRequest, TaskUpdate
 from iris.cluster.constraints import WellKnownAttribute
+from iris.cluster.providers.k8s.types import K8sResource
 from iris.cluster.types import JobName, WorkerId
 from iris.rpc import config_pb2, vm_pb2
 from iris.rpc import job_pb2
@@ -125,17 +128,24 @@ def _make_controller_mock(state, scheduler, autoscaler=None):
     def _get_job_scheduling_diagnostics(job_wire_id):
         """Compute diagnostics on the fly for tests (mirrors real controller cache)."""
         with state._db.snapshot() as q:
-            rows = JOB_DETAIL_PROJECTION.decode(q.fetchall("SELECT * FROM jobs WHERE job_id = ?", (job_wire_id,)))
+            rows = JOB_DETAIL_PROJECTION.decode(
+                q.fetchall(
+                    f"SELECT {JOB_DETAIL_PROJECTION.select_clause()} FROM jobs j {JOB_CONFIG_JOIN} WHERE j.job_id = ?",
+                    (job_wire_id,),
+                )
+            )
         if not rows:
             return None
         job = rows[0]
         if job.state != job_pb2.JOB_STATE_PENDING:
             return None
         req = JobRequirements(
-            resources=job.request.resources,
-            constraints=list(job.request.constraints),
-            is_coscheduled=job.request.HasField("coscheduling"),
-            coscheduling_group_by=job.request.coscheduling.group_by if job.request.HasField("coscheduling") else None,
+            resources=resource_spec_from_scalars(
+                job.res_cpu_millicores, job.res_memory_bytes, job.res_disk_bytes, job.res_device_json
+            ),
+            constraints=constraints_from_json(job.constraints_json),
+            is_coscheduled=job.has_coscheduling,
+            coscheduling_group_by=job.coscheduling_group_by if job.has_coscheduling else None,
         )
         tasks = _query_tasks_with_attempts(state, job.job_id)
         schedulable_task_id = next((t.task_id for t in tasks if check_task_can_be_scheduled(t)), None)
@@ -505,7 +515,7 @@ def mock_autoscaler():
                 name="test-group",
                 config=config_pb2.ScaleGroupConfig(
                     name="test-group",
-                    min_slices=1,
+                    buffer_slices=1,
                     max_slices=5,
                     resources=config_pb2.ScaleGroupResources(
                         device_type=config_pb2.ACCELERATOR_TYPE_TPU,
@@ -763,16 +773,16 @@ def test_get_worker_status_includes_running_tasks_and_resource_history(client, s
     task_id = job_id.task(0)
     state.queue_assignments([Assignment(task_id=task_id, worker_id=wid)])
 
-    first = job_pb2.WorkerResourceSnapshot(cpu_percent=25, running_task_count=1)
-    second = job_pb2.WorkerResourceSnapshot(cpu_percent=50, running_task_count=1)
+    first = job_pb2.WorkerResourceSnapshot(host_cpu_percent=25, running_task_count=1)
+    second = job_pb2.WorkerResourceSnapshot(host_cpu_percent=50, running_task_count=1)
     state.apply_task_updates(HeartbeatApplyRequest(worker_id=wid, worker_resource_snapshot=first, updates=[]))
     state.apply_task_updates(HeartbeatApplyRequest(worker_id=wid, worker_resource_snapshot=second, updates=[]))
 
     resp = rpc_post(client, "GetWorkerStatus", {"id": "w1"})
     running_job_ids = resp.get("worker", {}).get("runningJobIds", [])
     assert task_id.to_wire() in running_job_ids
-    assert [entry.get("cpuPercent") for entry in resp.get("resourceHistory", [])] == [25, 50]
-    assert resp.get("currentResources", {}).get("cpuPercent") == 50
+    assert [entry.get("hostCpuPercent") for entry in resp.get("resourceHistory", [])] == [25, 50]
+    assert resp.get("currentResources", {}).get("hostCpuPercent") == 50
 
 
 def test_get_worker_status_unknown_id_returns_error(client):
@@ -1060,7 +1070,7 @@ def test_k8s_cluster_status_returns_nodes_and_pods(state, scheduler, tmp_path):
 
     # Seed nodes and a pod.
     k8s.seed_resource(
-        "node",
+        K8sResource.NODES,
         "node-1",
         {
             "kind": "Node",
@@ -1070,7 +1080,7 @@ def test_k8s_cluster_status_returns_nodes_and_pods(state, scheduler, tmp_path):
         },
     )
     k8s.seed_resource(
-        "pod",
+        K8sResource.PODS,
         "iris-task-0",
         {
             "kind": "Pod",

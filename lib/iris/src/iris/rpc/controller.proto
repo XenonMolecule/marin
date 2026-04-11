@@ -93,6 +93,12 @@ message Controller {
     iris.job.JobPreemptionPolicy preemption_policy = 31;
     iris.job.ExistingJobPolicy existing_job_policy = 32;
     iris.job.PriorityBand priority_band = 33;
+
+    // Per-job override for the task container image. When empty, the worker
+    // uses its cluster-configured default_task_image. Used for jobs that
+    // need a custom runtime (e.g. an image with runsc/skopeo for sandboxing
+    // untrusted child workloads).
+    string task_image = 34;
   }
 
   message LaunchJobResponse {
@@ -108,6 +114,9 @@ message Controller {
   message GetJobStatusResponse {
     iris.job.JobStatus job = 1;
     LaunchJobRequest request = 2;  // Original job request for debugging
+    // Min/max resource usage across currently-running tasks.
+    iris.job.ResourceUsage resource_min = 3;
+    iris.job.ResourceUsage resource_max = 4;
   }
 
   // Lightweight batch state query — returns only the state enum for each job,
@@ -140,19 +149,45 @@ message Controller {
     SORT_DIRECTION_DESC = 2;
   }
 
-  message ListJobsRequest {
-    // Pagination
-    int32 offset = 1;   // Skip first N jobs (default: 0)
-    int32 limit = 2;    // Max jobs to return (default: 50, max: 500)
+  enum JobQueryScope {
+    JOB_QUERY_SCOPE_UNSPECIFIED = 0;
+    JOB_QUERY_SCOPE_ALL = 1;
+    JOB_QUERY_SCOPE_ROOTS = 2;
+    JOB_QUERY_SCOPE_CHILDREN = 3;
+  }
 
-    // Sorting (default: date descending)
+  message JobQuery {
+    // Ancestry scope. Defaults to JOB_QUERY_SCOPE_ALL (flat list, all depths).
+    JobQueryScope scope = 1;
+    // Required when scope == JOB_QUERY_SCOPE_CHILDREN; ignored otherwise.
+    string parent_job_id = 2;
+    // Substring match against job name (case-insensitive).
+    string name_filter = 3;
+    // Exact state name (e.g. "running"). Empty means all user-visible states.
+    string state_filter = 4;
+    JobSortField sort_field = 5;
+    SortDirection sort_direction = 6;
+    int32 offset = 7;
+    int32 limit = 8;  // Max jobs to return (default: 50, max: 500).
+  }
+
+  message ListJobsRequest {
+    // Preferred typed query shape. When set, legacy fields are ignored.
+    JobQuery query = 9;
+
+    // DEPRECATED: legacy flat query fields kept for rolling compatibility
+    // with older clients (e.g. iris.cluster.client.remote_client, CLI).
+    // The server normalizes these into `query` once at ingestion; do not
+    // read them elsewhere. Remove together with the normalization shim
+    // tracked in https://github.com/marin-community/marin/issues/4573
+    // (~2 weeks after the JobQuery rollout).
+    int32 offset = 1;
+    int32 limit = 2;
     JobSortField sort_field = 3;
     SortDirection sort_direction = 4;
-
-    // Filtering
-    string name_filter = 5;  // Filter by job name (substring match)
-    string state_filter = 6; // Filter by state (exact match, e.g., "running")
-    string parent_job_id = 7; // Filter to children of this job ID
+    string name_filter = 5;
+    string state_filter = 6;
+    string parent_job_id = 7;
   }
 
   message ListJobsResponse {
@@ -170,6 +205,8 @@ message Controller {
 
   message GetTaskStatusResponse {
     iris.job.TaskStatus task = 1;
+    // Job-level resource limits for this task's parent job.
+    iris.job.ResourceSpecProto job_resources = 2;
   }
 
   message ListTasksRequest {
@@ -223,8 +260,7 @@ message Controller {
     string address = 1;
     iris.job.WorkerMetadata metadata = 2;
     // Worker ID assigned by the autoscaler via WorkerConfig.
-    // When set, the controller uses this as the canonical worker identity
-    // instead of deriving it from vm_address.
+    // The controller uses this as the canonical worker identity.
     string worker_id = 3;
     // Infrastructure identity from WorkerConfig, set by the autoscaler at
     // bootstrap. Stored in the workers table so restart_worker() can look

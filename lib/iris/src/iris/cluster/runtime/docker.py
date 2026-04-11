@@ -348,7 +348,8 @@ class DockerContainerHandle:
         setup_script = self._generate_setup_script()
         self._write_setup_script(setup_script)
 
-        # Build containers get max(8 GB, task request) memory
+        # Build containers get max(32 GB, task request) memory — uv sync on a large
+        # workspace OOMed at the old 8 GB ceiling on a host with 1.4 TB free.
         task_memory_bytes = self.config.resources.memory_bytes if self.config.resources else 0
         build_memory_bytes = (
             max(self._BUILD_MEMORY_LIMIT_BYTES, task_memory_bytes)
@@ -478,7 +479,7 @@ exec {quoted_cmd}
     def stats(self) -> ContainerStats:
         """Get resource usage statistics."""
         if not self._run_container_id:
-            return ContainerStats(memory_mb=0, cpu_percent=0, process_count=0, available=False)
+            return ContainerStats(memory_mb=0, cpu_millicores=0, process_count=0, available=False)
         return self._docker_stats(self._run_container_id)
 
     def disk_usage_mb(self) -> int:
@@ -602,7 +603,7 @@ exec {quoted_cmd}
     # Docker CLI helpers
     # -------------------------------------------------------------------------
 
-    _BUILD_MEMORY_LIMIT_BYTES = 8 * 1024**3
+    _BUILD_MEMORY_LIMIT_BYTES = 32 * 1024**3
 
     def _docker_create(
         self,
@@ -795,7 +796,7 @@ exec {quoted_cmd}
         if result.returncode != 0:
             return ContainerStats(
                 memory_mb=0,
-                cpu_percent=0,
+                cpu_millicores=0,
                 process_count=0,
                 available=False,
             )
@@ -807,21 +808,24 @@ exec {quoted_cmd}
             memory_mb = _parse_memory_size(memory_str)
 
             cpu_str = stats.get("CPUPerc", "0%").rstrip("%")
-            cpu_percent = int(float(cpu_str)) if cpu_str else 0
+            # Docker reports CPUPerc with 100% == one fully utilized CPU core, so
+            # converting to millicores is a straight percent * 10. See
+            # https://docs.docker.com/reference/cli/docker/container/stats/
+            cpu_millicores = int(float(cpu_str) * 10) if cpu_str else 0
 
             pids_str = stats.get("PIDs", "0")
             process_count = int(pids_str) if pids_str.isdigit() else 0
 
             return ContainerStats(
                 memory_mb=memory_mb,
-                cpu_percent=cpu_percent,
+                cpu_millicores=cpu_millicores,
                 process_count=process_count,
                 available=True,
             )
         except (json.JSONDecodeError, ValueError, KeyError):
             return ContainerStats(
                 memory_mb=0,
-                cpu_percent=0,
+                cpu_millicores=0,
                 process_count=0,
                 available=False,
             )
