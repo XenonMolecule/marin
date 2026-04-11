@@ -3,14 +3,28 @@
 
 """Filter Nemotron-CC v1 to records matching our selected WARC files.
 
+Two filtering modes
+-------------------
+- ``filter_nemotron``: organic only. Scans ``kind=actual/kind2=actual`` across all 5
+  quality levels.
+- ``filter_nemotron_full``: organic plus rephraser-generated. Also scans
+  ``kind=synthetic/kind2=*`` (distill, diverse_qa_pairs, extract_knowledge,
+  knowledge_list, wrap_medium under quality=high; wrap_medium under quality=low).
+  Each synthetic record carries ``metadata.nemotron_url`` pointing back at its source
+  CC URL, so the same URL-based join works. The synthetic variants are what drive
+  Nemotron-CC's headline token-count advantage over DCLM, so the "full" version is
+  the right comparison against DCLM/FineWeb-Edu in apples-to-apples token counts.
+
 Coverage argument
 -----------------
 Join key: nemotron_url field matched against WARC-Target-URI from our WARC headers.
 
 Why this works: Both values originate from the same WARC header (WARC-Target-URI).
 Nemotron's text extraction pipeline (Justext) reads Common Crawl WARCs and preserves
-the URL as-is in the nemotron_url metadata field. Our metadata extraction reads the
-same WARC files and extracts the same header. Therefore, string equality is sufficient.
+the URL as-is in the nemotron_url metadata field — synthetic records preserve it too,
+because they are generated *from* an actual record and inherit its URL. Our metadata
+extraction reads the same WARC files and extracts the same header. Therefore, string
+equality is sufficient.
 
 Scoping: Nemotron v1 data is partitioned by snapshot (filenames contain CC-MAIN-YYYY-WW).
 We only scan files for snapshots present in our WARC set. Since Nemotron processes ALL
@@ -18,9 +32,9 @@ WARCs in each snapshot it covers (verified empirically — a random WARC from CC
 produced matches in Nemotron-CC v2.1), every document from our WARCs that Nemotron kept
 will appear in the snapshot's files.
 
-Quality levels: We scan all 5 quality levels (high, medium-high, medium, medium-low, low)
-for kind=actual. This gives complete coverage of Nemotron's organic data. Synthetic data
-(kind=synthetic) is excluded — it has no URL mapping back to source WARCs.
+Note: the same source URL can appear in *multiple* synthetic records (one per generator),
+so a single WARC document may produce many output rows in the "full" mode. This is
+correct — they're distinct documents in Nemotron-CC's training mix.
 
 Potential gap: URL normalization differences. Mitigated by comparing raw strings (both
 from the same WARC header). Match rate is logged per snapshot for validation.
@@ -52,6 +66,26 @@ QUALITY_LEVELS = ("high", "medium-high", "medium", "medium-low", "low")
 
 @dataclass
 class FilterNemotronConfig:
+    """Actual-only Nemotron-CC filter (scans kind=actual/kind2=actual)."""
+
+    metadata_path: str
+    """Glob pattern for WARC metadata JSONL files."""
+
+    nemotron_base_path: str
+    """GCS base path to Nemotron-CC v1 data-jsonl directory."""
+
+    output_path: str
+
+
+@dataclass
+class FilterNemotronFullConfig:
+    """Full Nemotron-CC filter (actual + all synthetic rephraser variants).
+
+    Separate dataclass from ``FilterNemotronConfig`` so the two filters get
+    distinct executor hashes and output directories even though the field
+    shape is identical.
+    """
+
     metadata_path: str
     """Glob pattern for WARC metadata JSONL files."""
 
@@ -117,16 +151,39 @@ def _load_urls_for_snapshot(snapshot: str, metadata_files: list[str]) -> set[str
     return urls
 
 
-def _list_nemotron_files_for_snapshot(base_path: str, snapshot: str) -> list[dict]:
-    """List all Nemotron files for a single snapshot across all quality levels."""
+def _enumerate_partitions(fs, base: str, include_synthetic: bool) -> list[tuple[str, str, str, str]]:
+    """Enumerate ``(quality, kind, kind2, dir_path)`` tuples to scan.
+
+    Always includes ``kind=actual/kind2=actual`` across all quality levels.
+    When ``include_synthetic`` is True, also auto-discovers every
+    ``kind=synthetic/kind2=*`` directory (e.g. distill, diverse_qa_pairs,
+    extract_knowledge, knowledge_list, wrap_medium). The kind2 set varies
+    per quality level, so we list it dynamically rather than hardcoding.
+    """
+    partitions: list[tuple[str, str, str, str]] = []
+    for quality in QUALITY_LEVELS:
+        partitions.append((quality, "actual", "actual", f"{base}/quality={quality}/kind=actual/kind2=actual"))
+        if include_synthetic:
+            synthetic_root = f"{base}/quality={quality}/kind=synthetic"
+            try:
+                kind2_dirs = fs.ls(synthetic_root, detail=False)
+            except FileNotFoundError:
+                continue
+            for kind2_dir in kind2_dirs:
+                kind2 = kind2_dir.rstrip("/").split("/")[-1].removeprefix("kind2=")
+                partitions.append((quality, "synthetic", kind2, kind2_dir.rstrip("/")))
+    return partitions
+
+
+def _list_nemotron_files_for_snapshot(base_path: str, snapshot: str, include_synthetic: bool) -> list[dict]:
+    """List Nemotron files for a single snapshot across all selected partitions."""
     fs = fsspec.filesystem("gcs") if base_path.startswith("gs://") else fsspec.filesystem("file")
     base = base_path.replace("gs://", "")
     tasks = []
 
-    for quality in QUALITY_LEVELS:
-        actual_dir = f"{base}/quality={quality}/kind=actual/kind2=actual"
+    for quality, kind, kind2, dir_path in _enumerate_partitions(fs, base, include_synthetic):
         try:
-            files = fs.ls(actual_dir, detail=False)
+            files = fs.ls(dir_path, detail=False)
         except FileNotFoundError:
             continue
 
@@ -139,6 +196,8 @@ def _list_nemotron_files_for_snapshot(base_path: str, snapshot: str) -> list[dic
                     {
                         "file_path": f"gs://{f}" if base_path.startswith("gs://") else f,
                         "quality": quality,
+                        "kind": kind,
+                        "kind2": kind2,
                         "snapshot": snapshot,
                     }
                 )
@@ -153,6 +212,8 @@ def _process_nemotron_file(task: dict) -> list[dict]:
 
     file_path = task["file_path"]
     quality = task["quality"]
+    kind = task["kind"]
+    kind2 = task["kind2"]
     snapshot = task["snapshot"]
 
     results = []
@@ -174,58 +235,61 @@ def _process_nemotron_file(task: dict) -> list[dict]:
                             "text": record.get("text", ""),
                             "url": url,
                             "nemotron_quality": quality,
-                            "nemotron_kind": "actual",
+                            "nemotron_kind": kind,
+                            "nemotron_kind2": kind2,
                             "nemotron_id": record.get("id", ""),
                         }
                     )
 
-    logger.info(f"  {snapshot} quality={quality} {file_path.split('/')[-1]}: " f"{matched}/{total} matched")
+    logger.info(
+        f"  {snapshot} quality={quality} kind={kind} kind2={kind2} "
+        f"{file_path.split('/')[-1]}: {matched}/{total} matched"
+    )
     return results
 
 
-def filter_nemotron(config: FilterNemotronConfig) -> None:
-    """Filter Nemotron-CC v1 records matching our WARC files.
+def _run_filter(
+    metadata_path: str,
+    nemotron_base_path: str,
+    output_path: str,
+    include_synthetic: bool,
+    ctx_name_prefix: str,
+) -> None:
+    """Shared implementation for both the actual-only and full variants.
 
     Processes one snapshot at a time to keep memory under 31GB node limit.
     Each snapshot's URL set is ~300MB (vs 10GB for all snapshots at once).
     Within each snapshot, parallelizes across Nemotron files via Zephyr.
     """
-    # Phase 1: Discover which snapshots we need (fast, reads 1 record per file)
-    snapshot_to_files = _get_snapshots_from_metadata(config.metadata_path)
+    snapshot_to_files = _get_snapshots_from_metadata(metadata_path)
 
-    # Track total output shard index across snapshots for unique filenames
-    total_matched = 0
     total_scanned = 0
 
-    # Phase 2: Process one snapshot at a time
     for snap_idx, (snapshot, meta_files) in enumerate(sorted(snapshot_to_files.items())):
         logger.info(f"[{snap_idx + 1}/{len(snapshot_to_files)}] Processing snapshot {snapshot}...")
 
-        # Load URLs for just this snapshot (~300MB, fits in 31GB node)
         url_set = _load_urls_for_snapshot(snapshot, meta_files)
         if not url_set:
             logger.info(f"  {snapshot}: no URLs, skipping")
             continue
 
-        # List Nemotron files for this snapshot
-        tasks = _list_nemotron_files_for_snapshot(config.nemotron_base_path, snapshot)
+        tasks = _list_nemotron_files_for_snapshot(nemotron_base_path, snapshot, include_synthetic)
         if not tasks:
             logger.info(f"  {snapshot}: no Nemotron files found, skipping")
             continue
 
         logger.info(f"  {snapshot}: {len(url_set):,} URLs, {len(tasks)} Nemotron files to scan")
 
-        # Scan and filter in parallel within this snapshot
         pipeline = (
             Dataset.from_list(tasks)
             .flat_map(_process_nemotron_file)
             .write_jsonl(
-                f"{config.output_path}/{snapshot}-{{shard:05d}}-of-{{total:05d}}.jsonl.gz",
+                f"{output_path}/{snapshot}-{{shard:05d}}-of-{{total:05d}}.jsonl.gz",
                 skip_existing=True,
             )
         )
 
-        ctx = ZephyrContext(name=f"filter-nemotron-{snapshot}", max_workers=500)
+        ctx = ZephyrContext(name=f"{ctx_name_prefix}-{snapshot}", max_workers=500)
         ctx.put("url_set", url_set)
         result = ctx.execute(pipeline)
 
@@ -235,5 +299,27 @@ def filter_nemotron(config: FilterNemotronConfig) -> None:
 
     logger.info(
         f"Nemotron filter complete: {len(snapshot_to_files)} snapshots, "
-        f"{total_scanned} files scanned → {config.output_path}"
+        f"{total_scanned} files scanned → {output_path}"
+    )
+
+
+def filter_nemotron(config: FilterNemotronConfig) -> None:
+    """Filter Nemotron-CC v1 to organic (actual) records matching our WARC files."""
+    _run_filter(
+        metadata_path=config.metadata_path,
+        nemotron_base_path=config.nemotron_base_path,
+        output_path=config.output_path,
+        include_synthetic=False,
+        ctx_name_prefix="filter-nemotron",
+    )
+
+
+def filter_nemotron_full(config: FilterNemotronFullConfig) -> None:
+    """Filter Nemotron-CC v1 to organic + rephraser-synthetic records matching our WARC files."""
+    _run_filter(
+        metadata_path=config.metadata_path,
+        nemotron_base_path=config.nemotron_base_path,
+        output_path=config.output_path,
+        include_synthetic=True,
+        ctx_name_prefix="filter-nemotron-full",
     )

@@ -237,3 +237,7 @@ scr/*
 .agents/tmp/
 .codex
 .entire
+
+# Dashboard runtime cache and large manifest data
+experiments/baseline_collection/.dashboard_cache.json
+experiments/distill/dclm_400m_1x_warcs.txt

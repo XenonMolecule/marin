@@ -180,7 +180,7 @@ class DownloadAndExtractConfig:
 
 def _resolve_output_path(config: DownloadAndExtractConfig) -> str:
     """Determine output path based on where the worker is running."""
-    from iris.marin_fs import marin_prefix
+    from rigging.filesystem import marin_prefix
 
     prefix = marin_prefix()
     return f"{prefix}/{config.output_subdir}"
@@ -188,7 +188,7 @@ def _resolve_output_path(config: DownloadAndExtractConfig) -> str:
 
 def _resolve_model_name(config: DownloadAndExtractConfig) -> str:
     """Pick the model weights copy local to this worker's region."""
-    from iris.marin_fs import marin_region
+    from rigging.filesystem import marin_region
 
     region = marin_region()
     if region and region in config.model_name_by_region:

@@ -35,7 +35,7 @@ from experiments.rephraser.extraction_sft_recipe import (
     DEFAULT_SYSTEM_MESSAGE,
     DEFAULT_USER_TEMPLATE_FMT,
 )
-from iris.marin_fs import REGION_TO_DATA_BUCKET
+from rigging.filesystem import REGION_TO_DATA_BUCKET
 from marin.utils import fsspec_glob
 
 logger = logging.getLogger(__name__)
@@ -77,15 +77,11 @@ FLEET: list[TpuFleetEntry] = [
 # ---------------------------------------------------------------------------
 
 # Model weights pre-copied to each regional bucket.
-# Keys are canonical GCP region names (matching iris.marin_fs).
+# Keys are canonical GCP region names (matching REGION_TO_DATA_BUCKET).
 _REPHRASER_CKPT = "checkpoints/qwen3-8b-rephraser-sft-v4-193d7b/hf/step-1318"
 
 MODEL_BY_REGION: dict[str, str] = {
-    "us-central1": f"gs://marin-us-central1/{_REPHRASER_CKPT}",
-    "europe-west4": f"gs://marin-eu-west4/{_REPHRASER_CKPT}",
-    # Pre-copy to additional regions as needed:
-    # "us-central2": f"gs://marin-us-central2/{_REPHRASER_CKPT}",
-    # "us-east5": f"gs://marin-us-east5/{_REPHRASER_CKPT}",
+    region: f"gs://{bucket}/{_REPHRASER_CKPT}" for region, bucket in REGION_TO_DATA_BUCKET.items()
 }
 
 # Output subdirectory (same across all regions).

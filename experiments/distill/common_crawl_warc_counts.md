@@ -1,0 +1,140 @@
+# Common Crawl WARC File Counts
+
+Counted by fetching `https://data.commoncrawl.org/crawl-data/<ID>/warc.paths.gz` for every crawl listed in `https://index.commoncrawl.org/collinfo.json` (122 releases as of 2026-04-10) and counting lines.
+
+| Crawl ID | WARC count |
+|---|---:|
+| CC-MAIN-2008-2009 | N/A |
+| CC-MAIN-2009-2010 | N/A |
+| CC-MAIN-2012 | N/A |
+| CC-MAIN-2013-20 | 31,600 |
+| CC-MAIN-2013-48 | 51,900 |
+| CC-MAIN-2014-10 | 55,700 |
+| CC-MAIN-2014-15 | 46,480 |
+| CC-MAIN-2014-23 | 63,560 |
+| CC-MAIN-2014-35 | 52,849 |
+| CC-MAIN-2014-41 | 49,770 |
+| CC-MAIN-2014-42 | 59,667 |
+| CC-MAIN-2014-49 | 31,916 |
+| CC-MAIN-2014-52 | 43,636 |
+| CC-MAIN-2015-06 | 25,139 |
+| CC-MAIN-2015-11 | 33,002 |
+| CC-MAIN-2015-14 | 29,200 |
+| CC-MAIN-2015-18 | 38,609 |
+| CC-MAIN-2015-22 | 37,188 |
+| CC-MAIN-2015-27 | 31,000 |
+| CC-MAIN-2015-32 | 33,957 |
+| CC-MAIN-2015-35 | 35,300 |
+| CC-MAIN-2015-40 | 25,338 |
+| CC-MAIN-2015-48 | 35,700 |
+| CC-MAIN-2016-07 | 34,900 |
+| CC-MAIN-2016-18 | 22,200 |
+| CC-MAIN-2016-22 | 24,500 |
+| CC-MAIN-2016-26 | 20,200 |
+| CC-MAIN-2016-30 | 32,646 |
+| CC-MAIN-2016-36 | 29,800 |
+| CC-MAIN-2016-40 | 30,374 |
+| CC-MAIN-2016-44 | 56,700 |
+| CC-MAIN-2016-50 | 51,200 |
+| CC-MAIN-2017-04 | 57,800 |
+| CC-MAIN-2017-09 | 65,200 |
+| CC-MAIN-2017-13 | 66,500 |
+| CC-MAIN-2017-17 | 64,700 |
+| CC-MAIN-2017-22 | 56,788 |
+| CC-MAIN-2017-26 | 71,839 |
+| CC-MAIN-2017-30 | 72,000 |
+| CC-MAIN-2017-34 | 72,000 |
+| CC-MAIN-2017-39 | 72,000 |
+| CC-MAIN-2017-43 | 89,100 |
+| CC-MAIN-2017-47 | 80,000 |
+| CC-MAIN-2017-51 | 80,000 |
+| CC-MAIN-2018-05 | 80,000 |
+| CC-MAIN-2018-09 | 80,000 |
+| CC-MAIN-2018-13 | 80,000 |
+| CC-MAIN-2018-17 | 64,320 |
+| CC-MAIN-2018-22 | 64,000 |
+| CC-MAIN-2018-26 | 64,000 |
+| CC-MAIN-2018-30 | 64,000 |
+| CC-MAIN-2018-34 | 71,520 |
+| CC-MAIN-2018-39 | 56,320 |
+| CC-MAIN-2018-43 | 56,000 |
+| CC-MAIN-2018-47 | 56,000 |
+| CC-MAIN-2018-51 | 63,840 |
+| CC-MAIN-2019-04 | 64,000 |
+| CC-MAIN-2019-09 | 64,000 |
+| CC-MAIN-2019-13 | 56,000 |
+| CC-MAIN-2019-18 | 56,000 |
+| CC-MAIN-2019-22 | 56,000 |
+| CC-MAIN-2019-26 | 56,000 |
+| CC-MAIN-2019-30 | 56,000 |
+| CC-MAIN-2019-35 | 56,000 |
+| CC-MAIN-2019-39 | 56,000 |
+| CC-MAIN-2019-43 | 56,000 |
+| CC-MAIN-2019-47 | 56,000 |
+| CC-MAIN-2019-51 | 56,000 |
+| CC-MAIN-2020-05 | 56,000 |
+| CC-MAIN-2020-10 | 56,000 |
+| CC-MAIN-2020-16 | 56,000 |
+| CC-MAIN-2020-24 | 60,000 |
+| CC-MAIN-2020-29 | 60,000 |
+| CC-MAIN-2020-34 | 60,000 |
+| CC-MAIN-2020-40 | 79,600 |
+| CC-MAIN-2020-45 | 72,000 |
+| CC-MAIN-2020-50 | 72,000 |
+| CC-MAIN-2021-04 | 79,840 |
+| CC-MAIN-2021-10 | 64,000 |
+| CC-MAIN-2021-17 | 64,000 |
+| CC-MAIN-2021-21 | 64,000 |
+| CC-MAIN-2021-25 | 64,000 |
+| CC-MAIN-2021-31 | 72,000 |
+| CC-MAIN-2021-39 | 72,000 |
+| CC-MAIN-2021-43 | 72,000 |
+| CC-MAIN-2021-49 | 64,000 |
+| CC-MAIN-2022-05 | 72,000 |
+| CC-MAIN-2022-21 | 80,000 |
+| CC-MAIN-2022-27 | 80,000 |
+| CC-MAIN-2022-33 | 80,000 |
+| CC-MAIN-2022-40 | 80,000 |
+| CC-MAIN-2022-49 | 88,000 |
+| CC-MAIN-2023-06 | 88,000 |
+| CC-MAIN-2023-14 | 80,000 |
+| CC-MAIN-2023-23 | 80,000 |
+| CC-MAIN-2023-40 | 90,000 |
+| CC-MAIN-2023-50 | 90,000 |
+| CC-MAIN-2024-10 | 90,000 |
+| CC-MAIN-2024-18 | 90,000 |
+| CC-MAIN-2024-22 | 90,000 |
+| CC-MAIN-2024-26 | 90,000 |
+| CC-MAIN-2024-30 | 90,000 |
+| CC-MAIN-2024-33 | 90,000 |
+| CC-MAIN-2024-38 | 90,000 |
+| CC-MAIN-2024-42 | 90,000 |
+| CC-MAIN-2024-46 | 90,000 |
+| CC-MAIN-2024-51 | 90,000 |
+| CC-MAIN-2025-05 | 90,000 |
+| CC-MAIN-2025-08 | 90,000 |
+| CC-MAIN-2025-13 | 100,000 |
+| CC-MAIN-2025-18 | 100,000 |
+| CC-MAIN-2025-21 | 100,000 |
+| CC-MAIN-2025-26 | 100,000 |
+| CC-MAIN-2025-30 | 100,000 |
+| CC-MAIN-2025-33 | 100,000 |
+| CC-MAIN-2025-38 | 100,000 |
+| CC-MAIN-2025-43 | 100,000 |
+| CC-MAIN-2025-47 | 100,000 |
+| CC-MAIN-2025-51 | 100,000 |
+| CC-MAIN-2026-04 | 100,000 |
+| CC-MAIN-2026-08 | 100,000 |
+| CC-MAIN-2026-12 | 100,000 |
+
+## Totals
+
+- **Grand total:** 7,925,398 WARC files across 119 crawls with manifests
+- **Total crawls listed in `collinfo.json`:** 122 (3 pre-WARC-era crawls — 2008-2009, 2009-2010, 2012 — have no `warc.paths.gz` and are excluded from the sum)
+- **Largest:** 100,000 WARCs — every crawl from CC-MAIN-2025-13 onward
+- **Smallest:** CC-MAIN-2016-26 at 20,200 WARCs
+
+## Notes
+
+- The suffix after the year is the **ISO week number** of release, not a month — that's why values like `-51` exist and why consecutive crawls jump by 3–5 weeks.
+- Crawl size grew from ~20–55k WARCs (2013–2016) → 56–80k (2017–2022) → 88–90k (2023–early 2025) → 100k (2025-13 onward).

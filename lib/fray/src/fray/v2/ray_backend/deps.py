@@ -169,6 +169,15 @@ def build_runtime_env_for_packages(
     ]
     # Add resiliparse custom index
     requirements_txt.append("--extra-index-url https://marin-community.github.io/chatnoir-resiliparse/simple")
+    # Forward the find-links URLs declared under [tool.uv].find-links in pyproject.toml.
+    # uv export drops these, so pip (used by Ray's runtime-env installer) can't resolve
+    # kitoken/dupekit without them.
+    requirements_txt.append(
+        "--find-links https://github.com/marin-community/marin/releases/expanded_assets/dupekit-0.1.0-40ac799"
+    )
+    requirements_txt.append(
+        "--find-links https://github.com/marin-community/kitoken/releases/expanded_assets/kitoken-0.10.2-a3012f4"
+    )
 
     torch_pkgs = []
     for pkg in package_spec.package_specs + pip_packages:

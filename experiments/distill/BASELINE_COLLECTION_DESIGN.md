@@ -224,10 +224,47 @@ by `dump` (snapshot). Two-stage filter:
   strip trailing slash, sort query params) to maximize match rate.
 - **DCLM will need its own download step.** DCLM-baseline-1.0 is not yet on
   our cluster. We may want to download only the snapshots we need.
-- **Synthetic Nemotron data is excluded for now.** It has no URL or WARC ID.
-  Can be added later by matching against the organic data's URLs.
+- **Synthetic Nemotron data** (`kind=synthetic/kind2={distill, diverse_qa_pairs,
+  extract_knowledge, knowledge_list, wrap_medium}`) **does carry `metadata.nemotron_url`**
+  back-pointing to the source CC doc, so the same URL join works. The original
+  "no URL mapping" claim here was wrong — verified 2026-04-11 against the raw
+  files. Both the organic-only (`filter_nemotron`) and rephraser-included
+  (`filter_nemotron_full`) pipelines are wired up in `pipeline.py` as separate
+  ExecutorSteps.
 - **Per-WARC sharding in the metadata step** means adding 10 WARCs later
   just appends 10 new shards — no reprocessing of existing 3000.
+
+## Results
+
+Token counts on the fixed 3000-WARC slice, tokenized with
+`meta-llama/Meta-Llama-3.1-8B` (Levanter cache stats from `train/.stats.json`):
+
+| dataset                              |  tokens |  docs  | tokens/doc |
+|--------------------------------------|--------:|-------:|-----------:|
+| DCLM                                 |  2.66 B | 2.05 M |      1,300 |
+| Nemotron actual-only                 |  1.92 B | 2.92 M |        658 |
+| Nemotron full (actual + rephraser)   |  2.70 B | 4.99 M |        540 |
+
+Cache locations on GCS:
+
+- `gs://marin-us-central2/tokenized/baseline_dclm-23e9be/train/`
+- `gs://marin-us-central2/tokenized/baseline_nemotron-c67de9/train/`
+- `gs://marin-us-central2/tokenized/baseline_nemotron_full-d4e3af/train/`
+
+Key observations:
+
+- On an **apples-to-apples fixed-WARC slice**, Nemotron-full barely edges out
+  DCLM (+1.2%). The paper's headline "~2× DCLM" is a full-dataset comparison
+  across different source crawls, not a per-WARC comparison on identical input.
+- Nemotron actual-only has **~72% of DCLM's tokens** on this slice — DCLM's
+  resiliparse extraction keeps more text per surviving doc than Nemotron's
+  extractor, and the two quality classifiers retain mostly disjoint doc sets
+  (only ~4% URL overlap on WARC 0 in spot-check).
+- The rephraser contribution is **+40% on top of actual** (1.92 → 2.70 B), not
+  the full ~2× implied by 5 variants-per-doc, because the rephrasers only run on
+  `quality=high` (5 variants) and `quality=low` (wrap_medium only). The three
+  middle quality buckets get zero synthetic expansion. On this WARC sample,
+  only ~14% of actual docs land in `quality=high`.
 
 ## Future Work
 
