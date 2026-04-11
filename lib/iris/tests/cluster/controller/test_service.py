@@ -14,7 +14,13 @@ from connectrpc.errors import ConnectError
 from iris.cluster.constraints import WellKnownAttribute, device_variant_constraint
 from iris.cluster.controller.service import ControllerServiceImpl
 from iris.log_server.server import LogServiceImpl
-from iris.cluster.controller.transitions import Assignment, ControllerTransitions, HeartbeatApplyRequest, TaskUpdate
+from iris.cluster.controller.codec import constraints_from_json
+from iris.cluster.controller.transitions import (
+    Assignment,
+    ControllerTransitions,
+    HeartbeatApplyRequest,
+    TaskUpdate,
+)
 from iris.cluster.types import JobName, WorkerId, tpu_device
 from iris.rpc import job_pb2
 from iris.rpc import controller_pb2
@@ -115,8 +121,7 @@ def test_launch_job_bundle_blob_rewrites_to_controller_bundle_id(service, state)
 
     job = _query_job(state, JobName.root("test-user", "bundle-job"))
     assert job is not None
-    assert job.request.bundle_blob == b""
-    assert len(job.request.bundle_id) == 64
+    assert len(job.bundle_id) == 64
 
 
 def test_launch_job_rejects_duplicate_name(service):
@@ -766,8 +771,8 @@ def test_list_jobs_name_filter(service):
     assert "alpha" in response.jobs[0].name.lower()
 
 
-def test_list_jobs_has_children_flag(service, state):
-    """list_jobs sets has_children on parent jobs and supports parent_job_id filtering."""
+def test_list_jobs_all_scope_includes_descendants(service, state):
+    """Legacy ListJobs behavior returns all jobs, including descendants."""
     service.launch_job(make_job_request("parent-job"), None)
     parent_id = JobName.root("test-user", "parent-job")
     child_id = JobName.from_wire(parent_id.to_wire() + "/child")
@@ -780,21 +785,49 @@ def test_list_jobs_has_children_flag(service, state):
     child_req.entrypoint.run_command.argv[:] = ["python", "-c", "pass"]
     state.submit_job(child_id, child_req, Timestamp.now())
 
-    # Top-level listing returns only the parent with has_children=True
-    response = service.list_jobs(controller_pb2.Controller.ListJobsRequest(), None)
-    assert response.total_count == 1
-    assert len(response.jobs) == 1
-    parent_proto = response.jobs[0]
-    assert parent_proto.job_id == parent_id.to_wire()
-    assert parent_proto.has_children is True
+    request = controller_pb2.Controller.ListJobsRequest()
+    response = service.list_jobs(request, None)
 
-    # Fetch children via parent_job_id filter
-    child_response = service.list_jobs(
-        controller_pb2.Controller.ListJobsRequest(parent_job_id=parent_id.to_wire()),
+    # Both parent and child should appear; total_count counts all matching jobs.
+    job_ids = [j.job_id for j in response.jobs]
+    assert parent_id.to_wire() in job_ids
+    assert child_id.to_wire() in job_ids
+    assert response.total_count == 2
+
+
+def test_list_jobs_job_query_roots_and_children(service, state):
+    """JobQuery supports roots-only and direct-children scopes."""
+    service.launch_job(make_job_request("parent-job"), None)
+    parent_id = JobName.root("test-user", "parent-job")
+    child_id = JobName.from_wire(parent_id.to_wire() + "/child")
+    child_req = controller_pb2.Controller.LaunchJobRequest(
+        name=child_id.to_wire(),
+        entrypoint=job_pb2.RuntimeEntrypoint(),
+        resources=job_pb2.ResourceSpecProto(cpu_millicores=1000, memory_bytes=1024**3),
+        environment=job_pb2.EnvironmentConfig(),
+    )
+    child_req.entrypoint.run_command.argv[:] = ["python", "-c", "pass"]
+    state.submit_job(child_id, child_req, Timestamp.now())
+
+    roots_response = service.list_jobs(
+        controller_pb2.Controller.ListJobsRequest(
+            query=controller_pb2.Controller.JobQuery(scope=controller_pb2.Controller.JOB_QUERY_SCOPE_ROOTS)
+        ),
         None,
     )
-    assert len(child_response.jobs) == 1
-    assert child_response.jobs[0].job_id == child_id.to_wire()
+    assert [job.job_id for job in roots_response.jobs] == [parent_id.to_wire()]
+    assert roots_response.jobs[0].has_children is True
+
+    children_response = service.list_jobs(
+        controller_pb2.Controller.ListJobsRequest(
+            query=controller_pb2.Controller.JobQuery(
+                scope=controller_pb2.Controller.JOB_QUERY_SCOPE_CHILDREN,
+                parent_job_id=parent_id.to_wire(),
+            )
+        ),
+        None,
+    )
+    assert [job.job_id for job in children_response.jobs] == [child_id.to_wire()]
 
 
 # =============================================================================
@@ -920,7 +953,7 @@ def test_launch_job_injects_device_constraints_from_tpu_resource(service, state)
     service.launch_job(request, None)
 
     job = _query_job(state, JobName.root("test-user", "tpu-job"))
-    stored_constraints = list(job.request.constraints)
+    stored_constraints = constraints_from_json(job.constraints_json)
     keys = {c.key for c in stored_constraints}
     assert WellKnownAttribute.DEVICE_TYPE in keys
     assert WellKnownAttribute.DEVICE_VARIANT in keys
@@ -947,7 +980,7 @@ def test_launch_job_user_constraints_override_auto(service, state):
     service.launch_job(request, None)
 
     job = _query_job(state, JobName.root("test-user", "multi-variant-job"))
-    stored_constraints = list(job.request.constraints)
+    stored_constraints = constraints_from_json(job.constraints_json)
 
     # device-variant should be the user's IN constraint, not the auto EQ
     dv_constraints = [c for c in stored_constraints if c.key == WellKnownAttribute.DEVICE_VARIANT]
@@ -972,7 +1005,7 @@ def test_launch_job_cpu_resource_no_constraints_injected(service, state):
     service.launch_job(request, None)
 
     job = _query_job(state, JobName.root("test-user", "cpu-job"))
-    assert len(job.request.constraints) == 0
+    assert len(constraints_from_json(job.constraints_json)) == 0
 
 
 # =============================================================================

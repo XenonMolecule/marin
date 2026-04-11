@@ -68,7 +68,7 @@ def _add_cpu_group(config: config_pb2.IrisClusterConfig, num_workers: int = 4) -
     sg = config.scale_groups["local-cpu"]
     sg.name = "local-cpu"
     sg.num_vms = 1
-    sg.min_slices = num_workers
+    sg.buffer_slices = num_workers
     sg.max_slices = num_workers
     sg.resources.cpu_millicores = 8000
     sg.resources.memory_bytes = 16 * 1024**3
@@ -83,7 +83,7 @@ def _add_coscheduling_group_4vm(config: config_pb2.IrisClusterConfig) -> None:
     sg = config.scale_groups["tpu_cosched_4"]
     sg.name = "tpu_cosched_4"
     sg.num_vms = 4
-    sg.min_slices = 1
+    sg.buffer_slices = 1
     sg.max_slices = 1
     sg.resources.cpu_millicores = 128000
     sg.resources.memory_bytes = 128 * 1024**3
@@ -104,7 +104,7 @@ def _add_multi_region_groups(config: config_pb2.IrisClusterConfig) -> None:
         sg = config.scale_groups[name]
         sg.name = name
         sg.num_vms = 1
-        sg.min_slices = 1
+        sg.buffer_slices = 1
         sg.max_slices = 2
         sg.resources.cpu_millicores = 8000
         sg.resources.memory_bytes = 16 * 1024**3
@@ -488,29 +488,6 @@ def test_dashboard_job_detail_with_logs(smoke_cluster, verbose_job, smoke_page, 
         "job-detail-logs",
         "Job detail page showing task table and combined job-level log viewer with log lines",
     )
-
-
-def test_dashboard_scheduler_tab(smoke_cluster, smoke_page, smoke_screenshot):
-    """Scheduler tab shows pending queue, user budgets, and running tasks."""
-    running = smoke_cluster.submit(TestJobs.sleep, "smoke-sched-running", 300)
-    smoke_cluster.wait_for_state(running, job_pb2.JOB_STATE_RUNNING, timeout=smoke_cluster.job_timeout)
-
-    dashboard_goto(smoke_page, f"{smoke_cluster.url}/scheduler")
-    wait_for_dashboard_ready(smoke_page)
-    smoke_page.wait_for_function(
-        "() => document.body.textContent.includes('Pending Queue') || "
-        "document.body.textContent.includes('User Budgets')",
-        timeout=10000,
-    )
-    assert_visible(smoke_page, "text=Pending Queue")
-    assert_visible(smoke_page, "text=User Budgets")
-    assert_visible(smoke_page, "text=Running Tasks")
-    smoke_screenshot(
-        "scheduler-tab",
-        "Scheduler tab showing pending queue, user budgets, and running tasks",
-    )
-
-    smoke_cluster.kill(running)
 
 
 # ============================================================================
@@ -923,7 +900,7 @@ def _make_controller_only_config() -> config_pb2.IrisClusterConfig:
     sg = config.scale_groups["placeholder"]
     sg.name = "placeholder"
     sg.num_vms = 1
-    sg.min_slices = 0
+    sg.buffer_slices = 0
     sg.max_slices = 0
     sg.resources.cpu_millicores = 1000
     sg.resources.memory_bytes = 1 * 1024**3

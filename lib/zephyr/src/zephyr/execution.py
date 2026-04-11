@@ -19,6 +19,7 @@ import logging
 import os
 import pickle
 import re
+import signal
 import sys
 from datetime import datetime, timezone
 import threading
@@ -26,7 +27,7 @@ import time
 import uuid
 from collections import defaultdict, deque
 from concurrent.futures import ThreadPoolExecutor
-from collections.abc import Callable, Iterable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator
 from contextlib import suppress
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -49,14 +50,17 @@ from zephyr.plan import (
     Scatter,
     Shard,
     SourceItem,
-    StageContext,
     StageType,
     compute_plan,
-    run_stage,
 )
 from zephyr.writers import ensure_parent_dir
 
 logger = logging.getLogger(__name__)
+
+# Maximum number of times a single shard can fail before aborting the pipeline.
+# Covers both explicit task errors (report_error) and implicit worker deaths
+# (heartbeat timeout / OOM).
+MAX_SHARD_FAILURES = 3
 
 
 @dataclass(frozen=True)
@@ -107,7 +111,6 @@ class PickleDiskChunk:
 from zephyr.shuffle import (  # noqa: E402
     ListShard,
     MemChunk,
-    ScatterParquetIterator,  # noqa: F401 — re-exported for external callers
     ScatterShard,  # noqa: F401 — re-exported for plan.py and external callers
     _build_scatter_shard_from_manifest,  # noqa: F401 — re-exported for plan.py
     _make_envelope,
@@ -301,7 +304,7 @@ class ZephyrWorkerError(RuntimeError):
 # that would fail identically on every attempt. Infrastructure errors (OSError,
 # RuntimeError from dead actors, Ray actor errors) are NOT listed here so they
 # remain retryable.
-_NON_RETRYABLE_ERRORS = (ZephyrWorkerError, ValueError, TypeError, KeyError, AttributeError)
+_NON_RETRYABLE_ERRORS = (ZephyrWorkerError, ValueError, TypeError, KeyError, AttributeError, MemoryError)
 
 
 # ---------------------------------------------------------------------------
@@ -315,7 +318,7 @@ class WorkerContext(Protocol):
     def get_counter_snapshot(self) -> CounterSnapshot: ...
 
 
-_worker_ctx_var: ContextVar[ZephyrWorker | None] = ContextVar("zephyr_worker_ctx", default=None)
+_worker_ctx_var: ContextVar[WorkerContext | None] = ContextVar("zephyr_worker_ctx", default=None)
 
 
 def zephyr_worker_ctx() -> WorkerContext:
@@ -367,6 +370,7 @@ class ZephyrCoordinator:
         self._in_flight: dict[str, tuple[ShardTask, int]] = {}
         self._task_attempts: dict[int, int] = {}
         self._fatal_error: str | None = None
+        self._shard_errors: dict[int, list[str]] = {}
         self._chunk_prefix: str = ""
         self._execution_id: str = ""
         self._max_task_retries: int = max_task_retries
@@ -507,6 +511,7 @@ class ZephyrCoordinator:
     def _log_status(self) -> None:
         with self._lock:
             states = list(self._worker_states.values())
+            retried = {idx: att for idx, att in self._task_attempts.items() if att > 0}
         alive = sum(1 for s in states if s in {WorkerState.READY, WorkerState.BUSY})
         dead = sum(1 for s in states if s in {WorkerState.FAILED, WorkerState.DEAD})
         logger.info(
@@ -521,21 +526,68 @@ class ZephyrCoordinator:
             len(self._worker_handles),
             dead,
         )
+        if retried:
+            logger.warning("[%s] Shards retried (shard: attempts): %s", self._execution_id, retried)
 
-    def _maybe_requeue_worker_task(self, worker_id: str) -> None:
-        """If the worker has a task in-flight, re-queue it and mark the worker as failed."""
+    def _record_shard_failure(self, worker_id: str, error_info: str | None = None) -> bool:
+        """Record a failure for the worker's in-flight shard. Must be called with lock held.
+
+        Pops the task from _in_flight, zeros the worker's counter snapshot,
+        records the error, increments the attempt counter, and either re-queues
+        the task or sets _fatal_error when MAX_SHARD_FAILURES is reached.
+
+        Returns True if the shard was aborted (fatal), False otherwise
+        (including when there was no in-flight task).
+        """
         task_and_attempt = self._in_flight.pop(worker_id, None)
-        if task_and_attempt is not None:
-            logger.info("Worker %s had an in-flight task, re-queuing", worker_id)
-            task, _old_attempt = task_and_attempt
-            self._task_attempts[task.shard_idx] += 1
-            self._task_queue.append(task)
-            self._retries += 1
+
         # Zero counters but keep the generation watermark so late heartbeats
         # from the old task are rejected.
         existing = self._worker_counters.get(worker_id)
         if existing is not None:
             self._worker_counters[worker_id] = CounterSnapshot.empty(existing.generation)
+
+        if task_and_attempt is None:
+            return False
+
+        task, _ = task_and_attempt
+        shard_idx = task.shard_idx
+
+        if error_info is not None:
+            self._shard_errors.setdefault(shard_idx, []).append(error_info)
+
+        self._task_attempts[shard_idx] += 1
+        attempts = self._task_attempts[shard_idx]
+
+        if attempts >= MAX_SHARD_FAILURES:
+            errors = self._shard_errors.get(shard_idx, [])
+            error_detail = f"\nLast error:\n{errors[-1]}" if errors else ""
+            logger.error(
+                "Shard %d has failed %d times (max %d), aborting pipeline.",
+                shard_idx,
+                attempts,
+                MAX_SHARD_FAILURES,
+            )
+            self._fatal_error = (
+                f"Shard {shard_idx} failed {attempts} times " f"(max {MAX_SHARD_FAILURES}).{error_detail}"
+            )
+            return True
+
+        logger.warning(
+            "Shard %d failed on worker %s (attempt %d/%d), re-queuing.",
+            shard_idx,
+            worker_id,
+            attempts,
+            MAX_SHARD_FAILURES,
+        )
+        self._task_queue.append(task)
+        self._retries += 1
+        return False
+
+    def _maybe_requeue_worker_task(self, worker_id: str) -> None:
+        """If the worker has a task in-flight, re-queue it unless the shard has
+        exceeded MAX_SHARD_FAILURES, in which case abort the pipeline."""
+        self._record_shard_failure(worker_id)
 
     def _check_worker_heartbeats(self, timeout: float = 120.0) -> None:
         """Internal heartbeat check (called with lock held)."""
@@ -573,7 +625,12 @@ class ZephyrCoordinator:
             self._worker_states[worker_id] = WorkerState.READY
 
             if not self._task_queue:
-                if self._is_last_stage and not self._in_flight:
+                if self._is_last_stage:
+                    # No more work to hand out — exit immediately.  If an
+                    # in-flight worker crashes and its shard is requeued, Iris
+                    # restarts the worker which re-registers and picks it up.
+                    # _check_worker_group() detects permanent worker-job death
+                    # as a failsafe so we never deadlock.
                     self._worker_states[worker_id] = WorkerState.DEAD
                     return "SHUTDOWN"
                 return None
@@ -649,57 +706,18 @@ class ZephyrCoordinator:
             # so late heartbeats from this task are rejected.
             self._worker_counters[worker_id] = CounterSnapshot.empty(counter_snapshot.generation)
 
-    def report_error(self, worker_id: str, shard_idx: int, error_info: str) -> None:
-        """Worker reports a task failure. Re-queues the shard to another worker.
+        """Worker reports a task failure. Re-queues up to MAX_SHARD_FAILURES.
 
-        The failing worker is marked DEAD so it won't receive new tasks. If a
-        shard exceeds max_task_retries or all workers are dead, sets a fatal error
-        that terminates the pipeline.
+        Marks the worker READY on a non-fatal failure so it can pick up the
+        next task — important for expensive workers (e.g., TPU + vLLM engine)
+        where re-initialization costs minutes. Only marks DEAD if the shard
+        has exhausted all retries and aborts the pipeline.
         """
         with self._lock:
             self._last_seen[worker_id] = time.monotonic()
             self._assert_in_flight_consistent(worker_id, shard_idx)
-            task_and_attempt = self._in_flight.pop(worker_id, None)
-            # Zero counters but keep the generation watermark so late
-            # heartbeats from this task are rejected.
-            existing = self._worker_counters.get(worker_id)
-            if existing is not None:
-                self._worker_counters[worker_id] = CounterSnapshot.empty(existing.generation)
-            self._worker_states[worker_id] = WorkerState.DEAD
-            self._retries += 1
-
-            attempts = self._task_attempts.get(shard_idx, 0) + 1
-            self._task_attempts[shard_idx] = attempts
-
-            alive_workers = sum(1 for s in self._worker_states.values() if s not in (WorkerState.DEAD,))
-
-            if attempts >= self._max_task_retries:
-                logger.error(
-                    "Shard %d failed %d times (max %d), marking as fatal",
-                    shard_idx,
-                    attempts,
-                    self._max_task_retries,
-                )
-                self._fatal_error = f"Shard {shard_idx} failed {attempts} times. Last error:\n{error_info}"
-            elif alive_workers == 0:
-                logger.error(
-                    "All workers are dead after worker %s failed on shard %d",
-                    worker_id,
-                    shard_idx,
-                )
-                self._fatal_error = f"All workers are dead. Last error on shard {shard_idx}:\n{error_info}"
-            elif task_and_attempt is not None:
-                task, _old_attempt = task_and_attempt
-                self._task_queue.append(task)
-                logger.warning(
-                    "Worker %s failed on shard %d (attempt %d/%d), re-queued. " "%d alive workers remain. Error: %.200s",
-                    worker_id,
-                    shard_idx,
-                    attempts,
-                    self._max_task_retries,
-                    alive_workers,
-                    error_info,
-                )
+            aborted = self._record_shard_failure(worker_id, error_info)
+            self._worker_states[worker_id] = WorkerState.DEAD if aborted else WorkerState.READY
 
     def heartbeat(self, worker_id: str, counter_snapshot: CounterSnapshot | None = None) -> None:
         self._last_seen[worker_id] = time.monotonic()
@@ -777,6 +795,7 @@ class ZephyrCoordinator:
             self._retries = 0
             self._in_flight = {}
             self._task_attempts = {task.shard_idx: 0 for task in tasks}
+            self._shard_errors = {}
             self._fatal_error = None
             self._is_last_stage = is_last_stage
             # Only reset in-flight worker snapshots; completed snapshots
@@ -910,9 +929,6 @@ class ZephyrCoordinator:
             for items in materialized:
                 flat_result.extend(items)
 
-            # Signal workers to shut down now that all stages are complete.
-            self.shutdown()
-
             return flat_result
         finally:
             with self._lock:
@@ -994,14 +1010,6 @@ class ZephyrCoordinator:
             self._execution_id = execution_id
             self._chunk_size = chunk_size
 
-    def get_chunk_config(self) -> dict:
-        """Return chunk storage configuration for workers."""
-        with self._lock:
-            return {
-                "prefix": self._chunk_prefix,
-                "execution_id": self._execution_id,
-            }
-
     def start_stage(self, stage_name: str, tasks: list[ShardTask], is_last_stage: bool = False) -> None:
         """Load a new stage's tasks into the queue (legacy compat)."""
         self._start_stage(stage_name, tasks, is_last_stage=is_last_stage)
@@ -1010,14 +1018,6 @@ class ZephyrCoordinator:
         """Marks stale workers as FAILED, re-queues their in-flight tasks."""
         with self._lock:
             self._check_worker_heartbeats(timeout)
-
-    def collect_results(self) -> dict[int, TaskResult]:
-        """Return results for the completed stage (legacy compat)."""
-        return self._collect_results()
-
-    def signal_done(self) -> None:
-        """Signal workers that no more stages will be submitted (legacy compat)."""
-        self._shutdown_event.set()
 
 
 # ---------------------------------------------------------------------------
@@ -1039,16 +1039,12 @@ class ZephyrWorker:
         from fray.v2 import current_actor
 
         self._coordinator = coordinator_handle
-        self._shared_data_cache: dict[str, Any] = {}
         self._shutdown_event = threading.Event()
         self._chunk_prefix: str = ""
         self._execution_id: str = ""
-        # Single-writer (task thread) / single-reader (heartbeat thread).
-        # increment_counter is lock-free.  The heartbeat thread copies
-        # _counters via dict() which is safe for approximate reads.
-        self._counters: dict[str, int] = {}
         self._counter_generation: int = 0
         self._last_reported_counters: dict[str, int] = {}
+        self._subprocess_counter_file: str | None = None
 
         # Capture shutdown_event from the actor context while the ContextVar
         # is still set (child threads in Python <3.12 don't inherit it).
@@ -1068,42 +1064,36 @@ class ZephyrWorker:
         )
         self._polling_thread.start()
 
-    def get_shared(self, name: str) -> Any:
-        if name not in self._shared_data_cache:
-            path = _shared_data_path(self._chunk_prefix, self._execution_id, name)
-            logger.info("[%s] Loading shared data '%s' from %s", self._worker_id, name, path)
-            t0 = time.monotonic()
-            with open_url(path, "rb") as f:
-                data = f.read()
-            elapsed = time.monotonic() - t0
-            self._shared_data_cache[name] = cloudpickle.loads(data)
-            logger.info(
-                "[%s] Loaded shared data '%s' in %.2fs (%d bytes)",
-                self._worker_id,
-                name,
-                elapsed,
-                len(data),
-            )
-        return self._shared_data_cache[name]
+    def _heartbeat_counter_snapshot(self) -> CounterSnapshot | None:
+        """Read the live subprocess counter file and return a snapshot if changed.
 
-    def increment_counter(self, name: str, value: int = 1) -> None:
-        self._counters[name] = self._counters.get(name, 0) + value
+        Called once per heartbeat. While ``_subprocess_counter_file`` is set,
+        the subprocess flushes its counter dict to that path every
+        ``SUBPROCESS_COUNTER_FLUSH_INTERVAL`` seconds via an atomic temp-write
+        + rename. We re-read it on each beat, compare to the last reported
+        value, and emit a fresh ``CounterSnapshot`` only when something has
+        actually changed — heartbeats with ``None`` are cheap on the
+        coordinator side. A missing or partially-written counter file (race
+        against the atomic rename, file already cleaned up post-task) is
+        treated as an empty snapshot; the post-shard ``report_result`` call
+        is the source of truth for the final per-task values.
+        """
+        counter_file = self._subprocess_counter_file
+        current: dict[str, int] = {}
+        if counter_file is not None:
+            try:
+                with open(counter_file, "rb") as f:
+                    current = cloudpickle.load(f)
+            except (FileNotFoundError, EOFError, pickle.UnpicklingError):
+                pass
+            except Exception:
+                logger.warning("Failed to read counter file %s", counter_file, exc_info=True)
 
-    def get_counter_snapshot(self) -> CounterSnapshot:
-        self._counter_generation += 1
-        return CounterSnapshot(counters=dict(self._counters), generation=self._counter_generation)
-
-    def _reset_counters(self) -> None:
-        """Clear counters for a new task."""
-        self._counters = {}
-
-    def _counters_changed(self) -> bool:
-        """Return True if counters have changed since the last heartbeat report."""
-        current = self._counters
         if current == self._last_reported_counters:
-            return False
-        self._last_reported_counters = dict(current)
-        return True
+            return None
+        self._last_reported_counters = current
+        self._counter_generation += 1
+        return CounterSnapshot(counters=current, generation=self._counter_generation)
 
     def _run_polling(self, coordinator: ActorHandle) -> None:
         """Main polling loop. Runs in a background thread started by __init__."""
@@ -1138,7 +1128,7 @@ class ZephyrWorker:
                 # Block on result to avoid congesting the coordinator RPC pipe
                 # with fire-and-forget heartbeats. Only send counter snapshot
                 # when values have changed.
-                snapshot = self.get_counter_snapshot() if self._counters_changed() else None
+                snapshot = self._heartbeat_counter_snapshot()
                 coordinator.heartbeat.remote(
                     self._worker_id,
                     snapshot,
@@ -1218,7 +1208,7 @@ class ZephyrWorker:
             logger.info("[%s] Executing task for shard %d (attempt %d)", self._worker_id, task.shard_idx, attempt)
             try:
                 t_0 = time.monotonic()
-                result = self._execute_shard(task, config)
+                result, task_counters = self._execute_shard(task, config)
                 logger.info(
                     "[%s] Task for shard %d completed in %.2f seconds",
                     self._worker_id,
@@ -1227,14 +1217,16 @@ class ZephyrWorker:
                 )
                 # Block until coordinator records the result. This ensures
                 # report_result is fully processed before the next pull_task,
-                # preventing _in_flight tracking races.  Send the final counter
-                # snapshot so no increments are lost between heartbeats.
+                # preventing _in_flight tracking races. The counter snapshot
+                # is built directly from the subprocess result file so no
+                # parent-side counter state needs to be kept in sync.
+                self._counter_generation += 1
                 coordinator.report_result.remote(
                     self._worker_id,
                     task.shard_idx,
                     attempt,
                     result,
-                    self.get_counter_snapshot(),
+                    CounterSnapshot(counters=dict(task_counters), generation=self._counter_generation),
                 ).result()
                 task_count += 1
             except Exception as e:
@@ -1247,10 +1239,24 @@ class ZephyrWorker:
                     "".join(traceback.format_exc()),
                 ).result()
 
-    def _execute_shard(self, task: ShardTask, config: dict) -> TaskResult:
-        """Execute a stage's operations on a single shard.
+    def _execute_shard(self, task: ShardTask, config: dict) -> tuple[TaskResult, dict[str, int]]:
+        """Execute a stage's operations on a single shard, in-process.
 
-        Returns list[TaskResult].
+        Runs the stage directly in the worker actor's process rather than
+        spawning a subprocess. This preserves expensive per-worker state
+        (JAX TPU client, vLLM engine, etc.) across tasks — critical for
+        TPU inference workloads where re-initialization costs minutes.
+
+        Upstream zephyr spawns a subprocess per task for memory isolation;
+        we intentionally diverge to keep per-worker state alive. Python-level
+        ``MemoryError`` is caught and re-raised with shard context. Kernel-
+        level OOM (SIGKILL) cannot be caught in-process — the worker actor
+        will die and be restarted by the orchestrator.
+
+        Returns:
+            ``(TaskResult, counters)`` — counters are read from in-process
+            worker state via ``_counters``. Matches the subprocess contract
+            so the polling loop can handle both code paths.
         """
         # Update config for this execution
         self._chunk_prefix = config["chunk_prefix"]
@@ -1281,17 +1287,27 @@ class ZephyrWorker:
         external_sort_dir = f"{stage_dir}-external-sort/shard-{task.shard_idx:04d}"
         scatter_op = next((op for op in task.operations if isinstance(op, Scatter)), None)
 
-        result = _write_stage_output(
-            run_stage(stage_ctx, task.operations, external_sort_dir=external_sort_dir),
-            source_shard=task.shard_idx,
-            stage_dir=stage_dir,
-            shard_idx=task.shard_idx,
-            scatter_op=scatter_op,
-            total_shards=task.total_shards,
-            chunk_size=config.get("chunk_size", 100_000),
-        )
+        try:
+            result = _write_stage_output(
+                run_stage(stage_ctx, task.operations, external_sort_dir=external_sort_dir),
+                source_shard=task.shard_idx,
+                stage_dir=stage_dir,
+                shard_idx=task.shard_idx,
+                scatter_op=scatter_op,
+                total_shards=task.total_shards,
+                chunk_size=config.get("chunk_size", 100_000),
+            )
+        except MemoryError as e:
+            # Python-level OOM (allocation failure). Re-raise with shard context
+            # so retries/reporting can distinguish memory pressure from other
+            # crashes. Kernel-level OOM (SIGKILL) cannot be caught here — the
+            # worker actor dies and the orchestrator restarts it.
+            raise MemoryError(
+                f"Shard {task.shard_idx} hit MemoryError during in-process execution: {e}"
+            ) from e
+
         logger.info("[shard %d] Complete: %d refs produced", task.shard_idx, len(result.shard.refs))
-        return result
+        return result, dict(self._counters)
 
     def __repr__(self) -> str:
         return f"ZephyrWorker(id={self._worker_id})"
@@ -1341,6 +1357,25 @@ def _regroup_result_refs(
 # ---------------------------------------------------------------------------
 # Coordinator-as-Job infrastructure
 # ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ZephyrExecutionResult:
+    """Result of running a Zephyr pipeline.
+
+    This is also the wire format pickled by ``_run_coordinator_job`` into the
+    result file, so callers of ``ZephyrContext.execute`` receive it as-is.
+
+    Attributes:
+        results: Flat list of items produced by the terminal stage of the
+            pipeline (e.g. output file paths for write stages).
+        counters: Aggregated counter values from the run, including built-in
+            zephyr counters (e.g. ``zephyr/records_in``) and any user counters
+            recorded via ``zephyr.counters.increment``.
+    """
+
+    results: list
+    counters: dict[str, int]
 
 
 @dataclass(frozen=True)
@@ -1427,10 +1462,12 @@ def _run_coordinator_job(config_path: str, result_path: str) -> None:
 
     try:
         results = coordinator.run_pipeline.submit(config.plan, config.execution_id).result()
+        counters = coordinator.get_counters.remote().result(timeout=10.0) or {}
+        payload = ZephyrExecutionResult(results=results, counters=counters)
 
         ensure_parent_dir(result_path)
         with open_url(result_path, "wb") as f:
-            f.write(cloudpickle.dumps(results))
+            f.write(cloudpickle.dumps(payload))
     except Exception as e:
         # Persist the exception so the caller can recover the original type
         # (important for non-retryable error detection).
@@ -1581,7 +1618,7 @@ class ZephyrContext:
         dataset: Dataset,
         verbose: bool = False,
         dry_run: bool = False,
-    ) -> Sequence:
+    ) -> ZephyrExecutionResult:
         """Execute a dataset pipeline.
 
         Submits a coordinator *job* that creates coordinator and worker
@@ -1589,12 +1626,19 @@ class ZephyrContext:
         disk. If the coordinator job dies (e.g., VM preemption), the
         pipeline is retried up to ``max_execution_retries`` times.
         Application errors (``ZephyrWorkerError``) are never retried.
+
+        Returns:
+            A ``ZephyrExecutionResult`` containing the flat list of results
+            produced by the terminal stage and the aggregated counters from
+            the run. Callers that only care about the results should access
+            ``.results``; counters are exposed for callers that want to
+            persist or surface them.
         """
         plan = compute_plan(dataset)
         if verbose or dry_run:
             _print_plan(dataset.operations, plan)
         if dry_run:
-            return []
+            return ZephyrExecutionResult(results=[], counters={})
 
         # NOTE: pipeline ID incremented on clean completion only
         self._pipeline_id += 1
@@ -1655,10 +1699,10 @@ class ZephyrContext:
 
                 # Read results written by the coordinator job.
                 # This must succeed — the job completed successfully.
-                result = _read_coordinator_result(result_path)
-                if isinstance(result, Exception):
-                    raise result
-                return result
+                payload = _read_coordinator_result(result_path)
+                if isinstance(payload, Exception):
+                    raise payload
+                return payload
 
             except _NON_RETRYABLE_ERRORS:
                 raise

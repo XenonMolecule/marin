@@ -264,7 +264,7 @@ class TaskAttempt:
         # Resource tracking
         self.current_memory_mb: int = 0
         self.peak_memory_mb: int = 0
-        self.current_cpu_percent: int = 0
+        self.current_cpu_millicores: int = 0
         self.process_count: int = 0
         self.disk_mb: int = 0
 
@@ -500,8 +500,7 @@ class TaskAttempt:
                 memory_mb=self.current_memory_mb,
                 memory_peak_mb=self.peak_memory_mb,
                 disk_mb=self.disk_mb,
-                cpu_millicores=self.current_cpu_percent * 10,
-                cpu_percent=self.current_cpu_percent,
+                cpu_millicores=self.current_cpu_millicores,
                 process_count=self.process_count,
             ),
             build_metrics=job_pb2.BuildMetrics(
@@ -645,14 +644,23 @@ class TaskAttempt:
         )
 
     def _resolve_image(self) -> None:
-        """Resolve the task image from cluster config.
+        """Resolve the task image from the request override or cluster config.
 
-        No per-job Docker build — the pre-built base image has a pre-warmed
-        uv cache. The remote client wraps the entrypoint with uv sync.
+        Per-task ``task_image`` on the RunTaskRequest takes precedence over the
+        worker's cluster-configured ``default_task_image``. This lets jobs that
+        need a custom runtime (e.g. runsc/skopeo for sandboxing untrusted child
+        workloads) supply their own image without reconfiguring the cluster.
+
+        No per-job Docker build — the chosen image must already exist in the
+        registry. The remote client wraps the entrypoint with uv sync.
         """
-        if not self._default_task_image:
-            raise ValueError("No task image configured. Set defaults.default_task_image in cluster config.")
-        self.image_tag = self._resolve_image_fn(self._default_task_image)
+        requested = self.request.task_image or self._default_task_image
+        if not requested:
+            raise ValueError(
+                "No task image configured. Pass task_image to submit() or set "
+                "defaults.default_task_image in cluster config."
+            )
+        self.image_tag = self._resolve_image_fn(requested)
 
         logger.info("Using task image %s for task %s", self.image_tag, self.task_id)
 
@@ -844,7 +852,7 @@ class TaskAttempt:
                 stats = handle.stats()
                 if stats.available:
                     self.current_memory_mb = stats.memory_mb
-                    self.current_cpu_percent = stats.cpu_percent
+                    self.current_cpu_millicores = stats.cpu_millicores
                     self.process_count = stats.process_count
                     if stats.memory_mb > self.peak_memory_mb:
                         self.peak_memory_mb = stats.memory_mb

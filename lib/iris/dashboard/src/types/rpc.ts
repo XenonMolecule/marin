@@ -45,7 +45,6 @@ export interface ResourceUsage {
   diskMb?: string
   cpuMillicores?: number
   memoryPeakMb?: string
-  cpuPercent?: number
   processCount?: number
 }
 
@@ -95,6 +94,7 @@ export interface TaskStatus {
   pendingReason?: string
   canBeScheduled?: boolean
   containerId?: string
+  resourceHistory?: ResourceUsage[]
 }
 
 // -- Jobs --
@@ -123,6 +123,17 @@ export interface JobStatus {
   hasChildren?: boolean
 }
 
+export interface JobQuery {
+  scope?: string
+  parentJobId?: string
+  nameFilter?: string
+  stateFilter?: string
+  sortField?: string
+  sortDirection?: string
+  offset?: number
+  limit?: number
+}
+
 // -- Controller RPC Responses --
 
 export interface ListJobsResponse {
@@ -134,6 +145,8 @@ export interface ListJobsResponse {
 export interface GetJobStatusResponse {
   job: JobStatus
   request?: LaunchJobRequest
+  resourceMin?: ResourceUsage
+  resourceMax?: ResourceUsage
 }
 
 export interface LaunchJobRequest {
@@ -141,10 +154,12 @@ export interface LaunchJobRequest {
   resources?: ResourceSpecProto
   constraints?: Constraint[]
   replicas?: number
+  priorityBand?: string
 }
 
 export interface GetTaskStatusResponse {
   task: TaskStatus
+  jobResources?: ResourceSpecProto
 }
 
 export interface ListTasksResponse {
@@ -191,7 +206,7 @@ export interface ListWorkersResponse {
 
 export interface WorkerResourceSnapshot {
   timestamp?: ProtoTimestamp
-  cpuPercent?: number
+  hostCpuPercent?: number
   memoryUsedBytes?: string
   memoryTotalBytes?: string
   diskUsedBytes?: string
@@ -404,7 +419,7 @@ export interface ProcessInfo {
   uptimeMs?: string
   memoryRssBytes?: string
   memoryVmsBytes?: string
-  cpuPercent?: number
+  cpuMillicores?: number
   threadCount?: number
   openFdCount?: number
   memoryTotalBytes?: string
@@ -506,4 +521,3 @@ export interface GetSchedulerStateResponse {
   totalPending: number
   totalRunning: number
 }
-
