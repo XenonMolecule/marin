@@ -38,7 +38,12 @@ from experiments.baseline_collection.extract_warc_metadata import (
 )
 from experiments.baseline_collection.filter_dclm import FilterDclmConfig, filter_dclm
 from experiments.baseline_collection.filter_fineweb_edu import FilterFinewebEduConfig, filter_fineweb_edu
-from experiments.baseline_collection.filter_nemotron import FilterNemotronConfig, filter_nemotron
+from experiments.baseline_collection.filter_nemotron import (
+    FilterNemotronConfig,
+    FilterNemotronFullConfig,
+    filter_nemotron,
+    filter_nemotron_full,
+)
 from experiments.defaults import default_tokenize
 
 # --- Paths ---
@@ -108,9 +113,26 @@ extract_text = ExecutorStep(
 
 filter_nemotron_step = ExecutorStep(
     name="filtered/baseline_nemotron",
-    description="Filter Nemotron-CC v1 records matching our 3000 WARCs (join on URL).",
+    description="Filter Nemotron-CC v1 organic (kind=actual) records matching our 3000 WARCs (join on URL).",
     fn=remote(filter_nemotron, resources=ResourceConfig(cpu=4, ram="16g")),
     config=FilterNemotronConfig(
+        metadata_path=extract_metadata / "*.jsonl.gz",
+        nemotron_base_path=NEMOTRON_BASE,
+        output_path=this_output_path(),
+    ),
+)
+
+# Nemotron "full" baseline: organic + all 5 rephraser-synthetic variants
+# (distill, diverse_qa_pairs, extract_knowledge, knowledge_list, wrap_medium).
+# These are the variants that drive Nemotron-CC's headline token-count advantage
+# over DCLM, so this is the right comparison point for the paper's token totals.
+# The organic-only step above is kept as a separate baseline so we can measure
+# the contribution of the rephraser variants directly.
+filter_nemotron_full_step = ExecutorStep(
+    name="filtered/baseline_nemotron_full",
+    description="Filter Nemotron-CC v1 organic + synthetic rephraser records matching our 3000 WARCs (join on URL).",
+    fn=remote(filter_nemotron_full, resources=ResourceConfig(cpu=4, ram="16g")),
+    config=FilterNemotronFullConfig(
         metadata_path=extract_metadata / "*.jsonl.gz",
         nemotron_base_path=NEMOTRON_BASE,
         output_path=this_output_path(),
@@ -148,6 +170,12 @@ filter_fineweb_step = ExecutorStep(
 tokenize_nemotron = default_tokenize(
     name="baseline_nemotron",
     dataset=filter_nemotron_step / "*.jsonl.gz",
+    tokenizer=TOKENIZER,
+)
+
+tokenize_nemotron_full = default_tokenize(
+    name="baseline_nemotron_full",
+    dataset=filter_nemotron_full_step / "*.jsonl.gz",
     tokenizer=TOKENIZER,
 )
 
@@ -239,6 +267,16 @@ tokenize_raw_html = default_tokenize(
 
 if __name__ == "__main__":
     executor_main(
-        steps=[tokenize_nemotron, tokenize_dclm, tokenize_fineweb, tokenize_resiliparse, tokenize_raw_html],
-        description="Baseline dataset collection: Nemotron/DCLM/FineWeb-Edu/resiliparse/raw-HTML for 3000 WARCs.",
+        steps=[
+            tokenize_nemotron,
+            tokenize_nemotron_full,
+            tokenize_dclm,
+            tokenize_fineweb,
+            tokenize_resiliparse,
+            tokenize_raw_html,
+        ],
+        description=(
+            "Baseline dataset collection: Nemotron(actual)/Nemotron(full)/DCLM/"
+            "FineWeb-Edu/resiliparse/raw-HTML for 3000 WARCs."
+        ),
     )

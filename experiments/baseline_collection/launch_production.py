@@ -21,9 +21,9 @@ import os
 import time
 
 from iris.client.client import IrisClient
-from iris.cluster.constraints import preemptible_constraint, region_constraint
+from iris.cluster.constraints import Constraint, ConstraintOp, WellKnownAttribute, preemptible_constraint
 from iris.cluster.types import Entrypoint, EnvironmentSpec, ResourceSpec, tpu_device
-from iris.marin_fs import REGION_TO_DATA_BUCKET
+from rigging.filesystem import REGION_TO_DATA_BUCKET
 
 # All known regions — used to override parent region inheritance
 ALL_REGIONS = sorted(REGION_TO_DATA_BUCKET.keys())
@@ -142,11 +142,20 @@ def submit_fleet(
                         env_vars=env_vars,
                     ),
                     # CRITICAL: override parent inheritance.
-                    # 1. preemptible=True: match preemptible workers (parent is non-preemptible)
-                    # 2. region IN all_regions: prevents Iris from injecting the parent's
-                    #    single-region pin (line 690 of client.py skips inheritance if child
-                    #    already has a region constraint)
-                    constraints=[preemptible_constraint(True), region_constraint(ALL_REGIONS)],
+                    # 1. preemptible=True: match preemptible workers
+                    # 2. SOFT region IN all_regions: prevents parent region inheritance
+                    #    (client.py line 645 skips injection if child has region key)
+                    #    but being SOFT means autoscaler routing isn't restricted to
+                    #    one region — demand spreads across all matching groups.
+                    constraints=[
+                        preemptible_constraint(True),
+                        Constraint(
+                            key=WellKnownAttribute.REGION,
+                            op=ConstraintOp.IN,
+                            values=tuple(ALL_REGIONS),
+                            mode=1,  # CONSTRAINT_MODE_PREFERRED (soft)
+                        ),
+                    ],
                     max_retries_preemption=100,
                     max_retries_failure=3,
                 )

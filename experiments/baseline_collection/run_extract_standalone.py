@@ -112,7 +112,7 @@ def _find_completed_batches_all_regions(warc_hash: str, output_subdir: str) -> s
     Enables cross-region resume: Job A writes batches 0-20 in us-central1,
     gets preempted. Job B picks up in eu-west4 and skips batches 0-20.
     """
-    from iris.marin_fs import REGION_TO_DATA_BUCKET
+    from rigging.filesystem import REGION_TO_DATA_BUCKET
 
     completed = set()
     for bucket in REGION_TO_DATA_BUCKET.values():
@@ -131,7 +131,7 @@ def _is_warc_done(warc_dir: str) -> bool:
 
 def _is_warc_done_any_region(warc_hash: str, output_subdir: str) -> bool:
     """Check if a WARC is done in ANY regional bucket."""
-    from iris.marin_fs import REGION_TO_DATA_BUCKET
+    from rigging.filesystem import REGION_TO_DATA_BUCKET
 
     gcs = fsspec.filesystem("gcs")
     for bucket in REGION_TO_DATA_BUCKET.values():
@@ -151,10 +151,11 @@ def _is_warc_claimed_any_region(warc_hash: str, output_subdir: str, stale_hours:
     ``stale_hours`` are ignored (the claiming job probably died without
     finishing or releasing the claim).
     """
-    from iris.marin_fs import REGION_TO_DATA_BUCKET
+    from rigging.filesystem import REGION_TO_DATA_BUCKET
 
     gcs = fsspec.filesystem("gcs")
     now = time.time()
+    stale_regions = []
     for bucket in REGION_TO_DATA_BUCKET.values():
         path = f"{bucket}/{output_subdir}/data-{warc_hash}/_claimed"
         try:
@@ -168,29 +169,202 @@ def _is_warc_claimed_any_region(warc_hash: str, output_subdir: str, stale_hours:
                     mtime = datetime.datetime.fromisoformat(mtime.replace("Z", "+00:00"))
                 age_hours = (now - mtime.timestamp()) / 3600
                 if age_hours > stale_hours:
-                    logger.info("Stale claim on %s (%.1fh old), ignoring", warc_hash, age_hours)
+                    stale_regions.append((bucket, age_hours))
                     continue
+            # Fresh claim found — log which region has the active worker
+            region = bucket.replace("marin-", "")
+            logger.info("Active claim on %s in %s (fresh), skipping", warc_hash, region)
+            if stale_regions:
+                for sr_bucket, sr_age in stale_regions:
+                    logger.info("  (also has stale claim in %s, %.1fh old)", sr_bucket.replace("marin-", ""), sr_age)
             return True
         except FileNotFoundError:
             continue
         except Exception:
             continue
+    if stale_regions:
+        logger.info(
+            "Only stale claims on %s (%s) — eligible for reclaim",
+            warc_hash,
+            ", ".join(f"{b.replace('marin-', '')}={h:.1f}h" for b, h in stale_regions),
+        )
     return False
 
 
-def _claim_warc(warc_dir: str) -> None:
-    """Write a claim marker indicating this job is processing the WARC."""
+def _claim_warc_atomic(warc_dir: str, stale_hours: float = 3.0) -> bool:
+    """Atomically claim a WARC. Returns True if we won the claim, False if someone else did.
+
+    Uses GCS ``if_generation_match=0`` precondition: the write only succeeds if the
+    object does NOT already exist. First writer wins, all others get 412 Precondition Failed.
+
+    If the file already exists but the claim is stale (older than ``stale_hours``),
+    reclaims it atomically using ``if_generation_match=<current_generation>`` so that
+    only one reclaimer wins.
+    """
+    import datetime
+
+    from google.cloud import storage as gcs_storage
+
     claim_path = f"{warc_dir}/_claimed"
+    # Parse bucket and blob path from gs:// URL
+    if not claim_path.startswith("gs://"):
+        # Local filesystem fallback (for testing)
+        if os.path.exists(claim_path):
+            return False
+        os.makedirs(os.path.dirname(claim_path), exist_ok=True)
+        with open(claim_path, "w") as f:
+            f.write(json.dumps({"pid": os.getpid(), "time": time.time()}))
+        return True
+
+    parts = claim_path.replace("gs://", "").split("/", 1)
+    bucket_name, blob_path = parts[0], parts[1]
+
+    client = gcs_storage.Client()
+    bucket = client.bucket(bucket_name)
+    blob = bucket.blob(blob_path)
+
+    now = time.time()
+    claim_data = json.dumps({
+        "pid": os.getpid(),
+        "time": now,
+        "created_at": now,
+        "host": os.environ.get("HOSTNAME", "unknown"),
+    })
+    try:
+        blob.upload_from_string(claim_data, if_generation_match=0)
+        return True  # We won the claim — no prior file existed
+    except Exception as e:
+        if "conditionNotMet" not in str(e) and "412" not in str(e):
+            raise  # Unexpected error
+
+    # File already exists. Check if the existing claim is stale.
+    try:
+        blob.reload()
+        mtime = blob.updated or blob.time_created
+        if mtime is not None:
+            if isinstance(mtime, str):
+                mtime = datetime.datetime.fromisoformat(mtime.replace("Z", "+00:00"))
+            age_hours = (time.time() - mtime.timestamp()) / 3600
+            if age_hours > stale_hours:
+                # Stale claim — reclaim atomically using current generation.
+                # Only one reclaimer wins; others get 412.
+                logger.info(
+                    "Reclaiming stale local claim in %s (%.1fh old, generation=%d)",
+                    warc_dir,
+                    age_hours,
+                    blob.generation,
+                )
+                try:
+                    blob.upload_from_string(claim_data, if_generation_match=blob.generation)
+                    return True  # We reclaimed the stale claim
+                except Exception as e2:
+                    if "conditionNotMet" in str(e2) or "412" in str(e2):
+                        return False  # Another reclaimer beat us
+                    raise
+    except Exception:
+        pass  # Can't check staleness — conservatively decline
+
+    return False  # Non-stale claim exists, someone else owns it
+
+
+def _refresh_claim(warc_dir: str) -> None:
+    """Refresh an existing claim's timestamp (for stale detection).
+
+    Preserves ``created_at`` so cross-region tiebreaking still works after refresh.
+    """
+    claim_path = f"{warc_dir}/_claimed"
+    created_at = time.time()
+    try:
+        with fsspec.open(claim_path, "r") as f:
+            existing = json.loads(f.read())
+            created_at = existing.get("created_at", created_at)
+    except Exception:
+        pass
     with fsspec.open(claim_path, "w") as f:
-        f.write(json.dumps({"pid": os.getpid(), "time": time.time(), "host": os.environ.get("HOSTNAME", "unknown")}))
+        f.write(json.dumps({
+            "pid": os.getpid(),
+            "time": time.time(),
+            "created_at": created_at,
+            "host": os.environ.get("HOSTNAME", "unknown"),
+        }))
+
+
+def _should_yield_to_older_claim(warc_hash: str, output_subdir: str, my_created_at: float, stale_hours: float = 3.0) -> tuple[bool, str | None]:
+    """Check if another region has a fresh claim we should yield to.
+
+    Returns (should_yield, winning_region). Yields when:
+      1. Another region has a fresh claim with an OLDER ``created_at`` (new vs new race)
+      2. Another region has a fresh legacy claim (no ``created_at`` field) — we
+         conservatively assume the legacy worker started first to avoid duplicates
+         during mixed-fleet transition. Worst case: brief delay until 3h staleness.
+
+    Stale claims (>stale_hours old) are always ignored.
+    """
+    from rigging.filesystem import REGION_TO_DATA_BUCKET
+
+    now = time.time()
+    for bucket in REGION_TO_DATA_BUCKET.values():
+        # Skip our own region — same-region collisions are handled by atomic claim
+        path = f"{bucket}/{output_subdir}/data-{warc_hash}/_claimed"
+        try:
+            with fsspec.open(f"gs://{path}", "r") as f:
+                claim = json.loads(f.read())
+        except Exception:
+            continue
+        last_refresh = claim.get("time", 0)
+        if now - last_refresh > stale_hours * 3600:
+            continue  # stale, ignore
+
+        # Skip our own claim (same host wrote it)
+        my_host = os.environ.get("HOSTNAME", "unknown")
+        if claim.get("host") == my_host:
+            continue
+
+        other_created = claim.get("created_at")
+        if other_created is None:
+            # Legacy claim — assume it started first, yield to it
+            return True, bucket.replace("marin-", "") + " (legacy)"
+        if other_created < my_created_at:
+            return True, bucket.replace("marin-", "")
+    return False, None
 
 
 def _write_batch_output(path: str, records: list[dict]) -> None:
-    """Write a batch of records to a gzipped JSONL file on GCS."""
+    """Write a batch of records to a gzipped JSONL file on GCS, plus a .count sidecar."""
     with fsspec.open(path, "wb") as f:
         with gzip.open(f, "wt", encoding="utf-8") as gz:
             for rec in records:
                 gz.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    # Write tiny sidecar with the record count for cheap aggregation later
+    count_path = path.removesuffix(".jsonl.gz") + ".count"
+    with fsspec.open(count_path, "w") as f:
+        f.write(str(len(records)))
+
+
+def _count_records_in_all_batches(warc_hash: str, output_subdir: str) -> int:
+    """Sum record counts across all batches for a WARC, in ALL regions.
+
+    Reads tiny ``.count`` sidecar files written next to each batch (one int each).
+    No fallback to reading batch files — if a sidecar is missing (legacy batches
+    written before the fix), it's simply not counted. Avoids expensive cross-region
+    decompression. The count will be accurate once all legacy batches drain.
+    """
+    from rigging.filesystem import REGION_TO_DATA_BUCKET
+
+    fs = fsspec.filesystem("gcs")
+    total = 0
+    for bucket in REGION_TO_DATA_BUCKET.values():
+        try:
+            count_paths = fs.glob(f"{bucket}/{output_subdir}/data-{warc_hash}/batch_*.count")
+        except Exception:
+            continue
+        for path in count_paths:
+            try:
+                with fsspec.open(f"gs://{path}", "r") as f:
+                    total += int(f.read().strip())
+            except Exception as e:
+                logger.warning("Failed to read sidecar %s: %s", path, e)
+    return total
 
 
 def _write_done_marker(warc_dir: str, stats: dict) -> None:
@@ -305,8 +479,20 @@ def _process_warc(
         logger.info("Skipping %s (claimed by another job)", warc_path)
         return {"warc": warc_path, "status": "claimed"}
 
-    # Claim this WARC so other jobs skip it
-    _claim_warc(warc_dir)
+    # Atomic claim: only one worker can win. if_generation_match=0 on GCS
+    # ensures first writer wins, all others get 412 Precondition Failed.
+    # NOTE: this only protects against same-region collisions. Cross-region
+    # races are handled below via _should_yield_to_older_claim between batches.
+    if not _claim_warc_atomic(warc_dir):
+        logger.info("Skipping %s (lost atomic claim race)", warc_path)
+        return {"warc": warc_path, "status": "claimed"}
+    # Capture our own created_at for cross-region tiebreaking
+    my_created_at = time.time()
+    try:
+        with fsspec.open(f"{warc_dir}/_claimed", "r") as f:
+            my_created_at = json.loads(f.read()).get("created_at", my_created_at)
+    except Exception:
+        pass
     logger.info("Claimed %s -> %s", warc_path, warc_dir)
 
     # Download
@@ -364,7 +550,42 @@ def _process_warc(
         _write_batch_output(batch_path, output_records)
 
         # Refresh claim so other jobs know we're still alive (3h stale timeout)
-        _claim_warc(warc_dir)
+        _refresh_claim(warc_dir)
+
+        # Check if we still own the claim in our region. If another worker
+        # overwrote it, we lost the race and should stop wasting compute.
+        try:
+            claim_path = f"{warc_dir}/_claimed"
+            with fsspec.open(claim_path, "r") as f:
+                claim_data = json.loads(f.read())
+            my_host = os.environ.get("HOSTNAME", "unknown")
+            if claim_data.get("host") != my_host:
+                logger.warning(
+                    "Lost claim on %s to %s (we are %s). Abandoning WARC.",
+                    warc_path,
+                    claim_data.get("host"),
+                    my_host,
+                )
+                return {"warc": warc_path, "status": "lost_claim", "batches_completed": batch_idx + 1}
+        except Exception:
+            pass  # If we can't read the claim, keep going
+
+        # Cross-region race detection: if another region has a fresh claim with
+        # an OLDER created_at, that worker started first and wins. We yield to
+        # avoid duplicate work. Costs ~6 list+small reads per batch.
+        try:
+            should_yield, winner_region = _should_yield_to_older_claim(h, output_subdir, my_created_at)
+            if should_yield:
+                logger.warning(
+                    "Yielding %s to older claim in %s (we started at %.0f). Stopping after batch %d.",
+                    warc_path,
+                    winner_region,
+                    my_created_at,
+                    batch_idx + 1,
+                )
+                return {"warc": warc_path, "status": "yielded_to_older", "batches_completed": batch_idx + 1}
+        except Exception as e:
+            logger.warning("Cross-region claim check failed: %s", e)
 
         logger.info(
             "Batch %d/%d: kept=%d, filtered=%d -> %s",
@@ -375,17 +596,22 @@ def _process_warc(
             batch_path,
         )
 
-    # All batches done — write completion marker
+    # All batches done — count actual records across all batch files (including
+    # batches written by previous workers we resumed from). One list + reads per WARC.
+    final_kept = _count_records_in_all_batches(h, output_subdir)
+    final_filtered = len(records) - final_kept
     stats = {
         "warc": warc_path,
         "total_records": len(records),
-        "total_kept": total_kept,
-        "total_filtered": total_filtered,
+        "total_kept": final_kept,
+        "total_filtered": final_filtered,
+        "this_run_kept": total_kept,
+        "this_run_filtered": total_filtered,
         "num_batches": num_batches,
         "batch_size": batch_size,
     }
     _write_done_marker(warc_dir, stats)
-    logger.info("WARC complete: %s (kept=%d, filtered=%d)", warc_path, total_kept, total_filtered)
+    logger.info("WARC complete: %s (kept=%d, filtered=%d)", warc_path, final_kept, final_filtered)
     return {"warc": warc_path, "status": "done", **stats}
 
 
@@ -412,16 +638,16 @@ def main():
     args = parser.parse_args()
 
     # Resolve output path from runtime region
-    from iris.marin_fs import marin_prefix
+    from rigging.filesystem import marin_prefix
 
     output_dir = f"{marin_prefix()}/{args.output_subdir}"
     logger.info("Output dir: %s", output_dir)
 
-    # Resolve model
+    # Resolve model — use local region's bucket to avoid cross-region egress
     if args.model:
         model_name = args.model
     else:
-        model_name = "gs://marin-us-central1/checkpoints/qwen3-8b-rephraser-sft-v4-193d7b/hf/step-1318"
+        model_name = f"{marin_prefix()}/checkpoints/qwen3-8b-rephraser-sft-v4-193d7b/hf/step-1318"
     logger.info("Model: %s", model_name)
 
     # Set JAX cache env
@@ -520,6 +746,23 @@ def main():
         )
     else:
         logger.info("Manifest: %d WARCs [%d:%s], sequential order", len(warcs), args.start, args.end)
+
+    # On multi-host slices, each VM gets a different IRIS_TASK_ID.
+    # Format is like "/user/job-name/child/TaskIdx:Attempt" — extract the task index.
+    # Rotate the manifest so each VM starts at a different position, avoiding
+    # claim races between VMs on the same slice.
+    raw_task_id = os.environ.get("IRIS_TASK_ID", "0")
+    try:
+        task_id = int(raw_task_id)
+    except ValueError:
+        # Parse structured ID: take the last path component, then the part before ':'
+        last_part = raw_task_id.rsplit("/", 1)[-1]
+        task_id = int(last_part.split(":")[0])
+        logger.info("Parsed IRIS_TASK_ID=%s -> task_id=%d", raw_task_id, task_id)
+    if task_id > 0 and len(warcs) > 0:
+        offset = (task_id * len(warcs)) // max(task_id + 1, 8)
+        warcs = warcs[offset:] + warcs[:offset]
+        logger.info("Rotated manifest by %d for IRIS_TASK_ID=%d", offset, task_id)
 
     logger.info("batch_size=%d, output_subdir=%s", args.batch_size, args.output_subdir)
 
