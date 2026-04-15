@@ -22,6 +22,7 @@ from dataclasses import dataclass
 
 from experiments.scaling_law_sweeps.completed_adamh import (
     SEQ_LEN,
+    _compute_tensor_parallel_size,
     completed_adamh_heuristic,
 )
 from experiments.scaling_law_sweeps.data_curation_math import (
@@ -347,6 +348,14 @@ def _planned_run_from_candidate(
     model = candidate.model_config
     opt = candidate.optimizer_config
     mem = completed_adamh_heuristic.estimate_memory_bytes(candidate)
+    v4_tpu = pick_v4_type(mem)
+    # Use delphi's canonical TP computation (completed_adamh._compute_tensor_parallel_size).
+    # It returns 1 when batch_size >= num_chips, and rounds up to a power-of-2 TP that
+    # satisfies: (num_chips % tp == 0) and (hidden_dim % (num_chips // tp) == 0).
+    # Without this, multi-host plans with batch_size < total_chips (e.g. d4096-L40-B8
+    # on v4-32, 16 chips) crash in Levanter's _validate_and_set_defaults with
+    # ZeroDivisionError because per_device_parallelism = batch_size // data_axis = 0.
+    tensor_parallel = _compute_tensor_parallel_size(v4_tpu, candidate.batch_size, model.hidden_dim)
     return PlannedRun(
         method_name=method.name,
         experiment_tag=tag,
@@ -365,10 +374,10 @@ def _planned_run_from_candidate(
         t_exp=candidate.tokens,
         t_target=float(target_budget),
         seq_len=seq_len,
-        tensor_parallel=1,
+        tensor_parallel=tensor_parallel,
         z_loss_weight=completed_adamh_heuristic.z_loss_weight,
         estimated_memory_bytes=mem,
-        v4_tpu=pick_v4_type(mem),
+        v4_tpu=v4_tpu,
         v5p_tpu=pick_v5p_type(mem),
         v6e_tpu=pick_v6e_type_single_vm(mem) or "",
     )
