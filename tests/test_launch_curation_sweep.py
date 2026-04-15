@@ -205,7 +205,94 @@ def test_submit_one_retries_set(mock_client, sample_plan):
     )
     kwargs = mock_client.submit.call_args.kwargs
     assert kwargs["max_retries_preemption"] == 100
-    assert kwargs["max_retries_failure"] == 3
+    # 10 (not 3): transient TPU VMs with stale libtpu state can burn 3 retries
+    # without iris rescheduling to a clean worker. See submit_one comment.
+    assert kwargs["max_retries_failure"] == 10
+
+
+def test_submit_one_drops_mismatched_vm_count_variants(mock_client):
+    """Multi-host plans (primary vm_count > 1) MUST not include device-variant
+    alternatives whose vm_count differs from the primary. iris's adjust_tpu_replicas
+    auto-scales replicas to the PRIMARY's vm_count; a mismatched variant means
+    iris asks for N coscheduled tasks from a pool that only has M (M != N), and
+    the job pends forever.
+
+    Concrete case: v4-32 (vm_count=4) primary + v5p-16 (vm_count=2) alternative
+    -> filter must drop v5p-16; constraint either disappears (only primary left)
+    or contains only matching-vm_count variants.
+    """
+    plans = curation_plan.enumerate_plans([METHODS["dclm"]], [None])
+    multi_host = [p for p in plans if p.v4_tpu == "v4-32" and p.v5p_tpu == "v5p-16"]
+    assert multi_host, "expected at least one v4-32+v5p-16 plan in the enumerator"
+    plan = multi_host[0]
+
+    launcher.submit_one(
+        mock_client, plan,
+        child_priority_band=0, wandb_api_key="k", hf_token=None,
+        wandb_project="marin", wandb_entity="marin-community",
+        wandb_group="g", tracker_prefix="gs://t/",
+    )
+    constraints = mock_client.submit.call_args.kwargs["constraints"]
+    variant_constraints = [c for c in constraints if "DEVICE_VARIANT" in repr(c.key)]
+    if variant_constraints:
+        # If a variant constraint was added, every value must have the same
+        # vm_count as the primary.
+        primary_vm_count = launcher._vm_count(plan.v4_tpu)
+        for v in variant_constraints[0].values:
+            assert launcher._vm_count(v) == primary_vm_count, (
+                f"variant {v} has vm_count={launcher._vm_count(v)} but primary "
+                f"{plan.v4_tpu} has vm_count={primary_vm_count} — iris coscheduling will fail"
+            )
+
+
+def test_submit_one_single_host_omits_replicas_and_coscheduling(mock_client, sample_plan):
+    """Single-host plans (vm_count=1) must NOT pass replicas/coscheduling.
+    Observed: adding coscheduling=tpu-name with replicas=1 on v5p-8 coincided
+    with repeated libtpu /dev/vfio busy failures. Yesterday's bare submissions
+    (no replicas, no coscheduling) worked cleanly on the same pool.
+
+    sample_plan is the smallest DCLM plan, which has v4-8 primary (vm_count=1).
+    """
+    # Sanity check: sample_plan IS single-host.
+    assert launcher._vm_count(sample_plan.v4_tpu) == 1
+
+    launcher.submit_one(
+        mock_client, sample_plan,
+        child_priority_band=0, wandb_api_key="k", hf_token=None,
+        wandb_project="marin", wandb_entity="marin-community",
+        wandb_group="g", tracker_prefix="gs://t/",
+    )
+    kwargs = mock_client.submit.call_args.kwargs
+    assert "replicas" not in kwargs, (
+        "single-host should NOT set replicas; iris defaults to 1 anyway"
+    )
+    assert "coscheduling" not in kwargs, (
+        "single-host should NOT set coscheduling; observed to bias iris's scheduler"
+    )
+
+
+def test_submit_one_multi_host_sets_replicas_and_tpu_coscheduling(mock_client):
+    """Multi-host plans (vm_count>1) MUST pass replicas=1 + coscheduling so
+    iris gang-schedules all VMs onto the same TPU slice.
+    """
+    from iris.cluster.types import CoschedulingConfig
+
+    plans = curation_plan.enumerate_plans([METHODS["dclm"]], [None])
+    multi_host = [p for p in plans if launcher._vm_count(p.v4_tpu) > 1]
+    assert multi_host, "expected at least one multi-host plan"
+    plan = multi_host[0]
+
+    launcher.submit_one(
+        mock_client, plan,
+        child_priority_band=0, wandb_api_key="k", hf_token=None,
+        wandb_project="marin", wandb_entity="marin-community",
+        wandb_group="g", tracker_prefix="gs://t/",
+    )
+    kwargs = mock_client.submit.call_args.kwargs
+    assert kwargs["replicas"] == 1
+    cosched = kwargs["coscheduling"]
+    assert isinstance(cosched, CoschedulingConfig)
+    assert cosched.group_by == "tpu-name"
 
 
 # =============================================================================
