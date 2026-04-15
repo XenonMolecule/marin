@@ -881,11 +881,15 @@ def main(argv: list[str] | None = None) -> None:
     for k, v in env.items():
         os.environ[k] = v
 
-    # Multi-host TPU fix: iris's jax_init skips `jax.distributed.initialize`
-    # for TPU, which breaks multi-host training (v4-16+, v5p-16+, v6e-16+).
-    # We call it ourselves here BEFORE Levanter, pulling coordinator info from
-    # iris job context. Single-host is a no-op (libtpu handles it alone).
-    _init_jax_distributed_for_multihost_tpu()
+    # Multi-host TPU: DO NOT call jax.distributed.initialize manually. libtpu's
+    # native bootstrap reads TPU_WORKER_HOSTNAMES (set by iris on multi-VM TPU
+    # jobs) and discovers peer hosts autonomously — the same path Marin's
+    # `run_levanter_train_lm` relies on. Calling it ourselves with a fixed
+    # coordinator port causes fatal "ALREADY_EXISTS: newer incarnation"
+    # errors on preempt-retry: the coordinator state doesn't survive a task's
+    # restart cleanly, so the first task to come back rejects the others as
+    # stale. Observed on d4096-L40 v4-32 plan with 34 failures + 304
+    # preemptions before iris gave up. libtpu's path is preempt-resilient.
 
     train_lm_module = importlib.import_module("levanter.main.train_lm")
     logger.info("Launching levanter.main.train_lm.main() in-process (no nested submit)")
