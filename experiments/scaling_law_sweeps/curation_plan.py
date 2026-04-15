@@ -189,7 +189,12 @@ class PlannedRun:
     v5p_tpu: str = "v5p-8"
     v6e_tpu: str = ""  # empty when plan is too big for v6e single-vm slices
     cpu: float = 32.0
-    memory_gb: int = 128
+    memory_gb: int = 256
+    """Container RAM limit. Was 128 GB, bumped to 256 after observed OOM on
+    multi-host d4096-L40 smoke (peak 126 GB before kill). Smallest VM in our
+    variants is v4-8 at ~400 GiB RAM — 256 GB leaves comfortable headroom
+    while covering larger models. v5p-8 (448 GiB), v6e-4 (720 GiB) all fit.
+    Larger plans (e.g. d4096+) might still push this; per-plan scaling TBD."""
     disk_gb: int = 50
 
     @property
