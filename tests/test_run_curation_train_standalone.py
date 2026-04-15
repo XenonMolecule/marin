@@ -899,6 +899,72 @@ def test_prediction_helpers_reproduce_documented_smoke_values():
     assert _predicted_epochs(plan, method) == pytest.approx(1.62, abs=0.05)
 
 
+def test_early_is_process_0_unset_returns_true(monkeypatch):
+    """Single-host TPU: TPU_WORKER_ID unset -> rank 0."""
+    monkeypatch.delenv("TPU_WORKER_ID", raising=False)
+    assert standalone._early_is_process_0() is True
+
+
+def test_early_is_process_0_zero_returns_true(monkeypatch):
+    """Multi-host TPU: TPU_WORKER_ID=0 -> rank 0 (writer)."""
+    monkeypatch.setenv("TPU_WORKER_ID", "0")
+    assert standalone._early_is_process_0() is True
+
+
+def test_early_is_process_0_nonzero_returns_false(monkeypatch):
+    """Multi-host TPU: TPU_WORKER_ID>0 -> not rank 0 (skip side effects)."""
+    monkeypatch.setenv("TPU_WORKER_ID", "1")
+    assert standalone._early_is_process_0() is False
+    monkeypatch.setenv("TPU_WORKER_ID", "7")
+    assert standalone._early_is_process_0() is False
+
+
+def test_main_non_rank_zero_skips_summary_and_done_marker(tmp_path, monkeypatch):
+    """A non-rank-0 VM (TPU_WORKER_ID=1) must NOT write summary/DONE — those
+    side effects are gated to rank 0 to avoid N replicas racing on the same
+    GCS object. Training itself still runs (Levanter handles per-process
+    gating internally).
+    """
+    p = _sample_plan()
+    tracker_prefix = f"file://{tmp_path}/locks/"
+    (tmp_path / "locks").mkdir()
+    results_prefix = f"file://{tmp_path}/results/"
+    (tmp_path / "results").mkdir()
+
+    monkeypatch.setenv("MARIN_REGION", "us-central1")
+    monkeypatch.delenv("MARIN_PREFIX", raising=False)
+    monkeypatch.setenv("TPU_WORKER_ID", "1")  # non-rank-0 VM
+
+    called = []
+    fake_train_lm_module = MagicMock()
+    fake_train_lm_module.main = lambda cfg: called.append(cfg)
+    write_summary_calls = []
+    with (
+        patch.object(standalone, "_prepare_training_run", lambda c: (c, c.train_config, {}, [])),
+        patch.object(standalone, "_decide_wandb_mode", return_value="online"),
+        patch.object(
+            standalone.importlib,
+            "import_module",
+            lambda name, *a, **kw: (
+                fake_train_lm_module if name == "levanter.main.train_lm" else importlib.import_module(name, *a, **kw)
+            ),
+        ),
+        patch.object(standalone, "_read_last_eval_metrics", return_value=None),
+        patch.object(standalone, "_write_summary",
+                     side_effect=lambda *a, **kw: write_summary_calls.append((a, kw))),
+    ):
+        standalone.main(p.to_cli_args() + [
+            "--tracker-prefix", tracker_prefix,
+            "--tpu-type", "v4-16",
+            "--results-prefix", results_prefix,
+        ])
+
+    assert len(called) == 1, "training must still run on non-rank-0 VMs"
+    assert len(write_summary_calls) == 0, (
+        "non-rank-0 VM must NOT call _write_summary — racing on same GCS path"
+    )
+
+
 def test_main_subsequent_run_in_same_region_succeeds(tmp_path, monkeypatch):
     """Second run with same region should be a no-op claim and proceed normally."""
     p = _sample_plan()

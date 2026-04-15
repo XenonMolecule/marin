@@ -710,10 +710,23 @@ def _write_summary(summary: dict, results_prefix: str, run_name: str) -> None:
         logger.warning("Failed to write summary at %s: %s", path, e)
 
 
+def _early_is_process_0() -> bool:
+    """Pre-JAX-init rank check via TPU_WORKER_ID.
+
+    For multi-host TPU (replicas>1, coscheduled by tpu-name), iris sets
+    `TPU_WORKER_ID=0..N-1` per VM before our entrypoint runs. Single-host
+    runs leave it unset, which we treat as rank 0. We need this BEFORE
+    `jax.distributed.initialize` fires so we can gate side effects (wandb
+    cache I/O, summary writes, DONE markers) to one VM.
+    """
+    return os.environ.get("TPU_WORKER_ID", "0") == "0"
+
+
 def main(argv: list[str] | None = None) -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     args = _parse_args(argv)
     plan = PlannedRun.from_namespace(args)
+    is_process_0 = _early_is_process_0()
 
     # Apply optional run suffix. This isolates checkpoints + WandB run ids +
     # region-lock tracker entries for repeated smoke/debug launches of the same
@@ -739,17 +752,21 @@ def main(argv: list[str] | None = None) -> None:
     )
     logger.info("Region-locked: %s → %s", run_name, bucket)
 
-    # 2b. Start background heartbeat refresher. The tracker stores a
-    #     `last_heartbeat_ts` field, and a future launcher treats a tracker with
-    #     no heartbeat in the last 30 min as STALE (reclaimable by any region).
-    #     Our refresh cadence is 5 min — small fraction of the staleness window,
-    #     so a brief GCS outage doesn't accidentally free the lock.
+    # 2b. Start background heartbeat refresher (rank-0 only). The tracker stores
+    #     a `last_heartbeat_ts` field, and a future launcher treats a tracker
+    #     with no heartbeat in the last 30 min as STALE (reclaimable by any
+    #     region). Our refresh cadence is 5 min — small fraction of the
+    #     staleness window, so a brief GCS outage doesn't free the lock.
+    #     Multi-VM gating: only rank 0 heartbeats. Other VMs skip — N replicas
+    #     all writing the same key is safe (idempotent overwrite) but wasteful.
     run_key = region_tracker.run_key_for(plan.method_name, plan.experiment_tag, run_name)
-    heartbeat_thread, heartbeat_stop = _start_heartbeat_thread(
-        run_key=run_key,
-        region=region,
-        tracker_prefix=args.tracker_prefix,
-    )
+    heartbeat_thread, heartbeat_stop = (None, None)
+    if is_process_0:
+        heartbeat_thread, heartbeat_stop = _start_heartbeat_thread(
+            run_key=run_key,
+            region=region,
+            tracker_prefix=args.tracker_prefix,
+        )
 
     # 3. Compute output_path in the pinned region's bucket.
     output_path = f"{bucket}/checkpoints/isoflop-curation/{run_name}"
@@ -770,7 +787,11 @@ def main(argv: list[str] | None = None) -> None:
     wandb_local_dir = "/app/wandb"
     wandb_cache_thread = None
     wandb_cache_stop = None
-    if wandb_mode == "offline":
+    # Multi-VM gating: only rank 0 manages the wandb cache. Other VMs would
+    # race on the same GCS upload path (last-writer-wins, partial uploads).
+    # WandB itself only emits from process 0 inside Levanter, so non-rank-0
+    # VMs have nothing to cache anyway.
+    if wandb_mode == "offline" and is_process_0:
         _download_wandb_cache_if_exists(wandb_gcs_dir, wandb_local_dir)
         wandb_cache_thread, wandb_cache_stop = _start_wandb_cache_uploader_thread(
             local_dir=wandb_local_dir,
@@ -873,12 +894,16 @@ def main(argv: list[str] | None = None) -> None:
         logger.info("Training finished cleanly.")
     finally:
         # Stop heartbeats so the thread doesn't keep writing after we exit.
-        heartbeat_stop.set()
-        heartbeat_thread.join(timeout=10)
+        # Multi-VM: heartbeat_thread is None on non-rank-0 VMs (skipped at start).
+        if heartbeat_stop is not None:
+            heartbeat_stop.set()
+        if heartbeat_thread is not None:
+            heartbeat_thread.join(timeout=10)
         # Stop the periodic wandb cache uploader + do a final upload in offline
         # mode. Append a sync-pending row so a later helper script can
-        # `wandb sync` these runs back online.
-        if wandb_mode == "offline":
+        # `wandb sync` these runs back online. Rank-0 only — non-rank-0 VMs
+        # have no wandb cache to upload (Levanter's wandb is process-0 only).
+        if wandb_mode == "offline" and is_process_0:
             if wandb_cache_stop is not None:
                 wandb_cache_stop.set()
             if wandb_cache_thread is not None:
@@ -898,10 +923,17 @@ def main(argv: list[str] | None = None) -> None:
                     jsonl_path=args.sync_pending_path,
                 )
 
-    # 7. Write a per-run summary JSON to the central results prefix. This is the
-    #    canonical feed for scaling-law plots — one flat file per completed run
-    #    with plan, method, model, tokens, final-eval metrics. See
-    #    `_build_summary` for the schema.
+    # 7. Write a per-run summary JSON + DONE marker (rank-0 only). N replicas
+    #    racing on the same GCS object is correctness-safe (last-writer-wins,
+    #    same content) but pointless. Non-rank-0 VMs exit cleanly here.
+    if not is_process_0:
+        logger.info("Non-rank-0 VM (TPU_WORKER_ID=%s); exiting without writing summary/DONE.",
+                    os.environ.get("TPU_WORKER_ID"))
+        return
+
+    # Per-run summary JSON to the central results prefix. This is the canonical
+    # feed for scaling-law plots — one flat file per completed run with plan,
+    # method, model, tokens, final-eval metrics. See `_build_summary`.
     final_eval = _read_last_eval_metrics(output_path)
     summary = _build_summary(
         plan=plan,

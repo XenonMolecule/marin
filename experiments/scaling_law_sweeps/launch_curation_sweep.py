@@ -41,13 +41,31 @@ from iris.cluster.constraints import (
     device_variant_constraint,
     preemptible_constraint,
 )
-from iris.cluster.types import Entrypoint, EnvironmentSpec, ResourceSpec, tpu_device
+from iris.cluster.types import (
+    CoschedulingConfig,
+    Entrypoint,
+    EnvironmentSpec,
+    ResourceSpec,
+    get_tpu_topology,
+    tpu_device,
+)
 from iris.rpc import job_pb2
 from rigging.filesystem import REGION_TO_DATA_BUCKET
 
 from experiments.scaling_law_sweeps import curation_plan
 
 logger = logging.getLogger(__name__)
+
+
+def _vm_count(tpu_variant: str) -> int:
+    """Return iris's vm_count for a TPU shape (e.g. v4-16 -> 2, v5p-16 -> 2).
+
+    Single source of truth for vm_count is iris's TPU_TOPOLOGIES table
+    (lib/iris/src/iris/cluster/types.py). Used to filter TPU alternatives down
+    to those matching the primary's vm_count — required for multi-host
+    coscheduling correctness.
+    """
+    return get_tpu_topology(tpu_variant).vm_count
 
 # The TPU-side child script that each iris job will run.
 SCRIPT = "experiments/scaling_law_sweeps/run_curation_train_standalone.py"
@@ -80,6 +98,7 @@ def submit_one(
     extra_env: dict[str, str] | None = None,
     run_suffix: str = "",
     wandb_mode: str = "auto",
+    force_primary_tpu: str | None = None,
 ) -> str:
     """Submit one PlannedRun as an iris TPU job. Returns the iris job id.
 
@@ -103,10 +122,28 @@ def submit_one(
     # stops treating chips as fungible within a VM, we keep variants at matching
     # chip counts: v4-8 + v5p-8 + v6e-4 are all 4-chip slices. v6e-8 (8 chips)
     # is intentionally excluded.
-    tpu_variants = [plan.v4_tpu, plan.v5p_tpu]
-    if plan.v6e_tpu:
-        tpu_variants.append(plan.v6e_tpu)
-    primary_tpu = plan.v4_tpu  # arbitrary — constraint allows any of them
+    if force_primary_tpu:
+        # Smoke/debug override: pin to a specific TPU shape, no alternatives.
+        # Use when you want iris to only consider one shape (e.g. testing
+        # multi-host on v5p-16 without also considering v4-32 in a different
+        # region). vm_count is derived from that shape alone.
+        tpu_variants = [force_primary_tpu]
+        primary_tpu = force_primary_tpu
+    else:
+        tpu_variants = [plan.v4_tpu, plan.v5p_tpu]
+        if plan.v6e_tpu:
+            tpu_variants.append(plan.v6e_tpu)
+        primary_tpu = plan.v4_tpu  # arbitrary — constraint allows any of them
+
+    # vm_count compatibility filter for multi-host. iris's adjust_tpu_replicas
+    # auto-scales replicas using the PRIMARY device's vm_count. If we then land
+    # on a variant with a different vm_count via device_variant_constraint, the
+    # replicas value is wrong (e.g., primary v4-32 vm_count=4, but landing on
+    # v5p-16 vm_count=2 — iris asks for 4 same-tpu-name workers and never finds
+    # them). Filter alternatives to those matching the primary's vm_count;
+    # single-host plans (vm_count=1) keep all alternatives.
+    primary_vm_count = _vm_count(primary_tpu)
+    tpu_variants = [v for v in tpu_variants if _vm_count(v) == primary_vm_count]
 
     cmd_args = [
         "python",
@@ -168,6 +205,24 @@ def submit_one(
     if len(set(tpu_variants)) > 1:
         constraints.append(device_variant_constraint(tpu_variants))
 
+    # Multi-host TPU support: pass replicas=1 + tpu-name coscheduling ONLY for
+    # multi-host shapes (vm_count > 1). iris's `adjust_tpu_replicas`
+    # (lib/iris/src/iris/cluster/types.py:711) auto-scales replicas=1 ->
+    # vm_count for multi-host topologies (v4-16 -> 2 VMs, v4-32 -> 4 VMs).
+    # `coscheduling=group_by="tpu-name"` gang-schedules all replicas onto the
+    # same TPU slice so libtpu can wire up multi-host JAX.
+    #
+    # For single-host (vm_count=1), we OMIT both kwargs. Yesterday's working
+    # single-host submissions didn't set them, and adding
+    # coscheduling=tpu-name with replicas=1 may interact poorly with iris's
+    # scheduler (observed: consistent /dev/vfio busy libtpu collisions on
+    # v5p-8 when coscheduling was set, while yesterday's bare submissions to
+    # the same pool worked). Matches fray's iris_backend.py:67 pattern:
+    # `resolve_coscheduling` only returns a config when replicas > 1.
+    submit_kwargs: dict = {}
+    if primary_vm_count > 1:
+        submit_kwargs["replicas"] = 1
+        submit_kwargs["coscheduling"] = CoschedulingConfig(group_by="tpu-name")
     job = client.submit(
         entrypoint=Entrypoint.from_command(*cmd_args),
         name=f"curation-{plan.run_name_core}"[:200],
@@ -182,8 +237,15 @@ def submit_one(
             env_vars=env_vars,
         ),
         constraints=constraints,
+        **submit_kwargs,
         max_retries_preemption=100,
-        max_retries_failure=3,
+        # max_retries_failure raised from 3 -> 10. Observed: transient TPU VMs
+        # with stale libtpu state (/dev/vfio/N busy) kept failing retries 3x
+        # and iris gave up before routing to a clean VM. 10 gives iris enough
+        # attempts to evict bad workers from the pool and land us on healthy
+        # capacity. Bounded enough that a genuinely broken plan still fails
+        # quickly.
+        max_retries_failure=10,
         priority_band=child_priority_band,
     )
     return str(job.job_id)
@@ -299,6 +361,24 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="If set, limit the total number of children submitted (smoke testing).",
     )
     parser.add_argument(
+        "--filter-name-contains",
+        type=str,
+        default=None,
+        help="If set, only submit plans whose run_name_core contains this substring. "
+        "Useful for targeted smoke launches (e.g. '--filter-name-contains d2560-L26-B8' "
+        "to launch a specific multi-host candidate).",
+    )
+    parser.add_argument(
+        "--force-primary-tpu",
+        type=str,
+        default=None,
+        help="If set, override every plan's primary TPU shape with this value (e.g. "
+        "'v5p-16'). vm_count filtering then drops alternatives whose vm_count differs. "
+        "Use for smoke tests to pin to a specific shape/region regardless of the plan's "
+        "default. Example: '--force-primary-tpu v5p-16' to test multi-host without waiting "
+        "on fresh v4-32 provisioning.",
+    )
+    parser.add_argument(
         "--child-priority",
         choices=["production", "interactive", "batch", "unspecified"],
         default="batch",
@@ -373,6 +453,8 @@ def main(argv: list[str] | None = None) -> None:
         budgets=tuple(args.budgets),
         min_slice_tokens=args.min_slice_tokens,
     )
+    if args.filter_name_contains is not None:
+        plans = [p for p in plans if args.filter_name_contains in p.run_name_core]
     if args.max_count is not None:
         plans = plans[: args.max_count]
 
@@ -413,6 +495,7 @@ def main(argv: list[str] | None = None) -> None:
         allowed_regions=args.allowed_regions,
         run_suffix=args.run_suffix,
         wandb_mode=args.wandb_mode,
+        force_primary_tpu=args.force_primary_tpu,
     )
     logger.info(
         "Result: %d submitted, %d skipped (already done), %d failed",
