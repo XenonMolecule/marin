@@ -48,6 +48,7 @@ from levanter.models.qwen import Qwen3Config
 from levanter.optim import AdamHConfig
 from levanter.tracker.wandb import WandbConfig
 from levanter.trainer import TrainerConfig
+from levanter.utils.mesh import MeshConfig
 from marin.training.training import TrainLmOnPodConfig, _prepare_training_run
 
 from experiments.scaling_law_sweeps import region_tracker
@@ -296,6 +297,15 @@ def _build_train_lm_config(
             per_device_parallelism=-1,
             num_train_steps=plan.train_steps,
             steps_per_eval=1000,
+            # Mesh: plumb tensor_parallel into the "model" axis. Without this,
+            # Levanter's default mesh has model=1 and data=total_chips, so any
+            # multi-host plan with batch_size < total_chips hits ZeroDivisionError
+            # in _validate_and_set_defaults (per_device_parallelism = 0).
+            # Matches Marin's experiments/defaults.py:452 canonical pattern.
+            mesh=MeshConfig(
+                axes={"replica": 1, "data": -1, "model": plan.tensor_parallel},
+            ),
+            allow_nondivisible_batch_size=True,
             # Checkpoint policy: rolling 15-min time-based for preemption recovery
             # (auto-deleted on next save) + one permanent final checkpoint (via
             # trainer.py's `force=True` save at end of training). NO intermediate
