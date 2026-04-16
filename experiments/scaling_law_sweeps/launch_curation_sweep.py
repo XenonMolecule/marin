@@ -251,7 +251,11 @@ def submit_one(
     return str(job.job_id)
 
 
-def is_run_already_complete(plan: curation_plan.PlannedRun, tracker_prefix: str) -> bool:
+def is_run_already_complete(
+    plan: curation_plan.PlannedRun,
+    tracker_prefix: str,
+    run_suffix: str = "",
+) -> bool:
     """Check if a run has already completed (done marker written by prior child).
 
     Flow:
@@ -260,11 +264,21 @@ def is_run_already_complete(plan: curation_plan.PlannedRun, tracker_prefix: str)
       2. Compute the checkpoint output_path in that region's bucket.
       3. Check for `.data_curation_DONE` marker. Return True only if present.
 
+    Both tracker key and output_path use `run_name_core + "-" + suffix` when
+    a suffix is set (matches what the child writes in main()), so
+    skip-if-done catches runs completed under the same suffix — not runs
+    from a DIFFERENT suffix.
+
     Safe (no false positives): we only skip when we can PROVE the run
     completed — any filesystem/network hiccup returns False → re-submit,
     and the child's own region-lock check prevents duplicate work.
     """
-    tracker_path = f"{tracker_prefix.rstrip('/')}/{plan.run_key}"
+    # Reconstruct the effective run_name and tracker key using the suffix —
+    # the child's main() does the same: `run_name = plan.run_name_core + "-" + suffix`.
+    suffix = run_suffix.strip()
+    run_name = plan.run_name_core + (f"-{suffix}" if suffix else "")
+    run_key = f"{plan.method_name}__{plan.experiment_tag}__{run_name}.region"
+    tracker_path = f"{tracker_prefix.rstrip('/')}/{run_key}"
     try:
         fs, urlpath = fsspec.core.url_to_fs(tracker_path)
         if not fs.exists(urlpath):
@@ -275,11 +289,11 @@ def is_run_already_complete(plan: curation_plan.PlannedRun, tracker_prefix: str)
         if region not in region_tracker.REGION_TO_BUCKET:
             return False
     except Exception as e:
-        logger.debug("Tracker read failed for %s: %s", plan.run_name_core, e)
+        logger.debug("Tracker read failed for %s: %s", run_name, e)
         return False
 
     bucket = region_tracker.REGION_TO_BUCKET[region]
-    done_marker = f"{bucket}/checkpoints/isoflop-curation/{plan.run_name_core}/.data_curation_DONE"
+    done_marker = f"{bucket}/checkpoints/isoflop-curation/{run_name}/.data_curation_DONE"
     try:
         fs, urlpath = fsspec.core.url_to_fs(done_marker)
         return fs.exists(urlpath)
@@ -305,8 +319,9 @@ def submit_all(
     """
     submitted: list[str] = []
     skipped: list[curation_plan.PlannedRun] = []
+    run_suffix = submit_kwargs.get("run_suffix", "")
     for i, plan in enumerate(plans):
-        if skip_if_done and is_run_already_complete(plan, tracker_prefix):
+        if skip_if_done and is_run_already_complete(plan, tracker_prefix, run_suffix=run_suffix):
             skipped.append(plan)
             logger.info("[%d/%d] SKIP (already done): %s", i + 1, len(plans), plan.run_name_core)
             continue
