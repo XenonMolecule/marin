@@ -221,10 +221,13 @@ def test_submit_one_drops_mismatched_vm_count_variants(mock_client):
     -> filter must drop v5p-16; constraint either disappears (only primary left)
     or contains only matching-vm_count variants.
     """
+    # Construct a synthetic plan with mismatched vm_count (v4-32 vm=4 + v5p-16 vm=2)
+    # to verify submit_one's filter. The real enumerator now aligns vm_counts, but
+    # submit_one must still handle mismatches defensively.
     plans = curation_plan.enumerate_plans([METHODS["dclm"]], [None])
-    multi_host = [p for p in plans if p.v4_tpu == "v4-32" and p.v5p_tpu == "v5p-16"]
-    assert multi_host, "expected at least one v4-32+v5p-16 plan in the enumerator"
-    plan = multi_host[0]
+    base = [p for p in plans if p.v4_tpu == "v4-32"][0]
+    import dataclasses
+    plan = dataclasses.replace(base, v5p_tpu="v5p-16")  # force mismatch
 
     launcher.submit_one(
         mock_client, plan,
