@@ -32,6 +32,7 @@ from experiments.scaling_law_sweeps.data_curation_math import (
     slice_tokens_for,
     t_exp_ceiling,
 )
+from iris.cluster.types import get_tpu_topology
 from marin.scaling_laws import CandidateConfig, pick_v4_type, pick_v5p_type
 
 logger = logging.getLogger(__name__)
@@ -350,12 +351,27 @@ def _planned_run_from_candidate(
     mem = completed_adamh_heuristic.estimate_memory_bytes(candidate)
     v4_tpu = pick_v4_type(mem)
     # Use delphi's canonical TP computation (completed_adamh._compute_tensor_parallel_size).
-    # It returns 1 when batch_size >= num_chips, and rounds up to a power-of-2 TP that
-    # satisfies: (num_chips % tp == 0) and (hidden_dim % (num_chips // tp) == 0).
-    # Without this, multi-host plans with batch_size < total_chips (e.g. d4096-L40-B8
-    # on v4-32, 16 chips) crash in Levanter's _validate_and_set_defaults with
-    # ZeroDivisionError because per_device_parallelism = batch_size // data_axis = 0.
     tensor_parallel = _compute_tensor_parallel_size(v4_tpu, candidate.batch_size, model.hidden_dim)
+
+    # v5p alternative: pick_v5p_type chooses the smallest v5p that fits the model's
+    # memory. For large v4 plans (v4-32/v4-64), that v5p is often much smaller
+    # (v5p-16/v5p-32) because v5p has 3× more HBM per chip. But the vm_count filter
+    # in submit_one drops alternatives with mismatched vm_count — leaving multi-host
+    # plans with NO fallback when v4 capacity is exhausted.
+    #
+    # Fix: when the memory-optimal v5p has a different vm_count than the v4 primary,
+    # also try the v5p shape with MATCHING vm_count. More chips than needed, but it's
+    # schedulable and v5p capacity is usually available when v4 is exhausted.
+    v5p_tpu = pick_v5p_type(mem)
+    v4_vm_count = get_tpu_topology(v4_tpu).vm_count
+    if v4_vm_count > 1 and get_tpu_topology(v5p_tpu).vm_count != v4_vm_count:
+        matching = f"v5p-{v4_vm_count * 8}"  # v5p-N: N = vm_count * 8 (cores)
+        try:
+            get_tpu_topology(matching)  # verify it's a valid shape
+            v5p_tpu = matching
+        except ValueError:
+            pass  # no matching v5p shape exists; keep memory-optimal pick
+
     return PlannedRun(
         method_name=method.name,
         experiment_tag=tag,
@@ -378,7 +394,7 @@ def _planned_run_from_candidate(
         z_loss_weight=completed_adamh_heuristic.z_loss_weight,
         estimated_memory_bytes=mem,
         v4_tpu=v4_tpu,
-        v5p_tpu=pick_v5p_type(mem),
+        v5p_tpu=v5p_tpu,
         v6e_tpu=pick_v6e_type_single_vm(mem) or "",
     )
 
