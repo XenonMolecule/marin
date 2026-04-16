@@ -529,6 +529,31 @@ def _init_jax_distributed_for_multihost_tpu() -> bool:
     task_index = job_info.task_index
     ctx = iris_ctx()
 
+    # Retry wrapper for ALREADY_EXISTS "newer incarnation" errors. Under
+    # heavy preemption, one task's restart creates a new incarnation id; the
+    # surviving peers hold the old coordinator's connection and the new
+    # incarnation's RegisterTask is rejected. Sleep + retry gives iris's
+    # gang-scheduling time to restart all N tasks in sync.
+    import time as _time
+
+    def _initialize_with_retry(coordinator: str, num_tasks: int, task_index: int, max_attempts: int = 6) -> None:
+        for attempt in range(max_attempts):
+            try:
+                jax.distributed.initialize(coordinator, num_tasks, task_index)
+                return
+            except Exception as exc:
+                msg = str(exc)
+                transient = "ALREADY_EXISTS" in msg or "newer incarnation" in msg or "DEADLINE_EXCEEDED" in msg
+                if not transient or attempt == max_attempts - 1:
+                    raise
+                backoff = 10 * (2**attempt)  # 10, 20, 40, 80, 160s; total ~5 min
+                logger.warning(
+                    "jax.distributed.initialize transient error (attempt %d/%d); "
+                    "sleeping %ds before retry: %s",
+                    attempt + 1, max_attempts, backoff, msg[:200],
+                )
+                _time.sleep(backoff)
+
     if task_index == 0:
         bound_port = job_info.ports.get("jax", DEFAULT_PORT)
         coordinator = f"{job_info.advertise_host}:{bound_port}"
@@ -544,7 +569,7 @@ def _init_jax_distributed_for_multihost_tpu() -> bool:
             coordinator,
             job_info.num_tasks,
         )
-        jax.distributed.initialize(coordinator, job_info.num_tasks, task_index)
+        _initialize_with_retry(coordinator, job_info.num_tasks, task_index)
     else:
         coordinator = _poll_for_coordinator(ctx.resolver, ENDPOINT_NAME, 900, 5.0)
         logger.info(
@@ -553,7 +578,7 @@ def _init_jax_distributed_for_multihost_tpu() -> bool:
             coordinator,
             job_info.num_tasks,
         )
-        jax.distributed.initialize(coordinator, job_info.num_tasks, task_index)
+        _initialize_with_retry(coordinator, job_info.num_tasks, task_index)
 
     logger.info(
         "jax.distributed initialized: jax.process_count()=%d, jax.process_index()=%d",
@@ -891,15 +916,19 @@ def main(argv: list[str] | None = None) -> None:
     for k, v in env.items():
         os.environ[k] = v
 
-    # Multi-host TPU: DO NOT call jax.distributed.initialize manually. libtpu's
-    # native bootstrap reads TPU_WORKER_HOSTNAMES (set by iris on multi-VM TPU
-    # jobs) and discovers peer hosts autonomously — the same path Marin's
-    # `run_levanter_train_lm` relies on. Calling it ourselves with a fixed
-    # coordinator port causes fatal "ALREADY_EXISTS: newer incarnation"
-    # errors on preempt-retry: the coordinator state doesn't survive a task's
-    # restart cleanly, so the first task to come back rejects the others as
-    # stale. Observed on d4096-L40 v4-32 plan with 34 failures + 304
-    # preemptions before iris gave up. libtpu's path is preempt-resilient.
+    # Multi-host TPU init: libtpu's TPU_WORKER_HOSTNAMES bootstrap populates
+    # jax.devices() (all N chips visible) but does NOT initialize the Python
+    # jax.distributed.Client — Levanter's multihost_broadcast_sync / barrier /
+    # checkpoint coordination all need that client. So we DO need an explicit
+    # jax.distributed.initialize for multi-host.
+    #
+    # ALREADY_EXISTS on preempt-retry: when one task restarts with a new
+    # incarnation id but surviving peers still hold the old coordinator's
+    # connection, the newer incarnation's RegisterTask aborts. Swallow that
+    # specific failure and retry a few times — iris's gang-scheduling will
+    # eventually bring all 4 tasks back in sync. Any other jax.distributed
+    # exception propagates.
+    _init_jax_distributed_for_multihost_tpu()
 
     train_lm_module = importlib.import_module("levanter.main.train_lm")
     logger.info("Launching levanter.main.train_lm.main() in-process (no nested submit)")
