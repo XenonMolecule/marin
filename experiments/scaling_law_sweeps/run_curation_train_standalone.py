@@ -536,10 +536,20 @@ def _init_jax_distributed_for_multihost_tpu() -> bool:
     # gang-scheduling time to restart all N tasks in sync.
     import time as _time
 
+    # Default JAX coordinator timeout is 300s (5 min). For 4-VM gang-scheduled
+    # plans (v4-32), VMs often don't boot within that window — container pull,
+    # venv install, GCS sync can each add minutes. 900s (15 min) covers the
+    # worst-case boot skew we've observed while still failing reasonably fast
+    # on truly broken topologies.
+    INIT_TIMEOUT_SECONDS = 900
+
     def _initialize_with_retry(coordinator: str, num_tasks: int, task_index: int, max_attempts: int = 6) -> None:
         for attempt in range(max_attempts):
             try:
-                jax.distributed.initialize(coordinator, num_tasks, task_index)
+                jax.distributed.initialize(
+                    coordinator, num_tasks, task_index,
+                    initialization_timeout=INIT_TIMEOUT_SECONDS,
+                )
                 return
             except Exception as exc:
                 msg = str(exc)
