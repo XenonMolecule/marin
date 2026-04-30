@@ -1,0 +1,99 @@
+# Copyright The Marin Authors
+# SPDX-License-Identifier: Apache-2.0
+
+"""Re-tokenize the deduped resiliparse and llm_curated jsonl trees.
+
+Mirrors ``rebuild_bos_fixed.py`` but points at the deduped outputs from
+``experiments/baseline_collection/dedup/dedup_{resiliparse,llm_curated}.py``.
+The deduped trees preserve the original ``text`` column, so the default
+``TextLmDatasetFormat`` (text_key="text") tokenizes the right field.
+
+The resulting caches will have the same shape as the existing
+``baseline_{llm_curated,resiliparse}_*`` caches but with ~26 % / ~42 %
+fewer tokens (matching the doc-rate dedup gains for each source).
+
+Running
+-------
+llm_curated (source on us-central1 — temp bucket; cache writes to permanent
+us-central1)::
+
+    uv run lib/marin/src/marin/run/ray_run.py --cluster us-central1 --no_wait \\
+        -e WANDB_API_KEY <YOUR_WANDB_API_KEY> \\
+        -e HF_TOKEN <YOUR_HF_TOKEN> \\
+        -- python experiments/baseline_collection/dedup/tokenize_deduped.py --only llm_curated
+
+resiliparse (source on us-central2 — temp bucket; cache writes to permanent
+us-central2)::
+
+    uv run lib/marin/src/marin/run/ray_run.py --cluster us-central2 --no_wait \\
+        -e WANDB_API_KEY <YOUR_WANDB_API_KEY> \\
+        -e HF_TOKEN <YOUR_HF_TOKEN> \\
+        -- python experiments/baseline_collection/dedup/tokenize_deduped.py --only resiliparse
+
+The deduped sources sit in ``gs://marin-tmp-us-central{1,2}/ttl=14d/...`` and
+auto-delete after 14 days (~13 May 2026). Run tokenization before that or
+move the deduped trees to permanent storage first.
+"""
+
+from __future__ import annotations
+
+from experiments.defaults import default_tokenize
+from marin.execution.executor import InputName, executor_main
+
+LLM_CURATED_DEDUPED = (
+    "gs://marin-tmp-us-central1/ttl=14d/michaelryan/dedup_llm_curated/deduped_d44711c0"
+)
+RESILIPARSE_DEDUPED = (
+    "gs://marin-tmp-us-central2/ttl=14d/michaelryan/dedup_resiliparse/deduped_74e77a83"
+)
+
+TOKENIZER = "meta-llama/Meta-Llama-3.1-8B"
+
+
+tokenize_llm_curated_deduped = default_tokenize(
+    name="baseline_llm_curated_deduped",
+    dataset=InputName.hardcoded(f"{LLM_CURATED_DEDUPED}/data-*.jsonl.gz"),
+    tokenizer=TOKENIZER,
+)
+
+tokenize_resiliparse_deduped = default_tokenize(
+    name="baseline_resiliparse_deduped",
+    dataset=InputName.hardcoded(f"{RESILIPARSE_DEDUPED}/data-*.jsonl.gz"),
+    tokenizer=TOKENIZER,
+)
+
+
+def main() -> int:
+    import sys
+
+    only = "both"
+    new_argv = []
+    it = iter(sys.argv)
+    for arg in it:
+        if arg == "--only":
+            only = next(it)
+        elif arg.startswith("--only="):
+            only = arg.split("=", 1)[1]
+        else:
+            new_argv.append(arg)
+    sys.argv = new_argv
+
+    steps = []
+    if only in ("llm_curated", "both"):
+        steps.append(tokenize_llm_curated_deduped)
+    if only in ("resiliparse", "both"):
+        steps.append(tokenize_resiliparse_deduped)
+
+    executor_main(
+        steps=steps,
+        description=(
+            "Tokenize the deduped resiliparse and llm_curated jsonl trees. "
+            "Must be launched in-region (us-central1 for llm_curated, us-central2 "
+            "for resiliparse) to avoid cross-region reads from the temp buckets."
+        ),
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

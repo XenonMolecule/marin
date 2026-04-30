@@ -35,6 +35,7 @@ from dataclasses import dataclass
 import fsspec
 import pyarrow.parquet as pq
 
+from fray.v2.types import ResourceConfig
 from zephyr import Dataset, ZephyrContext
 from zephyr.execution import zephyr_worker_ctx
 
@@ -50,6 +51,16 @@ class FilterFinewebEduConfig:
     """GCS base path to FineWeb-Edu data (e.g., gs://marin-us-central2/raw/fineweb-edu)."""
 
     output_path: str
+
+    manifest_path: str | None = None
+    """Optional fast-path: a local .txt file with one WARC S3 path per line.
+
+    When set, the driver skips the slow per-WARC metadata load (which fans out
+    to 10k+ tiny GCS reads and takes 30-45 min) and instead derives the
+    {snapshot: warc_files} dict directly from the manifest in <1 sec. Snapshot
+    is extracted via the same regex as `_extract_snapshot`. The metadata_path
+    field is ignored when this is set.
+    """
 
 
 def normalize_warc_path(path: str) -> str:
@@ -178,9 +189,34 @@ def _process_fineweb_parquet(task: dict) -> list[dict]:
     return results
 
 
+def _load_warc_files_from_manifest(manifest_path: str) -> dict[str, set[str]]:
+    """Build {snapshot: set[warc_file]} directly from a manifest .txt file.
+
+    Much faster than `_load_warc_files_by_snapshot` for large manifests because
+    it skips the per-WARC metadata GCS reads — snapshot is derived from the
+    WARC path itself via regex.
+    """
+    by_snapshot: dict[str, set[str]] = {}
+    with open(manifest_path) as f:
+        for line in f:
+            warc_file = line.strip()
+            if not warc_file:
+                continue
+            warc_file = normalize_warc_path(warc_file)
+            snap = _extract_snapshot(warc_file)
+            if snap and snap != "unknown":
+                by_snapshot.setdefault(snap, set()).add(warc_file)
+    total = sum(len(v) for v in by_snapshot.values())
+    logger.info(f"Loaded {total:,} unique WARC paths across {len(by_snapshot)} snapshots from manifest {manifest_path}")
+    return by_snapshot
+
+
 def filter_fineweb_edu(config: FilterFinewebEduConfig) -> None:
     """Filter FineWeb-Edu records matching our WARC files."""
-    warc_files_by_snapshot = _load_warc_files_by_snapshot(config.metadata_path)
+    if config.manifest_path:
+        warc_files_by_snapshot = _load_warc_files_from_manifest(config.manifest_path)
+    else:
+        warc_files_by_snapshot = _load_warc_files_by_snapshot(config.metadata_path)
     snapshots = set(warc_files_by_snapshot.keys())
     tasks = _list_fineweb_parquets(config.fineweb_base_path, snapshots)
 
@@ -193,7 +229,15 @@ def filter_fineweb_edu(config: FilterFinewebEduConfig) -> None:
         )
     )
 
-    ctx = ZephyrContext(name="filter-fineweb-edu", max_workers=500)
+    # 8 GiB workers: parquet reads load full tables into memory. FineWeb-Edu
+    # parquets are ~1-2 GB compressed → 4-8 GB decoded as PyArrow tables, which
+    # OOMs the 1 GiB Zephyr default. Observed on the 10k pool run: workers were
+    # OOM-killed in a tight retry loop until this was bumped.
+    ctx = ZephyrContext(
+        name="filter-fineweb-edu",
+        max_workers=500,
+        resources=ResourceConfig(cpu=1, ram="8g"),
+    )
     ctx.put("warc_files_by_snapshot", warc_files_by_snapshot)
     ctx.execute(pipeline)
 

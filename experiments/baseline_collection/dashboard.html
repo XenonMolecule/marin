@@ -255,6 +255,26 @@
       <span class="timestamp">stall cycles before backoff</span>
     </div>
     <div class="form-row">
+      <label>Parent Priority</label>
+      <select id="launch-parent-priority">
+        <option value="">(default / interactive)</option>
+        <option value="production">production</option>
+        <option value="interactive">interactive</option>
+        <option value="batch">batch</option>
+      </select>
+      <span class="timestamp">priority of the CPU parent job itself</span>
+    </div>
+    <div class="form-row">
+      <label>Child Priority</label>
+      <select id="launch-child-priority">
+        <option value="batch" selected>batch</option>
+        <option value="interactive">interactive</option>
+        <option value="production">production</option>
+        <option value="unspecified">unspecified</option>
+      </select>
+      <span class="timestamp">priority of the TPU children</span>
+    </div>
+    <div class="form-row">
       <button class="btn success" onclick="confirmLaunch()">Launch Job</button>
     </div>
     <div id="launch-result"></div>
@@ -294,9 +314,24 @@ function timeAgo(ts) {
 function formatEta(hours) {
   if (hours < 1) return Math.round(hours * 60) + 'min';
   if (hours < 24) return hours.toFixed(1) + 'h';
-  const days = Math.floor(hours / 24);
-  const remHours = Math.round(hours - days * 24);
+  const totalHours = Math.round(hours);
+  const days = Math.floor(totalHours / 24);
+  const remHours = totalHours - days * 24;
   return remHours > 0 ? `${days}d ${remHours}h` : `${days}d`;
+}
+
+function formatEtaDate(hours) {
+  const finish = new Date(Date.now() + hours * 3600000);
+  const days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const day = days[finish.getDay()];
+  const month = months[finish.getMonth()];
+  const date = finish.getDate();
+  let h = finish.getHours();
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  h = h % 12 || 12;
+  const min = finish.getMinutes().toString().padStart(2, '0');
+  return `${day} ${month} ${date}, ${h}:${min} ${ampm}`;
 }
 
 // Store timestamps so we can update them live
@@ -409,16 +444,23 @@ function renderProgress(data, updatedAt, mode) {
     batchSummary = `${totalBatchesDone.toLocaleString()} / ~${estimatedTotalBatches.toLocaleString()} batches (~${avgBatchesPerWarc}/WARC est.) ${batchRate}`;
   }
 
-  // Recompute ETA using the frontend's avgBatchesPerWarc (backend uses a different one)
-  let frontendEtaHours = null;
-  if (data.batches_per_hour && data.batch_counts) {
+  // Two ETAs:
+  //   etaLifetime — uses all-time average rate. Pessimistic but stable; what you expect
+  //                 if throughput averages out over the rest of the run.
+  //   etaRecent   — uses sliding 3h window rate. "If you keep this pace up" estimate;
+  //                 jumps around as fleet size changes but is more current.
+  let etaLifetime = null;
+  let etaRecent = null;
+  if (data.batch_counts) {
     const doneWarcBatches = Object.values(knownTotals).reduce((a,b) => a+b, 0);
     const remainingWarcs = total - done;
     const estimatedTotalBatches = doneWarcBatches + remainingWarcs * avgBatchesPerWarc;
     const remainingBatches = estimatedTotalBatches - (data.total_batches || 0);
-    if (remainingBatches > 0) frontendEtaHours = remainingBatches / data.batches_per_hour;
+    if (remainingBatches > 0) {
+      if (data.batches_per_hour) etaLifetime = remainingBatches / data.batches_per_hour;
+      if (data.batches_per_hour_recent) etaRecent = remainingBatches / data.batches_per_hour_recent;
+    }
   }
-  const displayEtaHours = frontendEtaHours ?? data.eta_hours;
 
   let html = `
     <div class="progress-bar" title="Green = done WARCs, Yellow = claimed/in-progress">
@@ -439,8 +481,10 @@ function renderProgress(data, updatedAt, mode) {
       <div class="stat"><div class="stat-value blue">${total}</div><div class="stat-label">Total</div></div>
       <div class="stat"><div class="stat-value red">${data.duplicates}</div><div class="stat-label">Duplicates</div></div>
       ${data.total_batches ? `<div class="stat"><div class="stat-value green">${data.total_batches.toLocaleString()}</div><div class="stat-label">Batches Done</div></div>` : ''}
-      ${data.batches_per_hour ? `<div class="stat"><div class="stat-value blue">${data.batches_per_hour.toLocaleString()}</div><div class="stat-label">Batches/hr</div></div>` : ''}
-      <div class="stat"><div class="stat-value">${displayEtaHours ? formatEta(displayEtaHours) : '...'}</div><div class="stat-label">ETA (batch rate)</div></div>
+      ${data.batches_per_hour ? `<div class="stat"><div class="stat-value blue">${data.batches_per_hour.toLocaleString()}</div><div class="stat-label">Batches/hr (lifetime)</div></div>` : ''}
+      ${data.batches_per_hour_recent !== null && data.batches_per_hour_recent !== undefined ? `<div class="stat"><div class="stat-value green">${data.batches_per_hour_recent.toLocaleString()}</div><div class="stat-label">Batches/hr (last ${data.recent_window_hours || 3}h)</div></div>` : ''}
+      <div class="stat"><div class="stat-value" title="${etaLifetime ? formatEtaDate(etaLifetime) : ''}">${etaLifetime ? formatEta(etaLifetime) : '...'}</div><div class="stat-label">ETA (lifetime)</div></div>
+      <div class="stat"><div class="stat-value green" title="${etaRecent ? formatEtaDate(etaRecent) : ''}">${etaRecent ? formatEta(etaRecent) : '...'}</div><div class="stat-label">ETA (current pace)</div></div>
     </div>
 
     <h2>Per-Region Breakdown</h2>
@@ -498,7 +542,7 @@ function renderProgress(data, updatedAt, mode) {
 
   // Done stats
   if (data.done_stats && data.done_stats.length > 0) {
-    html += `<h2>Completed WARCs (${data.done_stats.length})</h2><table>`;
+    html += `<h2>Completed WARCs (${data.unique_done} unique, ${data.done_stats.length} _done markers)</h2><table>`;
     html += '<tr><th>Hash</th><th>WARC File</th><th>Region</th><th>Records</th><th>Kept</th><th>Filtered</th><th>Completed</th></tr>';
     for (const s of data.done_stats) {
       // Extract short WARC name from full S3 path
@@ -542,19 +586,30 @@ const VMS_PER_SLICE = {
 
 function computeResourceUsage(jobsData) {
   const usage = {};
-  if (!jobsData || !jobsData.parents) return usage;
-  for (const p of jobsData.parents) {
-    for (const c of (p.children || [])) {
-      const tpu = c.tpu_type;
-      if (!tpu) continue;
-      if (!usage[tpu]) usage[tpu] = {running: 0, pending: 0, failed: 0, killed: 0, preemptions: 0};
-      if (c.state === 'running') usage[tpu].running++;
-      else if (c.state === 'pending' || c.state === 'building') usage[tpu].pending++;
-      else if (c.state === 'failed' || c.state === 'worker_failed') usage[tpu].failed++;
-      else if (c.state === 'killed') usage[tpu].killed++;
-      usage[tpu].preemptions += c.preemption_count || 0;
-    }
+  if (!jobsData) return usage;
+
+  function _count(c) {
+    const tpu = c.tpu_type;
+    if (!tpu) return;
+    if (!usage[tpu]) usage[tpu] = {running: 0, pending: 0, failed: 0, killed: 0, preemptions: 0};
+    if (c.state === 'running') usage[tpu].running++;
+    else if (c.state === 'pending' || c.state === 'building') usage[tpu].pending++;
+    else if (c.state === 'failed' || c.state === 'worker_failed') usage[tpu].failed++;
+    else if (c.state === 'killed') usage[tpu].killed++;
+    usage[tpu].preemptions += c.preemption_count || 0;
   }
+
+  // Count children nested under running parents
+  const hasParentsWithChildren = (jobsData.parents || []).some(p => (p.children || []).length > 0);
+  if (hasParentsWithChildren) {
+    for (const p of (jobsData.parents || [])) {
+      for (const c of (p.children || [])) _count(c);
+    }
+  } else {
+    // Fallback: if no parents have children (e.g. API issue), count from orphans
+    for (const c of (jobsData.children || [])) _count(c);
+  }
+
   return usage;
 }
 
@@ -939,8 +994,11 @@ function confirmLaunch() {
   const chunk = document.getElementById('launch-chunk-size').value;
   const interval = document.getElementById('launch-check-interval').value;
   const patience = document.getElementById('launch-patience').value;
+  const parentPriority = document.getElementById('launch-parent-priority').value;
+  const childPriority = document.getElementById('launch-child-priority').value;
 
-  const cmd = `iris job run --memory 2GB --cpu 2 --no-wait --job-name ${name} -- python launch_adaptive.py --tpu-type ${tpu} --max-count ${maxCount} --initial-batch ${initial} --chunk-size ${chunk} --check-interval ${interval} --patience ${patience}`;
+  const parentPriorityFlag = parentPriority ? ` --priority ${parentPriority}` : '';
+  const cmd = `iris job run --memory 2GB --cpu 2${parentPriorityFlag} --no-wait --job-name ${name} -- python launch_adaptive.py --tpu-type ${tpu} --max-count ${maxCount} --initial-batch ${initial} --chunk-size ${chunk} --check-interval ${interval} --patience ${patience} --child-priority ${childPriority}`;
 
   document.getElementById('confirm-message').textContent = `Launch adaptive job "${name}"?`;
   document.getElementById('confirm-detail').textContent = cmd;
@@ -960,6 +1018,8 @@ async function doLaunch() {
     chunk_size: parseInt(document.getElementById('launch-chunk-size').value),
     check_interval: parseInt(document.getElementById('launch-check-interval').value),
     patience: parseInt(document.getElementById('launch-patience').value),
+    parent_priority: document.getElementById('launch-parent-priority').value,
+    child_priority: document.getElementById('launch-child-priority').value,
   };
   const el = document.getElementById('launch-result');
   el.innerHTML = '<div class="alert info"><span class="spinner"></span>Launching...</div>';

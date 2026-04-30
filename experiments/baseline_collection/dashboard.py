@@ -137,6 +137,62 @@ def _get_iris_client():
 
 
 # ---------------------------------------------------------------------------
+# Completed WARC registry
+# ---------------------------------------------------------------------------
+
+COMPLETED_REGISTRY_PREFIX = "gs://marin-us-central1/documents/baseline_llm_extraction/_completed"
+
+
+def _backfill_completed_registry(done_hashes: set[str]) -> None:
+    """Write registry markers for any done WARCs not already registered.
+
+    Called during deep scan to catch legacy completions from workers that
+    predate the registry feature. Each marker is an empty file (~0 bytes)
+    at ``_completed/data-{hash}``. Idempotent — re-writing an existing
+    marker is a no-op.
+
+    Uses google-cloud-storage directly (not fsspec/gcsfs) to avoid SSL
+    issues with aiohttp on some local environments.
+    """
+    from google.cloud import storage as gcs_storage
+
+    client = gcs_storage.Client()
+    registry_bucket_name = COMPLETED_REGISTRY_PREFIX.replace("gs://", "").split("/", 1)[0]
+    registry_prefix = COMPLETED_REGISTRY_PREFIX.replace(f"gs://{registry_bucket_name}/", "")
+    bucket = client.bucket(registry_bucket_name)
+
+    # Load existing registry
+    existing: set[str] = set()
+    try:
+        for blob in bucket.list_blobs(prefix=registry_prefix + "/data-"):
+            basename = blob.name.rsplit("/", 1)[-1]
+            if basename.startswith("data-"):
+                existing.add(basename[5:])
+    except Exception:
+        pass
+
+    missing = done_hashes - existing
+    if not missing:
+        return
+
+    logger.info("Backfilling completed registry: %d new entries", len(missing))
+    errors = 0
+    for h in missing:
+        blob_path = f"{registry_prefix}/data-{h}"
+        try:
+            blob = bucket.blob(blob_path)
+            blob.upload_from_string("")
+        except Exception as e:
+            errors += 1
+            if errors <= 3:
+                logger.warning("Failed to backfill registry for %s: %s", h, e)
+            elif errors == 4:
+                logger.warning("Suppressing further backfill errors (too many failures)")
+    if errors:
+        logger.warning("Backfill completed with %d/%d errors", errors, len(missing))
+
+
+# ---------------------------------------------------------------------------
 # GCS scanning
 # ---------------------------------------------------------------------------
 
@@ -209,7 +265,7 @@ def _scan_progress_quick() -> dict:
         completion_times = []
         for s in all_done_stats:
             if s.get("completed_at"):
-                from datetime import datetime, timezone
+                from datetime import datetime
 
                 try:
                     t = datetime.fromisoformat(s["completed_at"])
@@ -251,9 +307,13 @@ def _scan_progress_deep() -> dict:
 
     all_hashes: dict[str, list[str]] = {}
     batch_counts: dict[str, int] = {}
+    batch_seen: set[tuple[str, str]] = set()  # (hash, batch_filename) for dedup across regions
     latest_activity: dict[str, str] = {}
     earliest_batch_ts: float | None = None
     latest_batch_ts: float | None = None
+    # All batch file epoch timestamps, for sliding-window rate calcs.
+    # Stored as plain list; sorted once at the end.
+    batch_timestamps: list[float] = []
     done_hashes: set[str] = set()
     done_stats: list[dict] = []
     region_data: dict[str, dict] = {}
@@ -265,7 +325,7 @@ def _scan_progress_deep() -> dict:
         r_done = set()
 
         for blob in bucket.list_blobs(prefix=prefix + "data-"):
-            rel = blob.name[len(prefix):]
+            rel = blob.name[len(prefix) :]
             parts = rel.split("/")
             if len(parts) < 2 or not parts[0].startswith("data-"):
                 continue
@@ -290,13 +350,18 @@ def _scan_progress_deep() -> dict:
                 except Exception:
                     done_stats.append({"hash": h, "region": region, "warc_path": manifest.get(h, "")})
             elif filename.startswith("batch_") and filename.endswith(".jsonl.gz"):
-                batch_counts[h] = batch_counts.get(h, 0) + 1
+                # Deduplicate: same batch in multiple regions counts once
+                key = (h, filename)
+                if key not in batch_seen:
+                    batch_seen.add(key)
+                    batch_counts[h] = batch_counts.get(h, 0) + 1
                 if blob.updated:
                     ts = blob.updated.isoformat()
                     if h not in latest_activity or ts > latest_activity[h]:
                         latest_activity[h] = ts
                     # Track global earliest/latest batch timestamps for rate calc
                     batch_epoch = blob.updated.timestamp()
+                    batch_timestamps.append(batch_epoch)
                     if earliest_batch_ts is None or batch_epoch < earliest_batch_ts:
                         earliest_batch_ts = batch_epoch
                     if latest_batch_ts is None or batch_epoch > latest_batch_ts:
@@ -311,27 +376,57 @@ def _scan_progress_deep() -> dict:
     unique_claimed = set(all_hashes.keys())
     duplicates = sum(1 for r_list in all_hashes.values() if len(r_list) > 1)
 
+    # Backfill the completed registry in a background thread so it doesn't
+    # block the deep scan response. The scan results are returned immediately;
+    # the backfill writes trickle in afterward.
+    import threading
+
+    threading.Thread(
+        target=_backfill_completed_registry,
+        args=(done_hashes,),
+        daemon=True,
+        name="registry-backfill",
+    ).start()
+
     # ETA from batch completion rate (much more reliable than WARC completion rate)
     total_batches = sum(batch_counts.values())
     eta_hours = None
-    batches_per_hour = None
+    batches_per_hour = None  # lifetime rate
+    batches_per_hour_recent = None  # last 3h rate
+    recent_window_seconds = 3 * 3600
+    now = time.time()
 
-    # Compute avg batches per WARC from completed WARCs
+    # Compute avg batches per WARC from completed WARCs (deduplicated — one entry per hash)
     avg_batches_per_warc = 100  # default
-    real_counts = [s["num_batches"] for s in done_stats if s.get("num_batches")]
+    seen_done_hashes: dict[str, int] = {}
+    for s in done_stats:
+        if s.get("num_batches") and s["hash"] not in seen_done_hashes:
+            seen_done_hashes[s["hash"]] = s["num_batches"]
+    real_counts = list(seen_done_hashes.values())
     if real_counts:
         avg_batches_per_warc = round(sum(real_counts) / len(real_counts))
 
+    # Lifetime rate: total_batches / full span
     if earliest_batch_ts and latest_batch_ts and total_batches > 10:
         span_hours = (latest_batch_ts - earliest_batch_ts) / 3600
         if span_hours > 0.1:
             batches_per_hour = total_batches / span_hours
-            # Estimated total batches needed
-            done_warc_batches = sum(real_counts) if real_counts else 0
-            remaining_warcs = len(manifest) - len(done_hashes)
-            estimated_remaining_batches = remaining_warcs * avg_batches_per_warc - (total_batches - done_warc_batches)
-            if estimated_remaining_batches > 0 and batches_per_hour > 0:
-                eta_hours = estimated_remaining_batches / batches_per_hour
+
+    # Sliding-window rate: count batches in the last 3h from NOW.
+    # Using NOW (not latest_batch_ts) means the rate correctly drops if all
+    # workers stop — no new batches in the window → rate falls to 0.
+    cutoff = now - recent_window_seconds
+    recent_count = sum(1 for ts in batch_timestamps if ts >= cutoff)
+    batches_per_hour_recent = recent_count / (recent_window_seconds / 3600)
+
+    # Use the RECENT rate for ETA (it's more representative of current throughput)
+    rate_for_eta = batches_per_hour_recent if batches_per_hour_recent > 0 else batches_per_hour
+    if rate_for_eta and rate_for_eta > 0:
+        done_warc_batches = sum(real_counts) if real_counts else 0
+        remaining_warcs = len(manifest) - len(done_hashes)
+        estimated_remaining_batches = remaining_warcs * avg_batches_per_warc - (total_batches - done_warc_batches)
+        if estimated_remaining_batches > 0:
+            eta_hours = estimated_remaining_batches / rate_for_eta
 
     return {
         "total_manifest": len(manifest),
@@ -341,6 +436,8 @@ def _scan_progress_deep() -> dict:
         "duplicates": duplicates,
         "eta_hours": round(eta_hours, 1) if eta_hours else None,
         "batches_per_hour": round(batches_per_hour, 1) if batches_per_hour else None,
+        "batches_per_hour_recent": round(batches_per_hour_recent, 1) if batches_per_hour_recent else None,
+        "recent_window_hours": recent_window_seconds / 3600,
         "avg_batches_per_warc": avg_batches_per_warc,
         "regions": region_data,
         "done_stats": done_stats,
@@ -387,17 +484,19 @@ def _fetch_cluster_status() -> dict:
         if ready == 0 and booting == 0 and demand == 0 and initializing == 0:
             continue  # Skip empty groups
 
-        groups.append({
-            "name": name,
-            "tpu_type": tpu_type,
-            "region": region,
-            "ready": ready,
-            "booting": booting,
-            "initializing": initializing,
-            "failed": failed,
-            "demand": demand,
-            "idle": idle,
-        })
+        groups.append(
+            {
+                "name": name,
+                "tpu_type": tpu_type,
+                "region": region,
+                "ready": ready,
+                "booting": booting,
+                "initializing": initializing,
+                "failed": failed,
+                "demand": demand,
+                "idle": idle,
+            }
+        )
 
     groups.sort(key=lambda g: (-g["ready"], -g["demand"], g["name"]))
 
@@ -439,65 +538,115 @@ def _format_job(j) -> dict:
     if j.submitted_at.epoch_ms:
         from datetime import datetime, timezone
 
-        submitted = datetime.fromtimestamp(
-            j.submitted_at.epoch_ms / 1000, tz=timezone.utc
-        ).strftime("%Y-%m-%d %H:%M:%S UTC")
+        submitted = datetime.fromtimestamp(j.submitted_at.epoch_ms / 1000, tz=timezone.utc).strftime(
+            "%Y-%m-%d %H:%M:%S UTC"
+        )
 
     reason = j.error or j.pending_reason or ""
 
     return {
-        "job_id": j.job_id,
-        "name": j.name,
+        "job_id": j.job_id or "",
+        "name": j.name or "",
         "state": state_name,
         "is_parent": not has_device,
-        "tpu_type": tpu_type,
+        "tpu_type": tpu_type or "",
         "resources": ", ".join(res_parts),
         "submitted": submitted,
-        "reason": reason[:100],
-        "preemption_count": j.preemption_count,
-        "failure_count": j.failure_count,
+        "reason": (reason or "")[:100],
+        "preemption_count": j.preemption_count or 0,
+        "failure_count": j.failure_count or 0,
     }
 
 
 def _list_child_jobs(parent_job_id: str) -> list:
-    """List child jobs of a parent using the parent_job_id filter in ListJobsRequest."""
-    from iris.rpc import controller_pb2
+    """List child jobs of a parent using the parent_job_id filter in ListJobsRequest.
+
+    Only returns children in active states (running, pending, building) to avoid
+    counting thousands of killed/preempted retry attempts.
+    """
+    from iris.rpc import controller_pb2, job_pb2
 
     client = _get_iris_client()
     rpc_client = client._cluster_client._client
 
-    request = controller_pb2.Controller.ListJobsRequest(parent_job_id=parent_job_id)
-    response = rpc_client.list_jobs(request)
-    return list(response.jobs)
+    # Paginate in case there are many children
+    all_children = []
+    offset = 0
+    active_states = {
+        job_pb2.JOB_STATE_RUNNING,
+        job_pb2.JOB_STATE_PENDING,
+        job_pb2.JOB_STATE_BUILDING,
+    }
+    while True:
+        request = controller_pb2.Controller.ListJobsRequest(parent_job_id=parent_job_id, limit=500, offset=offset)
+        response = rpc_client.list_jobs(request)
+        for j in response.jobs:
+            if j.state in active_states:
+                all_children.append(j)
+        if not response.has_more or len(response.jobs) == 0:
+            break
+        offset += len(response.jobs)
+    return all_children
 
 
 def _fetch_jobs() -> dict:
-    """List extraction jobs for the current user, including children of each parent."""
-    from iris.cluster.types import JobName
+    """List extraction jobs for the current user.
+
+    Uses name_filter + state_filter on the gRPC ListJobs API to get running and
+    pending jobs directly, avoiding the broken pagination over ALL jobs.
+    """
+    from iris.rpc import controller_pb2 as ctrl_pb2
+    from iris.rpc import job_pb2 as _jpb2
 
     client = _get_iris_client()
-    prefix = JobName.from_wire(f"/{USER_PREFIX}/extract")
-    top_level_jobs = client.list_jobs(prefix=prefix)
-    top_level_jobs.sort(key=lambda j: j.submitted_at.epoch_ms, reverse=True)
+    rpc_client = client._cluster_client._client
 
-    parents = []
-    orphan_children = []
+    prefix_str = f"/{USER_PREFIX}/extract"
+    active_states = {_jpb2.JOB_STATE_RUNNING, _jpb2.JOB_STATE_PENDING, _jpb2.JOB_STATE_BUILDING}
 
-    for j in top_level_jobs:
-        formatted = _format_job(j)
-        if formatted["is_parent"]:
-            # Fetch children for this parent
-            try:
-                child_protos = _list_child_jobs(j.job_id)
-                children = [_format_job(c) for c in child_protos]
-                children.sort(key=lambda c: c["submitted"], reverse=True)
-            except Exception as e:
-                logger.warning("Failed to fetch children for %s: %s", j.job_id, e)
-                children = []
-            formatted["children"] = children
-            parents.append(formatted)
+    # Use name_filter + state_filter to get only our active extract jobs
+    all_active = []
+    for state_name in ("running", "pending", "building"):
+        req = ctrl_pb2.Controller.ListJobsRequest(
+            name_filter=prefix_str,
+            state_filter=state_name,
+            limit=2000,
+        )
+        resp = rpc_client.list_jobs(req)
+        all_active.extend(resp.jobs)
+
+    raw_parents = []
+    raw_children = []
+    for j in all_active:
+        # Parent jobs have no TPU device; children have device.tpu.variant set.
+        # HasField("device") is True even for empty device protos, so check content.
+        parts = j.job_id.strip("/").split("/")
+        is_parent = len(parts) == 2  # user/jobname = parent, user/jobname/child = child
+        if is_parent:
+            raw_parents.append(j)
         else:
-            orphan_children.append(formatted)
+            raw_children.append(j)
+
+    logger.info("Fetched jobs: %d parents, %d active children", len(raw_parents), len(raw_children))
+
+    # Group active children under running parents by job_id prefix
+    parents = []
+    for p in raw_parents:
+        formatted = _format_job(p)
+        if p.state == _jpb2.JOB_STATE_RUNNING:
+            parent_prefix = p.job_id + "/"
+            children = [_format_job(c) for c in raw_children if c.job_id.startswith(parent_prefix)]
+            children.sort(key=lambda c: c.get("submitted") or "", reverse=True)
+            formatted["children"] = children
+        parents.append(formatted)
+
+    parents.sort(key=lambda p: p.get("submitted") or "", reverse=True)
+
+    # Orphans: active children not matching any running parent prefix
+    running_prefixes = [p.job_id + "/" for p in raw_parents if p.state == _jpb2.JOB_STATE_RUNNING]
+    orphan_children = [
+        _format_job(c) for c in raw_children if not any(c.job_id.startswith(pp) for pp in running_prefixes)
+    ]
 
     # Record preemption snapshot for rate tracking
     by_type: dict[str, int] = {}
@@ -517,7 +666,7 @@ def _fetch_jobs() -> dict:
     return {
         "parents": parents,
         "children": orphan_children,
-        "total": len(top_level_jobs),
+        "total": len(raw_parents) + len(raw_children),
         "preemption_history": _cache["preemption_history"],
     }
 
@@ -537,11 +686,13 @@ def index():
 
 @app.route("/api/progress")
 def api_progress():
-    return jsonify({
-        "data": _cache["progress"]["data"],
-        "updated_at": _cache["progress"]["updated_at"],
-        "deep_updated_at": _cache["progress_deep"]["updated_at"],
-    })
+    return jsonify(
+        {
+            "data": _cache["progress"]["data"],
+            "updated_at": _cache["progress"]["updated_at"],
+            "deep_updated_at": _cache["progress_deep"]["updated_at"],
+        }
+    )
 
 
 @app.route("/api/progress/refresh", methods=["POST"])
@@ -575,12 +726,14 @@ def api_progress_refresh():
             _cache["progress"]["data"] = data
             _cache["progress"]["updated_at"] = time.time()
         _save_cache()
-        return jsonify({
-            "ok": True,
-            "data": _cache["progress"]["data"],
-            "updated_at": _cache["progress"]["updated_at"],
-            "deep_updated_at": _cache["progress_deep"].get("updated_at"),
-        })
+        return jsonify(
+            {
+                "ok": True,
+                "data": _cache["progress"]["data"],
+                "updated_at": _cache["progress"]["updated_at"],
+                "deep_updated_at": _cache["progress_deep"].get("updated_at"),
+            }
+        )
     except Exception as e:
         logger.exception("Progress scan failed")
         return jsonify({"ok": False, "error": str(e)}), 500
@@ -588,10 +741,12 @@ def api_progress_refresh():
 
 @app.route("/api/cluster")
 def api_cluster():
-    return jsonify({
-        "data": _cache["cluster"]["data"],
-        "updated_at": _cache["cluster"]["updated_at"],
-    })
+    return jsonify(
+        {
+            "data": _cache["cluster"]["data"],
+            "updated_at": _cache["cluster"]["updated_at"],
+        }
+    )
 
 
 @app.route("/api/cluster/refresh", methods=["POST"])
@@ -609,10 +764,12 @@ def api_cluster_refresh():
 
 @app.route("/api/jobs")
 def api_jobs():
-    return jsonify({
-        "data": _cache["jobs"]["data"],
-        "updated_at": _cache["jobs"]["updated_at"],
-    })
+    return jsonify(
+        {
+            "data": _cache["jobs"]["data"],
+            "updated_at": _cache["jobs"]["updated_at"],
+        }
+    )
 
 
 @app.route("/api/jobs/refresh", methods=["POST"])
@@ -646,6 +803,9 @@ def api_jobs_kill():
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
+VALID_PRIORITIES = {"production", "interactive", "batch", "unspecified"}
+
+
 @app.route("/api/jobs/launch", methods=["POST"])
 def api_jobs_launch():
     data = request.json or {}
@@ -656,11 +816,17 @@ def api_jobs_launch():
     chunk_size = int(data.get("chunk_size", 5))
     check_interval = int(data.get("check_interval", 300))
     patience = int(data.get("patience", 3))
+    parent_priority = (data.get("parent_priority") or "").strip()  # "" = default
+    child_priority = (data.get("child_priority") or "batch").strip()
 
     if tpu_type not in KNOWN_TPU_TYPES:
         return jsonify({"ok": False, "error": f"Unknown TPU type: {tpu_type}"}), 400
     if not job_name:
         return jsonify({"ok": False, "error": "Job name required"}), 400
+    if parent_priority and parent_priority not in VALID_PRIORITIES:
+        return jsonify({"ok": False, "error": f"Invalid parent_priority: {parent_priority}"}), 400
+    if child_priority not in VALID_PRIORITIES:
+        return jsonify({"ok": False, "error": f"Invalid child_priority: {child_priority}"}), 400
 
     try:
         from iris.cli.job import run_iris_job
@@ -672,15 +838,23 @@ def api_jobs_launch():
         command = [
             "python",
             "experiments/baseline_collection/launch_adaptive.py",
-            "--tpu-type", tpu_type,
-            "--max-count", str(max_count),
-            "--initial-batch", str(initial_batch),
-            "--chunk-size", str(chunk_size),
-            "--check-interval", str(check_interval),
-            "--patience", str(patience),
+            "--tpu-type",
+            tpu_type,
+            "--max-count",
+            str(max_count),
+            "--initial-batch",
+            str(initial_batch),
+            "--chunk-size",
+            str(chunk_size),
+            "--check-interval",
+            str(check_interval),
+            "--patience",
+            str(patience),
+            "--child-priority",
+            child_priority,
         ]
 
-        exit_code = run_iris_job(
+        run_iris_job_kwargs = dict(
             command=command,
             env_vars={},
             controller_url=controller_url,
@@ -689,6 +863,12 @@ def api_jobs_launch():
             job_name=job_name,
             wait=False,
         )
+        # Only pass --priority for the parent if explicitly chosen.
+        # Otherwise Iris assigns its default (typically interactive).
+        if parent_priority:
+            run_iris_job_kwargs["priority"] = parent_priority
+
+        exit_code = run_iris_job(**run_iris_job_kwargs)
         return jsonify({"ok": exit_code == 0, "job_name": job_name})
     except Exception as e:
         logger.exception("Launch failed")

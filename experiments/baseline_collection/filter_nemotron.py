@@ -54,6 +54,7 @@ import logging
 from dataclasses import dataclass
 
 import fsspec
+from fray.v2.types import ResourceConfig
 
 from zephyr import Dataset, ZephyrContext
 from zephyr.execution import zephyr_worker_ctx
@@ -289,11 +290,19 @@ def _run_filter(
             )
         )
 
-        ctx = ZephyrContext(name=f"{ctx_name_prefix}-{snapshot}", max_workers=500)
+        # Each worker loads the shared url_set (up to ~2-3 GB with Python overhead
+        # for the 10k manifest's larger snapshots) via get_shared, plus streams one
+        # Nemotron shard (~500 MB gzipped, decompressed line-by-line). Overprovision
+        # at 8 GiB to avoid tight-margin OOMs under adversarial inputs.
+        ctx = ZephyrContext(
+            name=f"{ctx_name_prefix}-{snapshot}",
+            max_workers=500,
+            resources=ResourceConfig(cpu=1, ram="8g"),
+        )
         ctx.put("url_set", url_set)
         result = ctx.execute(pipeline)
 
-        snap_files = len(list(result)) if result else 0
+        snap_files = len(result.results)
         total_scanned += len(tasks)
         logger.info(f"  {snapshot}: done, wrote {snap_files} output shards")
 

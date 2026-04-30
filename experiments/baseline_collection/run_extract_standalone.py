@@ -46,11 +46,297 @@ _THINK_RE = re.compile(r"<think>.*?</think>\s*", flags=re.DOTALL)
 _FIELD_MARKERS_RE = re.compile(r"\[\[\s*##\s*(text|completed)\s*##\s*\]\]", flags=re.IGNORECASE)
 _FILTER_PATTERNS = [re.compile(r"\[NO_USEFUL_CONTENT\]")]
 MIN_OUTPUT_CHARS = 50
-MAX_DOC_TOKENS = 26624  # 32768 context - 6144 output
+MAX_OUTPUT_TOKENS = 6144
+MAX_DOC_TOKENS = 26624  # 32768 context - MAX_OUTPUT_TOKENS
+MAX_CONTEXT_TOKENS = MAX_DOC_TOKENS + MAX_OUTPUT_TOKENS  # 32768
 # 500 records per batch ≈ 12 min on v5p-8. vLLM's continuous batching makes
 # larger batches more efficient (slow prompts overlap with fast ones).
 # Per-batch checkpointing means max 12 min lost on preemption.
 DEFAULT_BATCH_SIZE = 500
+
+# Completed WARC registry: a single GCS directory where each completed WARC
+# gets a tiny marker file. Workers list this directory on startup (1 API call)
+# to skip already-done WARCs without scanning 6 regional buckets per WARC.
+COMPLETED_REGISTRY_PREFIX = "gs://marin-us-central1/documents/baseline_llm_extraction/_completed"
+
+
+def _register_completed_warc(warc_hash: str) -> None:
+    """Write a tiny marker to the central completed registry. Idempotent."""
+    path = f"{COMPLETED_REGISTRY_PREFIX}/data-{warc_hash}"
+    try:
+        with fsspec.open(path, "w") as f:
+            f.write("")  # empty file, ~0 bytes
+    except Exception as e:
+        logger.warning("Failed to write completion registry for %s: %s", warc_hash, e)
+
+
+def _load_completed_registry() -> set[str]:
+    """List the completed registry directory and return set of done hashes.
+
+    Single list operation against one GCS bucket — much cheaper than scanning
+    6 regional buckets. Returns empty set on any error (graceful fallback to
+    per-WARC checks).
+    """
+    fs = fsspec.filesystem("gcs")
+    prefix = COMPLETED_REGISTRY_PREFIX.replace("gs://", "")
+    try:
+        paths = fs.ls(prefix)
+        hashes = set()
+        for p in paths:
+            basename = p.rsplit("/", 1)[-1]
+            if basename.startswith("data-"):
+                hashes.add(basename[5:])
+        logger.info("Loaded completed registry: %d WARCs", len(hashes))
+        return hashes
+    except Exception as e:
+        logger.warning("Failed to load completed registry: %s (falling back to per-WARC checks)", e)
+        return set()
+
+
+# ---------------------------------------------------------------------------
+# Steal mode: batch-level claims for parallel WARC processing
+# ---------------------------------------------------------------------------
+
+STEAL_CLAIM_STALE_SECONDS = 30 * 60  # 30 minutes
+
+
+def _steal_claim_path(warc_dir: str, batch_idx: int) -> str:
+    return f"{warc_dir}/_stealing/batch_{batch_idx:04d}"
+
+
+def _claim_batch_for_stealing(warc_dir: str, batch_idx: int) -> bool:
+    """Atomically claim a single batch for stealing. Returns True if we won."""
+    from google.cloud import storage as gcs_storage
+
+    path = _steal_claim_path(warc_dir, batch_idx)
+    if not path.startswith("gs://"):
+        # Local filesystem fallback (for testing)
+        if os.path.exists(path):
+            return False
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            f.write("")
+        return True
+
+    parts = path.replace("gs://", "").split("/", 1)
+    bucket_name, blob_path = parts[0], parts[1]
+
+    client = gcs_storage.Client()
+    bucket = client.bucket(bucket_name)
+    blob = bucket.blob(blob_path)
+
+    try:
+        blob.upload_from_string("", if_generation_match=0)
+        return True
+    except Exception as e:
+        if "conditionNotMet" in str(e) or "412" in str(e):
+            return False
+        raise
+
+
+def _list_steal_claims(warc_dir: str) -> set[int]:
+    """List all batch indices that have been claimed for stealing."""
+    fs = fsspec.filesystem("gcs") if warc_dir.startswith("gs://") else fsspec.filesystem("file")
+    steal_dir = f"{warc_dir}/_stealing"
+    if warc_dir.startswith("gs://"):
+        steal_dir = steal_dir.replace("gs://", "")
+    try:
+        paths = fs.ls(steal_dir)
+    except (FileNotFoundError, Exception):
+        return set()
+    claimed = set()
+    for p in paths:
+        basename = p.rsplit("/", 1)[-1]
+        if basename.startswith("batch_"):
+            try:
+                idx = int(basename.split("_")[1])
+                claimed.add(idx)
+            except (IndexError, ValueError):
+                continue
+    return claimed
+
+
+def _batch_exists_any_region(warc_hash: str, batch_idx: int, output_subdir: str) -> bool:
+    """Check if a specific batch file exists in any regional bucket."""
+    from rigging.filesystem import REGION_TO_DATA_BUCKET
+
+    fs = fsspec.filesystem("gcs")
+    batch_name = f"batch_{batch_idx:04d}.jsonl.gz"
+    for bucket in REGION_TO_DATA_BUCKET.values():
+        path = f"{bucket}/{output_subdir}/data-{warc_hash}/{batch_name}"
+        try:
+            if fs.exists(path):
+                return True
+        except Exception:
+            continue
+    return False
+
+
+def _find_stealable_batches(
+    warc_hash: str,
+    warc_dir: str,
+    output_subdir: str,
+    num_batches: int,
+) -> list[int]:
+    """Find batch indices available for stealing, in reverse order.
+
+    Returns batch indices that are:
+    - Not already completed (no batch file in any region)
+    - Not already steal-claimed by another worker
+    Ordered from highest to lowest (reverse iteration).
+    """
+    completed = _find_completed_batches_all_regions(warc_hash, output_subdir)
+    steal_claimed = _list_steal_claims(warc_dir)
+    stealable = []
+    for idx in range(num_batches - 1, -1, -1):
+        if idx not in completed and idx not in steal_claimed:
+            stealable.append(idx)
+    return stealable
+
+
+def _process_warc_steal(
+    warc_path: str,
+    output_dir: str,
+    output_subdir: str,
+    llm: Any,
+    sampling_params: Any,
+    tokenizer: Any,
+    template: str,
+    system_message: str,
+    batch_size: int = DEFAULT_BATCH_SIZE,
+) -> dict:
+    """Process uncompleted batches of a WARC in steal mode (reverse order).
+
+    Does NOT claim the WARC — only claims individual batches via _stealing/.
+    The WARC's forward worker (owner) continues unaware. Stealers work from
+    the back, owners work from the front; they meet in the middle.
+    """
+    h = _warc_path_hash(warc_path)
+    warc_dir = f"{output_dir}/data-{h}"
+
+    # Quick check: was this WARC completed between our registry scan and now?
+    if _is_warc_done_any_region(h, output_subdir):
+        return {"warc": warc_path, "status": "steal_already_done"}
+
+    # Download and build the same deterministic record list as the owner
+    records = _download_one_warc(warc_path)
+    if not records:
+        return {"warc": warc_path, "status": "steal_empty"}
+
+    records = _filter_by_length(records, MAX_DOC_TOKENS)
+    if not records:
+        return {"warc": warc_path, "status": "steal_empty"}
+
+    num_batches = (len(records) + batch_size - 1) // batch_size
+
+    # Find stealable batches (reverse order, excluding done + claimed)
+    stealable = _find_stealable_batches(h, warc_dir, output_subdir, num_batches)
+    if not stealable:
+        # No batches to steal — but check if all batches are done and _done is missing.
+        # This handles the case where the original worker finished all batches but got
+        # preempted before writing _done.
+        all_completed = _find_completed_batches_all_regions(h, output_subdir)
+        if len(all_completed) >= num_batches and not _is_warc_done_any_region(h, output_subdir):
+            logger.info("Steal: all %d batches complete but _done missing on %s — writing it", num_batches, warc_path)
+            final_kept = _count_records_in_all_batches(h, output_subdir)
+            final_filtered = len(records) - final_kept
+            stats = {
+                "warc": warc_path,
+                "total_records": len(records),
+                "total_kept": final_kept,
+                "total_filtered": final_filtered,
+                "num_batches": num_batches,
+            }
+            done_path = f"{warc_dir}/_done"
+            import json as _json
+
+            fsspec.filesystem("gcs").pipe_file(done_path.replace("gs://", ""), _json.dumps(stats).encode())
+            _register_completed_warc(h)
+            logger.info("Steal: wrote _done for %s (kept=%d, filtered=%d)", warc_path, final_kept, final_filtered)
+            return {"warc": warc_path, "status": "steal_wrote_done"}
+        logger.info("Steal: no stealable batches on %s, all done or claimed", warc_path)
+        return {"warc": warc_path, "status": "steal_nothing_to_do"}
+
+    logger.info(
+        "Steal: %s has %d stealable batches (of %d total), starting from batch %d",
+        warc_path,
+        len(stealable),
+        num_batches,
+        stealable[0],
+    )
+
+    total_kept = 0
+    total_filtered = 0
+    batches_stolen = 0
+
+    for batch_idx in stealable:
+        # Pre-check: did someone else finish this batch since our scan?
+        if _batch_exists_any_region(h, batch_idx, output_subdir):
+            logger.info("Steal: batch %d already done, skipping", batch_idx)
+            continue
+
+        # Atomic steal claim
+        if not _claim_batch_for_stealing(warc_dir, batch_idx):
+            logger.info("Steal: lost claim on batch %d, skipping", batch_idx)
+            continue
+
+        # Process the batch
+        batch_start = batch_idx * batch_size
+        batch_end = min(batch_start + batch_size, len(records))
+        batch = records[batch_start:batch_end]
+
+        logger.info(
+            "Steal: batch %d/%d (%d records)...",
+            batch_idx + 1,
+            num_batches,
+            len(batch),
+        )
+
+        output_records, kept, filtered, token_stats = _process_batch(
+            batch, llm, sampling_params, tokenizer, template, system_message
+        )
+        total_kept += kept
+        total_filtered += filtered
+
+        batch_path = _batch_output_path(warc_dir, batch_idx)
+        _write_batch_output(batch_path, output_records)
+        _write_token_stats(warc_dir, batch_idx, token_stats)
+        batches_stolen += 1
+
+        logger.info(
+            "Steal: batch %d/%d done (kept=%d, filtered=%d) -> %s",
+            batch_idx + 1,
+            num_batches,
+            kept,
+            filtered,
+            batch_path,
+        )
+
+    # Exit check: are ALL batches now complete? If so, write _done.
+    all_completed = _find_completed_batches_all_regions(h, output_subdir)
+    if len(all_completed) >= num_batches:
+        final_kept = _count_records_in_all_batches(h, output_subdir)
+        final_filtered = len(records) - final_kept
+        stats = {
+            "warc": warc_path,
+            "total_records": len(records),
+            "total_kept": final_kept,
+            "total_filtered": final_filtered,
+            "num_batches": num_batches,
+            "batch_size": batch_size,
+            "completed_by": "stealer",
+        }
+        _write_done_marker(warc_dir, stats)
+        _register_completed_warc(h)
+        logger.info("Steal: WARC complete! %s (kept=%d, filtered=%d)", warc_path, final_kept, final_filtered)
+
+    return {
+        "warc": warc_path,
+        "status": "steal_done",
+        "batches_stolen": batches_stolen,
+        "total_kept": total_kept,
+        "total_filtered": total_filtered,
+    }
 
 
 def _normalize_record_id(raw_id: str) -> str:
@@ -90,14 +376,20 @@ def _done_marker_path(warc_dir: str) -> str:
 
 
 def _find_completed_batches_in_dir(warc_dir: str) -> set[int]:
-    """Scan a single GCS directory for completed batch files."""
+    """Scan a single GCS directory for completed batch files.
+
+    Uses a broad glob and explicit suffix check because GCS/fsspec glob can
+    match extensionless ``batch_NNNN`` marker files against ``batch_*.jsonl.gz``.
+    """
     try:
-        files = fsspec.filesystem("gcs").glob(f"{warc_dir.replace('gs://', '')}/batch_*.jsonl.gz")
+        files = fsspec.filesystem("gcs").glob(f"{warc_dir.replace('gs://', '')}/batch_*")
     except Exception:
         return set()
     completed = set()
     for f in files:
         basename = os.path.basename(f)
+        if not basename.endswith(".jsonl.gz"):
+            continue
         try:
             idx = int(basename.split("_")[1].split(".")[0])
             completed.add(idx)
@@ -224,12 +516,14 @@ def _claim_warc_atomic(warc_dir: str, stale_hours: float = 3.0) -> bool:
     blob = bucket.blob(blob_path)
 
     now = time.time()
-    claim_data = json.dumps({
-        "pid": os.getpid(),
-        "time": now,
-        "created_at": now,
-        "host": os.environ.get("HOSTNAME", "unknown"),
-    })
+    claim_data = json.dumps(
+        {
+            "pid": os.getpid(),
+            "time": now,
+            "created_at": now,
+            "host": os.environ.get("HOSTNAME", "unknown"),
+        }
+    )
     try:
         blob.upload_from_string(claim_data, if_generation_match=0)
         return True  # We won the claim — no prior file existed
@@ -281,15 +575,21 @@ def _refresh_claim(warc_dir: str) -> None:
     except Exception:
         pass
     with fsspec.open(claim_path, "w") as f:
-        f.write(json.dumps({
-            "pid": os.getpid(),
-            "time": time.time(),
-            "created_at": created_at,
-            "host": os.environ.get("HOSTNAME", "unknown"),
-        }))
+        f.write(
+            json.dumps(
+                {
+                    "pid": os.getpid(),
+                    "time": time.time(),
+                    "created_at": created_at,
+                    "host": os.environ.get("HOSTNAME", "unknown"),
+                }
+            )
+        )
 
 
-def _should_yield_to_older_claim(warc_hash: str, output_subdir: str, my_created_at: float, stale_hours: float = 3.0) -> tuple[bool, str | None]:
+def _should_yield_to_older_claim(
+    warc_hash: str, output_subdir: str, my_created_at: float, stale_hours: float = 3.0
+) -> tuple[bool, str | None]:
     """Check if another region has a fresh claim we should yield to.
 
     Returns (should_yield, winning_region). Yields when:
@@ -341,6 +641,22 @@ def _write_batch_output(path: str, records: list[dict]) -> None:
         f.write(str(len(records)))
 
 
+def _write_token_stats(warc_dir: str, batch_idx: int, token_stats: list[dict]) -> None:
+    """Write per-record token stats as a compact JSONL sidecar for FLOP accounting.
+
+    Each line: {"input_tokens": N, "output_tokens": M, "status": "kept"|"filtered_short"|"filtered_pattern"|"empty"}
+    File: batch_NNNN.tokens.gz (~5-10KB per batch of 500 records)
+    """
+    path = f"{warc_dir}/batch_{batch_idx:04d}.tokens.gz"
+    try:
+        with fsspec.open(path, "wb") as f:
+            with gzip.open(f, "wt", encoding="utf-8") as gz:
+                for stat in token_stats:
+                    gz.write(json.dumps(stat) + "\n")
+    except Exception as e:
+        logger.warning("Failed to write token stats for batch %d: %s", batch_idx, e)
+
+
 def _count_records_in_all_batches(warc_hash: str, output_subdir: str) -> int:
     """Sum record counts across all batches for a WARC, in ALL regions.
 
@@ -380,13 +696,20 @@ def _process_batch(
     tokenizer: Any,
     template: str,
     system_message: str,
-) -> tuple[list[dict], int, int]:
-    """Process a single batch through vLLM. Returns (output_records, kept, filtered)."""
+) -> tuple[list[dict], int, int, list[dict]]:
+    """Process a single batch through vLLM.
+
+    Returns:
+        (output_records, kept, filtered, token_stats)
+        token_stats is a list of per-record dicts with input/output token counts
+        and status (kept/filtered/empty), for FLOP accounting.
+    """
     from vllm.inputs.data import TokensPrompt
 
-    # Format prompts
+    # Format prompts and track input token counts
     prompts = []
-    for record in batch:
+    input_token_counts: dict[int, int] = {}
+    for i, record in enumerate(batch):
         html = record.get("html", "")
         tokens = tokenizer.encode(html)
         if len(tokens) > MAX_DOC_TOKENS:
@@ -400,14 +723,58 @@ def _process_batch(
         messages.append({"role": "user", "content": text})
         prompt_text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
         prompt_ids = tokenizer.encode(prompt_text)
+        input_token_counts[i] = len(prompt_ids)
         prompts.append(TokensPrompt(prompt_token_ids=prompt_ids))
 
     # Filter empty prompts
     valid = [(i, p) for i, p in enumerate(prompts) if p["prompt_token_ids"]]
     if not valid:
-        return [], 0, len(batch)
+        token_stats = [
+            {"input_tokens": input_token_counts.get(i, 0), "thinking_tokens": 0, "response_tokens": 0, "status": "empty"}
+            for i in range(len(batch))
+        ]
+        return [], 0, len(batch), token_stats
 
     valid_indices, valid_prompts = zip(*valid, strict=True)
+
+    # Resolve <think> and </think> token IDs for splitting thinking vs response.
+    # For Qwen3 these are typically single tokens each.
+    think_end_ids = tokenizer.encode("</think>", add_special_tokens=False)
+    think_start_ids = tokenizer.encode("<think>", add_special_tokens=False)
+
+    def _split_thinking_response(token_ids: list[int]) -> tuple[int, int, bool]:
+        """Split token_ids into (thinking_tokens, response_tokens, is_thinking_overflow).
+
+        Finds the last occurrence of the </think> token(s). Everything up to
+        and including it is thinking; everything after is response. If not
+        found but <think> IS present, all tokens are thinking overflow (model
+        started thinking but hit max_tokens before closing the tag).
+        """
+        has_think_start = len(token_ids) > 0 and len(think_start_ids) == 1 and token_ids[0] == think_start_ids[0]
+
+        if len(think_end_ids) == 1:
+            end_id = think_end_ids[0]
+            last_pos = -1
+            for j in range(len(token_ids) - 1, -1, -1):
+                if token_ids[j] == end_id:
+                    last_pos = j
+                    break
+            if last_pos >= 0:
+                return last_pos + 1, len(token_ids) - last_pos - 1, False
+            # No </think> found
+            if has_think_start:
+                # Started thinking but never closed — all tokens are thinking overflow
+                return len(token_ids), 0, True
+            return 0, len(token_ids), False
+        else:
+            needle_len = len(think_end_ids)
+            for j in range(len(token_ids) - needle_len, -1, -1):
+                if token_ids[j : j + needle_len] == think_end_ids:
+                    end_pos = j + needle_len
+                    return end_pos, len(token_ids) - end_pos, False
+            if has_think_start:
+                return len(token_ids), 0, True
+            return 0, len(token_ids), False
 
     # Generate
     t0 = time.monotonic()
@@ -421,24 +788,51 @@ def _process_batch(
         total_tokens / max(elapsed, 0.01),
     )
 
-    # Map outputs back and post-process
-    output_map = {}
+    # Map outputs back with split token counts
+    output_map: dict[int, str] = {}
+    output_thinking: dict[int, int] = {}
+    output_response: dict[int, int] = {}
+    output_overflow: dict[int, bool] = {}
     for idx, out in zip(valid_indices, outputs, strict=True):
         output_map[idx] = " ".join(o.text for o in out.outputs)
+        token_ids = list(out.outputs[0].token_ids)
+        think, resp, overflow = _split_thinking_response(token_ids)
+        output_thinking[idx] = think
+        output_response[idx] = resp
+        output_overflow[idx] = overflow
 
     output_records = []
+    token_stats = []
     kept = 0
     filtered = 0
     for i, record in enumerate(batch):
         raw = output_map.get(i, "")
+        in_toks = input_token_counts.get(i, 0)
+        think_toks = output_thinking.get(i, 0)
+        resp_toks = output_response.get(i, 0)
+        is_overflow = output_overflow.get(i, False)
         cleaned = _clean_text(raw)
+
+        stat = {"input_tokens": in_toks, "thinking_tokens": think_toks, "response_tokens": resp_toks}
+
         if len(cleaned) < MIN_OUTPUT_CHARS:
             filtered += 1
+            if is_overflow:
+                # Distinguish: did we hit max_tokens or the full context window?
+                if resp_toks == 0 and think_toks + in_toks >= MAX_CONTEXT_TOKENS - 10:
+                    token_stats.append({**stat, "status": "thinking_overflow_context"})
+                else:
+                    token_stats.append({**stat, "status": "thinking_overflow_max_tokens"})
+            else:
+                token_stats.append({**stat, "status": "filtered_short"})
             continue
         if any(p.search(cleaned) for p in _FILTER_PATTERNS):
             filtered += 1
+            token_stats.append({**stat, "status": "filtered_pattern"})
             continue
+
         kept += 1
+        token_stats.append({**stat, "status": "kept"})
         warc_file = record.get("metadata", {}).get("warc_file", "")
         output_records.append(
             {
@@ -452,7 +846,7 @@ def _process_batch(
             }
         )
 
-    return output_records, kept, filtered
+    return output_records, kept, filtered, token_stats
 
 
 def _process_warc(
@@ -500,6 +894,7 @@ def _process_warc(
     if not records:
         logger.warning("No HTML records from %s", warc_path)
         _write_done_marker(warc_dir, {"status": "empty", "records": 0})
+        _register_completed_warc(h)
         return {"warc": warc_path, "status": "empty", "records": 0}
 
     logger.info("Downloaded %d records from %s", len(records), warc_path)
@@ -509,6 +904,7 @@ def _process_warc(
     logger.info("%d records after length filter", len(records))
     if not records:
         _write_done_marker(warc_dir, {"status": "all_filtered", "records": 0})
+        _register_completed_warc(h)
         return {"warc": warc_path, "status": "all_filtered", "records": 0}
 
     # Check which batches are already done (scan ALL regions for cross-region resume)
@@ -531,9 +927,14 @@ def _process_warc(
         batch_end = min(batch_start + batch_size, len(records))
         batch = records[batch_start:batch_end]
 
-        # Skip if this batch is already done (in any region)
+        # Skip if this batch is already done (from initial scan)
         if batch_idx in completed_batches:
             logger.info("Batch %d/%d: already done, skipping", batch_idx + 1, num_batches)
+            continue
+
+        # Live check: a stealer may have written this batch since our initial scan
+        if _batch_exists_any_region(h, batch_idx, output_subdir):
+            logger.info("Batch %d/%d: completed by another worker, skipping", batch_idx + 1, num_batches)
             continue
 
         logger.info(
@@ -541,13 +942,16 @@ def _process_warc(
         )
 
         # Process batch
-        output_records, kept, filtered = _process_batch(batch, llm, sampling_params, tokenizer, template, system_message)
+        output_records, kept, filtered, token_stats = _process_batch(
+            batch, llm, sampling_params, tokenizer, template, system_message
+        )
         total_kept += kept
         total_filtered += filtered
 
         # Write batch output IMMEDIATELY to GCS (checkpoint)
         batch_path = _batch_output_path(warc_dir, batch_idx)
         _write_batch_output(batch_path, output_records)
+        _write_token_stats(warc_dir, batch_idx, token_stats)
 
         # Refresh claim so other jobs know we're still alive (3h stale timeout)
         _refresh_claim(warc_dir)
@@ -596,8 +1000,21 @@ def _process_warc(
             batch_path,
         )
 
+    # Exit check: verify ALL batches are complete (including any written by stealers).
+    # This catches the case where stealers finished some batches we skipped via
+    # the live check above — we want to write _done if everything's done.
+    all_completed = _find_completed_batches_all_regions(h, output_subdir)
+    if len(all_completed) < num_batches:
+        logger.info(
+            "WARC %s: %d/%d batches complete after our pass. Not writing _done yet.",
+            warc_path,
+            len(all_completed),
+            num_batches,
+        )
+        return {"warc": warc_path, "status": "partial", "batches_completed": len(all_completed)}
+
     # All batches done — count actual records across all batch files (including
-    # batches written by previous workers we resumed from). One list + reads per WARC.
+    # batches written by stealers or previous workers). Reads sidecar .count files.
     final_kept = _count_records_in_all_batches(h, output_subdir)
     final_filtered = len(records) - final_kept
     stats = {
@@ -611,6 +1028,7 @@ def _process_warc(
         "batch_size": batch_size,
     }
     _write_done_marker(warc_dir, stats)
+    _register_completed_warc(h)
     logger.info("WARC complete: %s (kept=%d, filtered=%d)", warc_path, final_kept, final_filtered)
     return {"warc": warc_path, "status": "done", **stats}
 
@@ -677,7 +1095,7 @@ def main():
         max_model_len=args.max_model_len,
         enable_prefix_caching=True,
     )
-    sampling_params = SamplingParams(temperature=0.0, max_tokens=6144)
+    sampling_params = SamplingParams(temperature=0.0, max_tokens=MAX_OUTPUT_TOKENS)
     tokenizer = llm.get_tokenizer()
     logger.info("Engine loaded in %.1fs", time.monotonic() - t0)
 
@@ -766,11 +1184,122 @@ def main():
 
     logger.info("batch_size=%d, output_subdir=%s", args.batch_size, args.output_subdir)
 
-    # Dynamic processing: iterate all WARCs, skip done ones (checked across all regions).
-    # Multiple jobs with different shuffle seeds naturally spread across the manifest.
-    stats = []
-    for i, warc in enumerate(warcs):
-        logger.info("=== WARC %d/%d ===", i + 1, len(warcs))
+    # -----------------------------------------------------------------------
+    # Main processing loop with steal mode
+    # -----------------------------------------------------------------------
+    REGISTRY_REFRESH_INTERVAL = 10
+    # Steal mode thresholds
+    # Steal mode patience tiers: more remaining WARCs = more patience before stealing.
+    # Tier 1: < 500 remaining  → try 10 times (endgame, most are claimed)
+    # Tier 2: < 1000 remaining → try 50 times (getting close)
+    # Tier 3: >= 1000 remaining → try 100 times (plenty of unclaimed WARCs, search harder)
+    STEAL_TIER1_THRESHOLD = 500
+    STEAL_TIER2_THRESHOLD = 1000
+    STEAL_PATIENCE_TIER1 = 10
+    STEAL_PATIENCE_TIER2 = 50
+    STEAL_PATIENCE_TIER3 = 100
+
+    import random as random_module
+
+    stats: list[dict] = []
+    completed_registry = _load_completed_registry()
+    total_warcs = len(warcs)
+    steal_mode = False
+
+    def _get_remaining():
+        return [w for w in warcs if _warc_path_hash(w) not in completed_registry]
+
+    remaining = _get_remaining()
+    logger.info(
+        "Registry filter: %d/%d WARCs remaining (%d already completed)",
+        len(remaining),
+        total_warcs,
+        total_warcs - len(remaining),
+    )
+
+    consecutive_failures = 0  # consecutive WARCs we couldn't claim (claimed/skipped)
+    warcs_since_refresh = 0
+    warc_idx = 0
+
+    while warc_idx < len(remaining) or steal_mode:
+        # Refresh registry periodically
+        warcs_since_refresh += 1
+        if warcs_since_refresh >= REGISTRY_REFRESH_INTERVAL:
+            completed_registry = _load_completed_registry()
+            old_remaining = len(remaining)
+            remaining = _get_remaining()
+            pruned = old_remaining - len(remaining)
+            if pruned > 0:
+                logger.info("Registry refresh: %d newly completed, %d remaining", pruned, len(remaining))
+                # Only reset index if we actually pruned entries (new completions
+                # changed the list). Otherwise keep moving forward to avoid
+                # re-scanning the same claimed WARCs endlessly.
+                warc_idx = 0
+            warcs_since_refresh = 0
+
+        # Check steal mode activation
+        unclaimed_count = len(remaining)
+        if unclaimed_count < STEAL_TIER1_THRESHOLD:
+            patience = STEAL_PATIENCE_TIER1
+        elif unclaimed_count < STEAL_TIER2_THRESHOLD:
+            patience = STEAL_PATIENCE_TIER2
+        else:
+            patience = STEAL_PATIENCE_TIER3
+
+        if consecutive_failures >= patience:
+            if not steal_mode:
+                logger.info(
+                    "=== ENTERING STEAL MODE === (%d consecutive failures, %d remaining)",
+                    consecutive_failures,
+                    unclaimed_count,
+                )
+            steal_mode = True
+
+        if steal_mode:
+            # Pick a random in-progress WARC to steal from
+            candidates = [w for w in warcs if _warc_path_hash(w) not in completed_registry]
+            if not candidates:
+                logger.info("No WARCs left to steal from. Exiting.")
+                break
+            random_module.shuffle(candidates)
+            stole_something = False
+            for steal_target in candidates:
+                logger.info("Steal: trying %s", steal_target)
+                s = _process_warc_steal(
+                    steal_target,
+                    output_dir,
+                    args.output_subdir,
+                    llm,
+                    sampling_params,
+                    tokenizer,
+                    template,
+                    system_message,
+                    batch_size=args.batch_size,
+                )
+                stats.append(s)
+                logger.info("Steal result: %s", s)
+                if s.get("batches_stolen", 0) > 0:
+                    stole_something = True
+                    break  # Go back to main loop — try claiming again first
+                # If nothing to steal on this WARC, try next
+            if not stole_something:
+                logger.info("No stealable batches found on any WARC. Exiting.")
+                break
+            # After a successful steal, reset and try forward claiming again
+            steal_mode = False
+            consecutive_failures = 0
+            completed_registry = _load_completed_registry()
+            remaining = _get_remaining()
+            warc_idx = 0
+            continue
+
+        # Normal forward processing
+        if warc_idx >= len(remaining):
+            break
+        warc = remaining[warc_idx]
+        warc_idx += 1
+
+        logger.info("=== WARC %d/%d (of %d remaining) ===", warc_idx, len(remaining), len(remaining))
         s = _process_warc(
             warc,
             output_dir,
@@ -786,11 +1315,25 @@ def main():
         if s["status"] != "skipped":
             logger.info("Result: %s", s)
 
+        # Track whether we're making progress (finding unclaimed WARCs)
+        if s["status"] in ("done", "partial", "empty", "all_filtered"):
+            consecutive_failures = 0
+        else:
+            consecutive_failures += 1
+
     # Summary
     done = sum(1 for s in stats if s["status"] == "done")
     skipped = sum(1 for s in stats if s["status"] == "skipped")
     claimed = sum(1 for s in stats if s["status"] == "claimed")
-    logger.info("Complete: %d done, %d skipped, %d claimed-by-other, %d total", done, skipped, claimed, len(stats))
+    stolen = sum(1 for s in stats if s["status"] == "steal_done")
+    logger.info(
+        "Complete: %d done, %d stolen, %d skipped, %d claimed-by-other, %d total",
+        done,
+        stolen,
+        skipped,
+        claimed,
+        len(stats),
+    )
 
 
 if __name__ == "__main__":

@@ -35,6 +35,7 @@ from dataclasses import dataclass
 
 import fsspec
 import zstandard
+from fray.v2.types import ResourceConfig
 
 from zephyr import Dataset, ZephyrContext
 from zephyr.execution import zephyr_worker_ctx
@@ -61,8 +62,9 @@ def _normalize_record_id(raw_id: str) -> str:
 def _load_record_id_set(metadata_path: str) -> set[str]:
     """Load metadata and build set of all WARC record IDs.
 
-    ~75M UUIDs in a Python set ≈ 6.5GB. With 12GB requested RAM,
-    leaves headroom for the Zephyr coordinator and GCS I/O buffers.
+    For the 10k manifest the set is ~400M UUIDs which as Python strings is
+    ~80-100 GB. The driver needs a >150 GB allocation; provisioned in the
+    pipeline via the outer ``remote()`` wrapper.
     """
     import glob as globmod
 
@@ -173,7 +175,16 @@ def filter_dclm(config: FilterDclmConfig) -> None:
         )
     )
 
-    ctx = ZephyrContext(name="filter-dclm", max_workers=500)
+    # Each worker calls get_shared("record_id_set") which loads the full set
+    # via cloudpickle.loads. For the 10k manifest's ~400M UUID strings the set
+    # is ~80-100 GB. Each worker needs to fit it. Driver request is set in the
+    # outer remote() wrapper in the pipeline file.
+    ctx = ZephyrContext(
+        name="filter-dclm",
+        max_workers=100,
+        resources=ResourceConfig(cpu=1, ram="128g"),
+        coordinator_resources=ResourceConfig(cpu=1, ram="128g"),
+    )
     ctx.put("record_id_set", record_id_set)
     ctx.execute(pipeline)
 
