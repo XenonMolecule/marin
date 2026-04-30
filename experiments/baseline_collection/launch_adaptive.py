@@ -22,7 +22,16 @@ import time
 from iris.client.client import IrisClient
 from iris.cluster.constraints import Constraint, ConstraintOp, WellKnownAttribute, preemptible_constraint
 from iris.cluster.types import Entrypoint, EnvironmentSpec, ResourceSpec, tpu_device
+from iris.rpc import job_pb2
 from rigging.filesystem import REGION_TO_DATA_BUCKET
+
+# Priority band name → proto enum. Used by --child-priority flag.
+PRIORITY_BAND_MAP = {
+    "production": job_pb2.PRIORITY_BAND_PRODUCTION,
+    "interactive": job_pb2.PRIORITY_BAND_INTERACTIVE,
+    "batch": job_pb2.PRIORITY_BAND_BATCH,
+    "unspecified": job_pb2.PRIORITY_BAND_UNSPECIFIED,
+}
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +39,17 @@ MANIFEST = "experiments/distill/baseline_warcs_3000.txt"
 SCRIPT = "experiments/baseline_collection/run_extract_standalone.py"
 ALL_REGIONS = sorted(REGION_TO_DATA_BUCKET.keys())
 
-MULTIHOST_TYPES = {"v5p-16", "v5p-32", "v5p-64", "v5p-128", "v5p-256", "v5litepod-16", "v5litepod-32", "v6e-16", "v6e-32"}
+MULTIHOST_TYPES = {
+    "v5p-16",
+    "v5p-32",
+    "v5p-64",
+    "v5p-128",
+    "v5p-256",
+    "v5litepod-16",
+    "v5litepod-32",
+    "v6e-16",
+    "v6e-32",
+}
 MULTIHOST_ENV = {
     "TPU_PROCESS_BOUNDS": "1,1,1",
     "TPU_CHIPS_PER_PROCESS_BOUNDS": "2,2,1",
@@ -55,6 +74,7 @@ def submit_chunk(
     end: int | None,
     chunk_start_seed: int,
     chunk_size: int,
+    child_priority_band: int = job_pb2.PRIORITY_BAND_UNSPECIFIED,
 ) -> list[str]:
     """Submit a chunk of jobs. Returns list of submitted job names."""
     is_multihost = tpu_type in MULTIHOST_TYPES
@@ -111,6 +131,7 @@ def submit_chunk(
                 ],
                 max_retries_preemption=100,
                 max_retries_failure=3,
+                priority_band=child_priority_band,
             )
             logger.info("  Submitted %s -> %s", name, job.job_id)
             submitted.append(str(job.job_id))
@@ -156,9 +177,17 @@ def run_adaptive(
     patience: int,
     start: int,
     end: int | None,
+    child_priority_band: int = job_pb2.PRIORITY_BAND_UNSPECIFIED,
 ):
     """Adaptive scaling loop. Only submits more when ALL previous jobs are running."""
-    logger.info("Adaptive launcher: %s, max=%d, initial=%d, chunk=%d", tpu_type, max_count, initial_batch, chunk_size)
+    logger.info(
+        "Adaptive launcher: %s, max=%d, initial=%d, chunk=%d, child_priority=%s",
+        tpu_type,
+        max_count,
+        initial_batch,
+        chunk_size,
+        job_pb2.PriorityBand.Name(child_priority_band).replace("PRIORITY_BAND_", "").lower(),
+    )
 
     total_submitted = 0
     seed_counter = 0
@@ -168,7 +197,9 @@ def run_adaptive(
     # Initial batch
     initial = min(initial_batch, max_count)
     logger.info("=== Initial batch: %d jobs ===", initial)
-    names = submit_chunk(client, tpu_type, output_subdir, start, end, seed_counter, initial)
+    names = submit_chunk(
+        client, tpu_type, output_subdir, start, end, seed_counter, initial, child_priority_band=child_priority_band
+    )
     total_submitted += len(names)
     seed_counter += initial
     all_job_ids.extend(names)
@@ -213,7 +244,51 @@ def run_adaptive(
                 stall_count = 0  # Reset stall count after cooldown
             continue
 
-        # All submitted jobs are running (or failed). Scale up!
+        # If ALL children are dead (0 running, 0 pending), back off then retry
+        # with a small probe batch instead of continuing to scale up.
+        if running == 0:
+            stall_count += 1
+            logger.info(
+                "All %d children dead (failed/killed). Not scaling up (stall %d/%d).",
+                failed,
+                stall_count,
+                patience,
+            )
+            if stall_count >= patience:
+                cooldown = min(check_interval * backoff_multiplier, 1800)
+                backoff_multiplier = min(backoff_multiplier * 2, 6)
+                logger.info(
+                    "All-dead stall %d times. Backing off for %ds then retrying with probe batch.",
+                    stall_count,
+                    cooldown,
+                )
+                time.sleep(cooldown)
+                stall_count = 0
+                # Submit a small probe batch to test if TPUs are available again
+                if total_submitted < max_count:
+                    probe_size = min(2, max_count - total_submitted)
+                    logger.info(
+                        "=== Probe batch: %d jobs (total will be %d/%d) ===",
+                        probe_size,
+                        total_submitted + probe_size,
+                        max_count,
+                    )
+                    names = submit_chunk(
+                        client,
+                        tpu_type,
+                        output_subdir,
+                        start,
+                        end,
+                        seed_counter,
+                        probe_size,
+                        child_priority_band=child_priority_band,
+                    )
+                    total_submitted += len(names)
+                    seed_counter += probe_size
+                    all_job_ids.extend(names)
+            continue
+
+        # All submitted jobs are running. Scale up!
         stall_count = 0
         backoff_multiplier = 1  # Reset backoff on success
         remaining = max_count - total_submitted
@@ -225,7 +300,16 @@ def run_adaptive(
             total_submitted + next_chunk,
             max_count,
         )
-        names = submit_chunk(client, tpu_type, output_subdir, start, end, seed_counter, next_chunk)
+        names = submit_chunk(
+            client,
+            tpu_type,
+            output_subdir,
+            start,
+            end,
+            seed_counter,
+            next_chunk,
+            child_priority_band=child_priority_band,
+        )
         total_submitted += len(names)
         seed_counter += next_chunk
         all_job_ids.extend(names)
@@ -246,7 +330,20 @@ def main():
     parser.add_argument("--output-subdir", default="documents/baseline_llm_extraction")
     parser.add_argument("--start", type=int, default=0)
     parser.add_argument("--end", type=int, default=None)
+    parser.add_argument(
+        "--child-priority",
+        choices=["production", "interactive", "batch", "unspecified"],
+        default="batch",
+        help=(
+            "Priority band for child TPU jobs. Defaults to 'batch' — children only "
+            "get scheduled when higher-priority demand is satisfied. Run the parent "
+            "itself at higher priority via `iris job run --priority production` so "
+            "it doesn't get preempted and lose track of its children."
+        ),
+    )
     args = parser.parse_args()
+
+    child_priority_band = PRIORITY_BAND_MAP[args.child_priority]
 
     controller_address = os.environ.get("IRIS_CONTROLLER_ADDRESS")
     if not controller_address:
@@ -265,6 +362,7 @@ def main():
         patience=args.patience,
         start=args.start,
         end=args.end,
+        child_priority_band=child_priority_band,
     )
 
     # Keep parent alive

@@ -17,6 +17,8 @@ import logging
 import re
 from dataclasses import dataclass
 
+from fray.v2.types import ResourceConfig
+
 from zephyr import Dataset, ZephyrContext
 
 logger = logging.getLogger(__name__)
@@ -66,7 +68,14 @@ def extract_warc_metadata(config: ExtractWarcMetadataConfig) -> None:
         .write_jsonl(f"{config.output_path}/data-{{shard:05d}}-of-{{total:05d}}.jsonl.gz")
     )
 
-    ctx = ZephyrContext(name="extract-warc-metadata", max_workers=500)
+    # load_file() reads the full HTML JSONL.gz shard (decoded HTML can be several
+    # GB per shard for large WARCs). 8 GiB workers give comfortable headroom
+    # against tight-margin OOMs.
+    ctx = ZephyrContext(
+        name="extract-warc-metadata",
+        max_workers=500,
+        resources=ResourceConfig(cpu=1, ram="8g"),
+    )
     ctx.execute(pipeline)
 
     logger.info(f"Metadata extraction complete → {config.output_path}")

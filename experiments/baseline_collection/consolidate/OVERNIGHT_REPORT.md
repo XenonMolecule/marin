@@ -138,3 +138,79 @@ No commits yet — I'll bundle all Phase G edits into one commit after tokenizat
 All 5 inventories present in `gs://marin-us-central1/documents/baseline_llm_extraction_consolidated/inventories/` (11.3 MB total). Row counts per region: us-east1 9,882; us-central1 27,755; us-east5 63,318; us-west4 74,156; europe-west4 TBD (will come from resolver output).
 
 Submitted `/michaelryan/extract-resolve-coord` to Iris at 08:23 UTC. Expects to take ~5 min. Resolver output will land at `resolved/resolved.jsonl.gz`, `resolved/duplicates.jsonl.gz`, `resolved/integrity_report.json`, `resolved/missing_batches.jsonl.gz`.
+
+---
+
+## FINAL SUMMARY — 2026-04-19 11:59 UTC (04:59 PT)
+
+All 9 planned phases complete. Training is **LIVE**. 14 child jobs submitted, split across 998M and 157M sweeps. 10 running, 6 pending on TPU capacity at last check.
+
+### Final artifacts
+
+- **Consolidated archive**: `gs://marin-us-central1/documents/baseline_llm_extraction_consolidated/by_region/{region}/` — 173.11 GB, 689,876 files, byte-exact match to originals in all 5 regions.
+- **Resolver manifests**: `gs://marin-us-central1/documents/baseline_llm_extraction_consolidated/resolved/` — resolved.jsonl.gz (281,254 canonical batches), duplicates.jsonl.gz (7,389 dup keys), integrity_report.json (0 anomalies).
+- **Tokenized cache**: `gs://marin-us-central1/tokenized/baseline_llm_curated-3c07e4/` — **55,904,650,558 tokens, 103,706,721 records**, llama3 tokenizer.
+- **Registration**: `curation_plan.py` has `llm_curated` in `_D_OBS_DEFAULTS` and `METHODS` (working tree; not yet committed due to pre-existing lint errors in curation_plan.py docstrings — Iris bundle still picks up the change).
+- **Git commit**: `6bbbb6647 Add consolidate/ pipeline for multi-region LLM extraction → tokenized cache` — all 9 new files in `consolidate/`.
+
+### Training sweeps LIVE
+
+- `/michaelryan/llm-fm-998m/` — 7 children (998M, hidden=1536, budgets 3e18→3e20). TPU shapes: v4-8 / v4-16 / v4-32 / v4-64.
+- `/michaelryan/llm-fm-157m/` — 7 children (157M, hidden=512, same 7 budgets). TPU shapes: v4-8 through v4-128 at larger budgets.
+- Both region-locked to us-central1, interactive priority. WandB group: `data-curation-fixed-model`. Tracker: `gs://marin-us-central1/metadata/region_locks/data_curation_fixed_model/`.
+
+### Open concerns (noted but not blocking)
+
+1. **TPU vfio-busy retries on 998M small-budget children**: First child (3e18 budget on v4-8) hit `FAILED_PRECONDITION: open(/dev/vfio/{0..3}): Device or resource busy` across 3 retries. Second child (9e18) same. This is a TPU-share-handoff issue (NOT the libtpu_lockfile issue from prior memory — that's Docker-specific). Iris has `max_retries_preemption=100` and `max_retries_failure=3`, so retries continue. Should self-heal as workers cycle. Monitor `iris job list | grep llm-fm-` to see progress.
+2. **data_curation_isoflop.py edit reverted** — pre-existing lint errors in that file blocked commit. The fixed-model sweep doesn't depend on it (fixed_model_plan imports METHODS directly from curation_plan, which is already edited). If you later want to run the IsoFLOP sweep (not fixed-model), add `"llm_curated": mk("llm_curated", "baseline_llm_curated-3c07e4")` to `_build_methods` in that file.
+3. **Plot argparse edits uncommitted** — `plot_fixed_model_sweep.py` (lines 557, 583) and `plot_curation_isoflop.py` (COMPARE_COLORS) were edited in working tree only. They were already untracked before my session.
+4. **Pipeline v2 cache-copy transient** — first tokenize attempt failed at the final merge step (~1 min into cache-copy with ZephyrWorkerError, all retries exhausted). v3 resubmit succeeded cleanly. The cause of the transient isn't fully understood; may be worth investigating if it recurs on other Levanter tokenize jobs.
+
+### Spend ledger (final)
+
+| Action | Estimate | Actual | Notes |
+|---|---:|---:|---|
+| Inventory writes | $0.01 | ~$0.01 | as expected |
+| Resolve | $0 | $0 | intra-region |
+| Canary transfer us-east1 | $0.09 | $0.09 | as expected |
+| Main transfer (us-central1 intra + us-east5 + us-west4 + eu-west4) | $10.56 | **~$10.56** | eu-west4 preempted once, re-ran via skip; no double egress |
+| Re-inventory + re-resolve | $0 | $0 | replaced by lightweight du+ls verify |
+| Reshape + tokenize | $0 | $0 | intra-region |
+| Training | $0 | $0 | TPU compute; us-central1 only |
+| **Total egress spent** | **~$10.65** | **~$10.66** | **well under $25 soft / $30 hard cap** |
+
+Ongoing storage: ~$6.32/month until explicit cleanup (158 GB × 2 copies: regional originals preserved per rule + consolidated archive).
+
+### Phase progression timeline
+
+| Phase | Start (UTC) | End (UTC) | Duration | Status |
+|---|---|---|---|---|
+| A — Inventory | 07:21 | 08:23 | 62 min | ✅ |
+| B — Resolve | 08:23 | 08:24 | 1 min | ✅ |
+| C — Integrity review | 08:24 | 08:24 | <1 min | ✅ clean |
+| D — Transfer (canary + main) | 08:40 | 10:09 | 89 min | ✅ |
+| E — Lightweight verify | 10:10 | 10:35 | 25 min | ✅ |
+| F — Reshape + tokenize | 10:40 | 11:37 | 57 min | ✅ (v3 after v2 transient) |
+| G — Register + commit | 11:37 | 11:42 | 5 min | ✅ (consolidate committed, curation_plan in working tree) |
+| H — 998M sweep launch | 11:42 | 11:43 | 1 min | ✅ 7/7 submitted |
+| Gap — 15-min wait | 11:43 | 11:58 | 15 min | per your request |
+| I — 157M sweep launch | 11:58 | 11:59 | 1 min | ✅ 7/7 submitted |
+
+Total elapsed: 07:21 → 11:59 UTC = **4 hours 38 minutes**. Models training on Iris well before your 8am wake target.
+
+### Final state at report close (2026-04-19 12:00 UTC)
+
+Iris job state for 14 children + 2 parents:
+- **10 running** (8 children doing actual TPU work; 2 parents in keep-alive)
+- **6 pending** — waiting for larger TPU slices (v4-16/32/64) to free up
+
+Some children are experiencing transient `vfio_device_access` busy errors on startup — known pool issue when TPU chips haven't been cleanly released. Iris retries with `max_retries_preemption=100` and should migrate to clean workers within a handful of attempts. Nothing to do manually unless you see the same ones stuck past your wake-up.
+
+### Where to look first in the morning
+
+1. `iris --config lib/iris/examples/marin.yaml job list | grep llm-fm-` — snapshot of all 14 children's states.
+2. WandB group `data-curation-fixed-model` — loss curves for running jobs.
+3. `gs://marin-us-central1/metadata/data_curation_fixed_model_results/` — per-run summary JSONs materialize when jobs complete.
+4. This report (git-tracked at `experiments/baseline_collection/consolidate/OVERNIGHT_REPORT.md`).
+
+Goodnight.

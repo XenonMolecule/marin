@@ -26,6 +26,7 @@ from dataclasses import dataclass
 
 import requests
 import warcio
+from fray.v2.types import ResourceConfig
 
 from zephyr import Dataset, ZephyrContext
 
@@ -171,7 +172,17 @@ def download_warcs_incremental(config: IncrementalWarcDownloadConfig) -> None:
         .write_jsonl(_output_path_fn, skip_existing=True)
     )
 
-    ctx = ZephyrContext(name="download-warcs", max_workers=500)
+    # Each worker loads a full WARC body (~1-1.3 GB compressed) into memory via
+    # ``response.content`` and accumulates all decoded HTML records into a list.
+    # HTML decompression expansion (5-10x) + Python string/dict overhead means
+    # adversarial WARCs can peak well above 16 GB (one 1.3 GB WARC consistently
+    # OOM'd on a 16 GiB worker, then cascaded the whole job). 24 GiB has wider
+    # headroom for outliers.
+    ctx = ZephyrContext(
+        name="download-warcs",
+        max_workers=500,
+        resources=ResourceConfig(cpu=1, ram="24g"),
+    )
     ctx.execute(pipeline)
 
     logger.info(f"Download complete. {len(warc_paths)} WARCs → {config.output_path}")
