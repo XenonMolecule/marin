@@ -35,7 +35,6 @@ Usage (submit a parent that fans out children):
 from __future__ import annotations
 
 import argparse
-import json
 import logging
 import os
 import time
@@ -47,7 +46,11 @@ logger = logging.getLogger(__name__)
 # Regions we're willing to schedule single-host LIMA eval children in.
 # Full empirical mapping below (see REGION_TO_TPU for each region's v*-8 variant).
 CANDIDATE_REGIONS: tuple[str, ...] = (
-    "us-central1", "us-east5", "us-central2", "us-east1", "europe-west4",
+    "us-central1",
+    "us-east5",
+    "us-central2",
+    "us-east1",
+    "europe-west4",
 )
 
 # Summary dir — where the training summaries land. We read this to enumerate

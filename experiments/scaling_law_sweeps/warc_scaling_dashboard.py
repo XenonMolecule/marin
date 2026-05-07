@@ -30,7 +30,6 @@ from pathlib import Path
 from flask import Flask, jsonify, request, send_file
 
 from experiments.scaling_law_sweeps.warc_scaling_plan import (
-    WARC_COUNTS,
     WARC_METHOD_BASE_NAMES,
     enumerate_warc_scaling_plans,
 )
@@ -412,10 +411,9 @@ def _scan_progress() -> dict:
     history: dict[str, int] = {}
     now = time.time()
     cutoff = now - 24 * 3600
-    history_iter = (
-        [(warc_bucket, warc_obj_prefix, f) for f in warc_basenames]
-        + [(fm_bucket, fm_obj_prefix, f) for f in fm_basenames]
-    )
+    history_iter = [(warc_bucket, warc_obj_prefix, f) for f in warc_basenames] + [
+        (fm_bucket, fm_obj_prefix, f) for f in fm_basenames
+    ]
     for src_bucket, src_prefix, fname in history_iter:
         # Skip reading every file; instead approximate using GCS modification
         # time via the blob's `updated`.
@@ -592,8 +590,14 @@ def _scan_deep_progress() -> dict:
         started = entry is not None  # any checkpoint blob seen
         if entry is None:
             entry = {
-                "region": "(none)", "current_step": 0, "last_update": 0.0, "has_done": False,
-                "first_step": None, "first_step_ts": None, "last_step": 0, "last_step_ts": 0.0,
+                "region": "(none)",
+                "current_step": 0,
+                "last_update": 0.0,
+                "has_done": False,
+                "first_step": None,
+                "first_step_ts": None,
+                "last_step": 0,
+                "last_step_ts": 0.0,
             }
         canonical_region = summary_region.get(run_name) or entry["region"]
         total = plan["train_steps"]
@@ -737,7 +741,9 @@ def _scan_cluster() -> dict:
         )
 
     # Per-TPU rollup (across regions).
-    by_tpu: dict[str, dict[str, int]] = defaultdict(lambda: {"ready": 0, "booting": 0, "demand": 0, "idle": 0, "regions": []})
+    by_tpu: dict[str, dict[str, int]] = defaultdict(
+        lambda: {"ready": 0, "booting": 0, "demand": 0, "idle": 0, "regions": []}
+    )
     for g in groups:
         if not g["tpu_type"]:
             continue

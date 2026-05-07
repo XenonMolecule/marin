@@ -30,9 +30,7 @@ from iris.rpc import job_pb2
 
 def _connect_client(cluster: str) -> tuple[IrisClient, object]:
     """Establish tunnel + client, mirroring iris CLI's require_controller_url."""
-    config_path = os.path.join(
-        os.path.dirname(__file__), "..", "..", "lib", "iris", "examples", f"{cluster}.yaml"
-    )
+    config_path = os.path.join(os.path.dirname(__file__), "..", "..", "lib", "iris", "examples", f"{cluster}.yaml")
     iris_config = IrisConfig.load(config_path)
     bundle = iris_config.provider_bundle()
     controller_address = iris_config.controller_address()
@@ -41,6 +39,7 @@ def _connect_client(cluster: str) -> tuple[IrisClient, object]:
     tunnel_cm = bundle.controller.tunnel(address=controller_address)
     tunnel_url = tunnel_cm.__enter__()
     from pathlib import Path
+
     client = IrisClient.remote(tunnel_url, workspace=Path.cwd())
     return client, tunnel_cm
 
@@ -49,8 +48,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--methods", nargs="+", required=True)
     parser.add_argument("--experiments", nargs="+", default=["all"])
-    parser.add_argument("--child-priority", default="batch",
-                        choices=["production", "interactive", "batch"])
+    parser.add_argument("--child-priority", default="batch", choices=["production", "interactive", "batch"])
     parser.add_argument("--run-suffix", default="v4")
     parser.add_argument("--allowed-regions", nargs="+", default=None)
     parser.add_argument("--job-name", required=True)
@@ -66,12 +64,18 @@ def main() -> None:
     client, tunnel_cm = _connect_client(args.cluster)
 
     cmd_parts = [
-        "python", "experiments/scaling_law_sweeps/launch_curation_sweep.py",
-        "--methods", *args.methods,
-        "--experiments", *args.experiments,
-        "--child-priority", args.child_priority,
-        "--run-suffix", args.run_suffix,
-        "--wandb-mode", args.wandb_mode,
+        "python",
+        "experiments/scaling_law_sweeps/launch_curation_sweep.py",
+        "--methods",
+        *args.methods,
+        "--experiments",
+        *args.experiments,
+        "--child-priority",
+        args.child_priority,
+        "--run-suffix",
+        args.run_suffix,
+        "--wandb-mode",
+        args.wandb_mode,
     ]
     if args.allowed_regions:
         cmd_parts.extend(["--allowed-regions", *args.allowed_regions])

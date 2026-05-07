@@ -1,3 +1,6 @@
+# Copyright The Marin Authors
+# SPDX-License-Identifier: Apache-2.0
+
 """Print a Markdown progress table for an in-flight fixed-model sweep.
 
 Maps (method, budget) -> {summary exists, or peak checkpoint step across
@@ -42,7 +45,9 @@ def _peak_step(region: str, run_name: str) -> tuple[str, int] | None:
     try:
         out = subprocess.run(
             ["gcloud", "storage", "ls", _ckpt_path(region, run_name)],
-            capture_output=True, text=True, timeout=180,
+            capture_output=True,
+            text=True,
+            timeout=180,
         )
     except subprocess.TimeoutExpired:
         # Some buckets occasionally hang on transient list pagination — skip rather than crash.
@@ -59,7 +64,9 @@ def _existing_summaries(hidden_dim: int) -> set[str]:
     """Set of run_names that already have a summary JSON."""
     out = subprocess.run(
         ["gcloud", "storage", "ls", SUMMARY_PREFIX],
-        capture_output=True, text=True, timeout=180,
+        capture_output=True,
+        text=True,
+        timeout=180,
     )
     if out.returncode != 0:
         return set()
@@ -84,15 +91,19 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--hidden-sizes", nargs="+", type=int, default=[2432])
     parser.add_argument(
-        "--methods", nargs="+",
+        "--methods",
+        nargs="+",
         default=["dclm", "nemotron_full_bos_fixed", "llm_curated_bos_fixed", "resiliparse"],
     )
     parser.add_argument(
-        "--budgets", nargs="+", type=float,
+        "--budgets",
+        nargs="+",
+        type=float,
         default=[3e18, 9e18, 1.8e19, 3e19, 9e19, 1.8e20, 3e20, 9e20, 1.8e21],
     )
     parser.add_argument(
-        "--display-method-names", nargs="+",
+        "--display-method-names",
+        nargs="+",
         help="Optional: pretty names for table header. Same length as --methods.",
     )
     args = parser.parse_args()
@@ -125,7 +136,9 @@ def main() -> None:
                 probes.append((m, b, run_name, region, p))
 
     # Run all probes in parallel
-    cells: dict[tuple[str, float], dict] = {(m, b): {"plan": plan_by_key.get((m, b))} for m in args.methods for b in args.budgets}
+    cells: dict[tuple[str, float], dict] = {
+        (m, b): {"plan": plan_by_key.get((m, b))} for m in args.methods for b in args.budgets
+    }
 
     def probe(args_tuple):
         m, b, run_name, region, p = args_tuple

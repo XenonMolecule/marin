@@ -1,3 +1,6 @@
+# Copyright The Marin Authors
+# SPDX-License-Identifier: Apache-2.0
+
 """Copy delphi-sweep fixed-model summaries for LC and Resiliparse → ExpC results dir.
 
 Why this is sound: for data-rich methods (target_epochs < 1 at T=33T), training
@@ -144,11 +147,13 @@ def main() -> int:
     methods = [METHODS["llm_curated_bos_fixed"], METHODS["resiliparse"]]
     fm_plans = fixed_model_plan.enumerate_fixed_model_plans(methods)
     fm_run_names = {p.run_name_core for p in fm_plans}
-    logger.info("Delphi-sweep canonical FM plans: %d (%d methods × %d hidden_sizes × %d budgets)",
-                len(fm_plans),
-                len(methods),
-                len(fixed_model_plan.TARGET_HIDDEN_SIZES),
-                len(curation_plan.BUDGETS))
+    logger.info(
+        "Delphi-sweep canonical FM plans: %d (%d methods × %d hidden_sizes × %d budgets)",
+        len(fm_plans),
+        len(methods),
+        len(fixed_model_plan.TARGET_HIDDEN_SIZES),
+        len(curation_plan.BUDGETS),
+    )
 
     # Now enumerate the corresponding ExpC plans for the same two methods.
     expc_plans = curation_plan.enumerate_plans(methods, [("C", curation_plan.DEFAULT_T_TARGET_C)])
@@ -198,16 +203,23 @@ def main() -> int:
             )
             if args.dry_run:
                 lima_present = "eval/lima/bpb" in (expc_summary.get("eval") or {})
-                logger.info("[DRY-RUN would copy] %s -> %s (T_target %.1e -> %.1e, LIMA %s)",
-                            fm_run_name, expc_run_name,
-                            fm_summary["plan"].get("t_target", float("nan")),
-                            plan.t_target,
-                            "present" if lima_present else "missing")
+                logger.info(
+                    "[DRY-RUN would copy] %s -> %s (T_target %.1e -> %.1e, LIMA %s)",
+                    fm_run_name,
+                    expc_run_name,
+                    fm_summary["plan"].get("t_target", float("nan")),
+                    plan.t_target,
+                    "present" if lima_present else "missing",
+                )
             else:
                 _gcs_write_json(expc_path, expc_summary)
-                logger.info("[%d] copied %s -> %s%s",
-                            copied + 1, fm_run_name, expc_run_name,
-                            " (+LIMA from sidecar)" if did_merge else "")
+                logger.info(
+                    "[%d] copied %s -> %s%s",
+                    copied + 1,
+                    fm_run_name,
+                    expc_run_name,
+                    " (+LIMA from sidecar)" if did_merge else "",
+                )
             copied += 1
         except Exception as e:
             failed += 1

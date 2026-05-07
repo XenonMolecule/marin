@@ -41,6 +41,7 @@ from experiments.scaling_law_sweeps.data_curation_math import (
 )
 from experiments.scaling_law_sweeps.fixed_model_plan import _candidate_for_fixed_model
 
+
 # Override the PlannedRun.memory_gb default (256, set for fixed-model d4096+L40
 # multi-host plans). Initial 16-GB tier was too tight: h=512 plans with
 # batch_size >= 32 OOM-killed on host RAM (exit 137) under 16 GB. Bumping to
@@ -56,6 +57,7 @@ def _memory_gb_for_hidden(hidden_dim: int) -> int:
     if hidden_dim <= 768:
         return 32
     return 48
+
 
 # All WARC subsample sizes this sweep covers.
 WARC_COUNTS: tuple[int, ...] = (100, 500, 1000, 2000)
@@ -232,9 +234,7 @@ def enumerate_warc_scaling_plans(
             method = method_for(base_name, n_warcs)
             for hidden_size in hidden_sizes:
                 for budget in budgets:
-                    if only_budgets_set is not None and not any(
-                        abs(budget - b) / b < 0.01 for b in only_budgets_set
-                    ):
+                    if only_budgets_set is not None and not any(abs(budget - b) / b < 0.01 for b in only_budgets_set):
                         continue
                     candidate = _candidate_for_fixed_model(hidden_size, budget, seq_len=seq_len)
                     if candidate is None:
@@ -266,6 +266,7 @@ def enumerate_warc_scaling_plans(
                     if batch_divisor > 1:
                         from iris.cluster.types import get_tpu_topology
                         from marin.scaling_laws import pick_v5p_type
+
                         v5p_raw = pick_v5p_type(plan.estimated_memory_bytes)
                         vm_count_v5p = get_tpu_topology(v5p_raw).vm_count
                         # Pair with a v4 of the same vm_count (cores = vm_count*8).

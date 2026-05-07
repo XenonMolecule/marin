@@ -179,8 +179,7 @@ def load_real_anchor_records(metric_key: str = "eval/lima/loss") -> list[WarcSca
         if r.hidden_dim != _REAL_ANCHOR_HIDDEN_DIM:
             continue
         records.append(r)
-    logger.info("Grafted %d REAL records at (h=%d, N=%d)", len(records),
-                _REAL_ANCHOR_HIDDEN_DIM, _REAL_ANCHOR_N_WARCS)
+    logger.info("Grafted %d REAL records at (h=%d, N=%d)", len(records), _REAL_ANCHOR_HIDDEN_DIM, _REAL_ANCHOR_N_WARCS)
     return records
 
 
@@ -265,19 +264,24 @@ def main() -> None:
 
     metric_key = "eval/lima/loss"
     records = make_fake_records()
-    logger.info("Generated %d fabricated records across %d (method, n, h) cells",
-                len(records),
-                len({(r.method, r.sampled_warcs, r.hidden_dim) for r in records}))
+    logger.info(
+        "Generated %d fabricated records across %d (method, n, h) cells",
+        len(records),
+        len({(r.method, r.sampled_warcs, r.hidden_dim) for r in records}),
+    )
 
     # Drop fabricated rows at the anchor cell and replace with REAL data.
     real_anchor = load_real_anchor_records(metric_key)
     records = [
-        r for r in records
-        if not (r.hidden_dim == _REAL_ANCHOR_HIDDEN_DIM and r.sampled_warcs == _REAL_ANCHOR_N_WARCS)
+        r for r in records if not (r.hidden_dim == _REAL_ANCHOR_HIDDEN_DIM and r.sampled_warcs == _REAL_ANCHOR_N_WARCS)
     ]
     records.extend(real_anchor)
-    logger.info("Final dataset: %d records (%d real anchor + %d fake elsewhere)",
-                len(records), len(real_anchor), len(records) - len(real_anchor))
+    logger.info(
+        "Final dataset: %d records (%d real anchor + %d fake elsewhere)",
+        len(records),
+        len(real_anchor),
+        len(records) - len(real_anchor),
+    )
     metric_dir = output_root / metric_key.replace("/", "_")
     metric_dir.mkdir(parents=True, exist_ok=True)
 

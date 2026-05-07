@@ -225,8 +225,8 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         choices=["generative", "logprob"],
         default="generative",
         help="Which MMLU medical task variant to evaluate against. 'logprob' uses "
-             "single-token loglikelihood scoring (avoids the format-following collapse "
-             "we saw with the generative variant on Base models).",
+        "single-token loglikelihood scoring (avoids the format-following collapse "
+        "we saw with the generative variant on Base models).",
     )
     return parser.parse_args(argv)
 
@@ -305,9 +305,11 @@ def main(argv: list[str] | None = None) -> None:
                 logger.exception("Failed to submit eval for %s: %s", run_name, e)
 
         logger.info(
-            "Poll #%d: discovered %d runs, dispatched %d new evals "
-            "(total handled this process: %d).",
-            iteration, len(summaries), new_submitted, len(submitted_in_process),
+            "Poll #%d: discovered %d runs, dispatched %d new evals " "(total handled this process: %d).",
+            iteration,
+            len(summaries),
+            new_submitted,
+            len(submitted_in_process),
         )
 
         if args.no_keep_alive:

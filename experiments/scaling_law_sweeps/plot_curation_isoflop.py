@@ -458,7 +458,7 @@ COMPARE_COLORS = {
     # ExpC 10k re-extractions: keep the base-method hue but use a saturated
     # primary so the 4 ExpC methods (these two + LC bos_fixed + resiliparse)
     # are all visually distinct from each other on the cross-method comparison.
-    "dclm_10k": "#1f77b4",   # dclm blue
+    "dclm_10k": "#1f77b4",  # dclm blue
     "nemotron_10k": "#2ca02c",  # nemotron green
 }
 
@@ -748,7 +748,9 @@ def main(argv: list[str] | None = None) -> None:
     if args.experiments:
         exp_tags = list(args.experiments)
     else:
-        exp_tags = sorted({s.get("plan", {}).get("experiment_tag") for s in summaries if s.get("plan", {}).get("experiment_tag")})
+        exp_tags = sorted(
+            {s.get("plan", {}).get("experiment_tag") for s in summaries if s.get("plan", {}).get("experiment_tag")}
+        )
     logger.info("Plotting for experiment_tags: %s", exp_tags)
 
     base_dir = Path(args.output_dir)
@@ -772,8 +774,10 @@ def main(argv: list[str] | None = None) -> None:
             passes.append(("outliers_removed", filtered, base_dir / f"{metric_short}_outliers_removed"))
             print(f"\n{'#'*60}")
             print(f"# Outlier filter for {metric_key}: dropped {len(drop_run_names)} of {len(summaries)} runs")
-            print(f"#   floor = {args.outlier_floor if args.outlier_floor is not None else _DEFAULT_OUTLIER_FLOOR_BY_METRIC.get(metric_key, 0.07)}")
-            print(f"#   dropped run_names:")
+            print(
+                f"#   floor = {args.outlier_floor if args.outlier_floor is not None else _DEFAULT_OUTLIER_FLOOR_BY_METRIC.get(metric_key, 0.07)}"
+            )
+            print("#   dropped run_names:")
             for rn in sorted(drop_run_names):
                 print(f"#     - {rn}")
             print(f"{'#'*60}")

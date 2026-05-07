@@ -127,12 +127,25 @@ def _aggregate(training_prefix: str, eval_prefix: str) -> list[dict[str, Any]]:
         rows.append(
             {
                 "run_name": run_name,
-                "domain": train.get("domain") or ev.get("model_name", "").split("-")[1] if "-" in ev.get("model_name", "") else None,
+                "domain": (
+                    train.get("domain") or ev.get("model_name", "").split("-")[1]
+                    if "-" in ev.get("model_name", "")
+                    else None
+                ),
                 "branch": train.get("branch"),
                 "config_name": train.get("config_name", "baseline"),
                 "model_variant": train.get("model_variant") or ev.get("model_path"),
-                "model_size": train.get("model_size") or (
-                    "0.6b" if "0.6b" in (ev.get("model_name") or "") else "8b" if "8b" in (ev.get("model_name") or "") else "14b" if "14b" in (ev.get("model_name") or "") else None
+                "model_size": (
+                    train.get("model_size")
+                    or (
+                        "0.6b"
+                        if "0.6b" in (ev.get("model_name") or "")
+                        else (
+                            "8b"
+                            if "8b" in (ev.get("model_name") or "")
+                            else "14b" if "14b" in (ev.get("model_name") or "") else None
+                        )
+                    )
                 ),
                 "lr": train.get("hyperparameters", {}).get("learning_rate"),
                 "bs": train.get("hyperparameters", {}).get("batch_size"),
@@ -144,7 +157,14 @@ def _aggregate(training_prefix: str, eval_prefix: str) -> list[dict[str, Any]]:
             }
         )
 
-    rows.sort(key=lambda r: (r.get("model_size") or "", r.get("domain") or "", r.get("branch") or "", -(r.get("mmlu_med_avg") or 0)))
+    rows.sort(
+        key=lambda r: (
+            r.get("model_size") or "",
+            r.get("domain") or "",
+            r.get("branch") or "",
+            -(r.get("mmlu_med_avg") or 0),
+        )
+    )
     return rows
 
 

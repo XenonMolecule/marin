@@ -1,3 +1,6 @@
+# Copyright The Marin Authors
+# SPDX-License-Identifier: Apache-2.0
+
 """Option A FLOP/token estimate for the llm_curated extraction.
 
 Reads canonical sidecar paths (one path per unique resolved batch with a
@@ -23,7 +26,6 @@ import logging
 import time
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from pathlib import Path
 
 import fsspec
 import numpy as np
@@ -260,7 +262,7 @@ def main():
 
     # Human-readable text.
     lines = []
-    lines.append(f"Option A FLOP/token estimate for llm_curated extraction (Qwen3-8B inference)")
+    lines.append("Option A FLOP/token estimate for llm_curated extraction (Qwen3-8B inference)")
     lines.append(f"Observed batches: {summary['n_observed_batches']:,}")
     lines.append(f"Projected to:     {summary['n_projected_batches']:,} unique resolved batches (Option A: assume MAR)")
     lines.append(f"Errors:           {summary['n_errors']}")
@@ -285,7 +287,9 @@ def main():
     lines.append("")
     lines.append("PER-REGION PER-BATCH MEANS (sanity check for bias from non-MAR sidecar coverage)")
     lines.append("-" * 110)
-    lines.append(f"{'region':<14} {'n':>8} {'<input>':>12} {'<think>':>12} {'<resp>':>12} {'<flops>':>14} {'<kept_rec>':>12}")
+    lines.append(
+        f"{'region':<14} {'n':>8} {'<input>':>12} {'<think>':>12} {'<resp>':>12} {'<flops>':>14} {'<kept_rec>':>12}"
+    )
     for region in sorted(summary["per_region"]):
         r = summary["per_region"][region]
         lines.append(

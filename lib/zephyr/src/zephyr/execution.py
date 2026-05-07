@@ -19,7 +19,6 @@ import logging
 import os
 import pickle
 import re
-import signal
 import sys
 from datetime import datetime, timezone
 import threading
@@ -1355,9 +1354,7 @@ class ZephyrWorker:
             # so retries/reporting can distinguish memory pressure from other
             # crashes. Kernel-level OOM (SIGKILL) cannot be caught here — the
             # worker actor dies and the orchestrator restarts it.
-            raise MemoryError(
-                f"Shard {task.shard_idx} hit MemoryError during in-process execution: {e}"
-            ) from e
+            raise MemoryError(f"Shard {task.shard_idx} hit MemoryError during in-process execution: {e}") from e
 
         logger.info("[shard %d] Complete: %d refs produced", task.shard_idx, len(result.shard.refs))
         return result, dict(self._counters)

@@ -306,6 +306,7 @@ def main(argv: list[str] | None = None) -> None:
             int(r["parameters"]) if r["parameters"] not in ("", None) else 0,
             int(r["tokens"]) if r["tokens"] not in ("", None) else 0,
         )
+
     streamlined_rows.sort(key=sort_key)
     complete_rows.sort(key=sort_key)
 
@@ -328,10 +329,9 @@ def main(argv: list[str] | None = None) -> None:
     # Per-method/warc summary so the user can sanity-check coverage. Also count
     # how many rows are missing eval/lima/loss — those won't appear on lima plots.
     from collections import Counter
+
     cov = Counter((r["method"], r["warcs"]) for r in streamlined_rows)
-    cov_missing_lima = Counter(
-        (r["method"], r["warcs"]) for r in streamlined_rows if r["eval_lima_loss"] in ("", None)
-    )
+    cov_missing_lima = Counter((r["method"], r["warcs"]) for r in streamlined_rows if r["eval_lima_loss"] in ("", None))
     logger.info("Coverage (rows / missing eval_lima_loss):")
     for (m, n), c in sorted(cov.items()):
         miss = cov_missing_lima.get((m, n), 0)

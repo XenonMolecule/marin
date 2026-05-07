@@ -1,3 +1,6 @@
+# Copyright The Marin Authors
+# SPDX-License-Identifier: Apache-2.0
+
 """Count nemotron_quality distribution across filtered baseline datasets on us-central2."""
 
 import gzip
@@ -57,7 +60,7 @@ def process_dataset(label: str, base_path: str) -> None:
     grand = sum(total.values())
     logger.info(f"\nTotal documents: {grand:,}")
 
-    logger.info(f"\nBy quality/kind:")
+    logger.info("\nBy quality/kind:")
     for key in sorted(total.keys()):
         c = total[key]
         logger.info(f"  {key:30s}: {c:>10,} ({100 * c / grand:5.1f}%)")
@@ -67,7 +70,7 @@ def process_dataset(label: str, base_path: str) -> None:
         q = key.split("/")[0]
         quality_only[q] += c
 
-    logger.info(f"\nBy quality (collapsed):")
+    logger.info("\nBy quality (collapsed):")
     for q in ["high", "medium-high", "medium", "medium-low", "low"]:
         c = quality_only.get(q, 0)
         logger.info(f"  {q:12s}: {c:>10,} ({100 * c / grand:5.1f}%)")

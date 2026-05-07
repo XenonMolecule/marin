@@ -1,3 +1,6 @@
+# Copyright The Marin Authors
+# SPDX-License-Identifier: Apache-2.0
+
 """Pre-stage llm_curated .tokens.gz sidecars from us-central1 to us-central2.
 
 Runs on a us-central2 worker (e.g., marin-big-run Ray cluster). Reads an
@@ -34,7 +37,7 @@ EXPECTED_SUFFIX = ".tokens.gz"
 def rewrite_path(src: str) -> str:
     assert src.startswith(SRC_PREFIX), f"unexpected source prefix: {src}"
     assert src.endswith(EXPECTED_SUFFIX), f"unexpected suffix (refusing to copy): {src}"
-    rel = src[len(SRC_PREFIX):]
+    rel = src[len(SRC_PREFIX) :]
     return f"{DST_PREFIX}{rel}"
 
 
@@ -69,7 +72,7 @@ def main():
     src_blob_prefix = "documents/baseline_llm_extraction_consolidated/by_region/"
 
     def copy_one(src_path: str) -> tuple[str, str]:
-        rel = src_path[len(SRC_PREFIX):]
+        rel = src_path[len(SRC_PREFIX) :]
         src_blob_name = src_blob_prefix + rel
         dst_blob_name = DST_PREFIX_REL + rel
 
@@ -102,12 +105,21 @@ def main():
                 eta = (len(sources) - i) / max(rate, 1e-6)
                 logger.info(
                     "Progress: %d/%d (ok=%d skip=%d err=%d, %.0f files/s, ETA %.0fs)",
-                    i, len(sources), counts["ok"], counts["skip"], counts["error"], rate, eta,
+                    i,
+                    len(sources),
+                    counts["ok"],
+                    counts["skip"],
+                    counts["error"],
+                    rate,
+                    eta,
                 )
 
     logger.info(
         "Done in %.1fs: ok=%d skip=%d err=%d",
-        time.monotonic() - t0, counts["ok"], counts["skip"], counts["error"],
+        time.monotonic() - t0,
+        counts["ok"],
+        counts["skip"],
+        counts["error"],
     )
 
     if errors:

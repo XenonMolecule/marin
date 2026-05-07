@@ -33,7 +33,6 @@ import logging
 import os
 import subprocess
 import tempfile
-from collections.abc import Callable
 from dataclasses import dataclass
 
 import fsspec
