@@ -75,7 +75,15 @@ class BatchTokenizer(BatchProcessor[dict, dict]):
         else:
             needs_merge = []
 
-        encoded = self.tokenizer.encode_batch(batch_text)
+        # Match pre-2026-04-10 behavior: the old BatchTokenizer called
+        # ``self.tokenizer(batch_text)`` → HF ``__call__`` → ``add_special_tokens=True`` by
+        # default, so the post-processor prepended BOS. The 2026-04-10 refactor
+        # (``MarinTokenizer.encode_batch``) defaults to ``add_special_tokens=False``,
+        # which silently stopped adding BOS and regressed post-4-10 caches
+        # (baseline_nemotron_full, baseline_llm_curated, baseline_nemotron_q{high,medplus}).
+        # When ``_need_to_add_bos=True`` the wrapper already prepended a BOS string
+        # manually, so we pass ``False`` to avoid doubling.
+        encoded = self.tokenizer.encode_batch(batch_text, add_special_tokens=not self._need_to_add_bos)
 
         # Build a dict-of-lists structure analogous to the old BatchEncoding.
         encoding: dict[str, list] = {"input_ids": encoded}

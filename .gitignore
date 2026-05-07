@@ -238,3 +238,12 @@ scr/*
 # Dashboard runtime cache and large manifest data
 experiments/baseline_collection/.dashboard_cache.json
 experiments/distill/dclm_400m_1x_warcs.txt
+experiments/baseline_collection/_tmp_target_urls/
+experiments/baseline_collection/*.jsonl.gz
+experiments/distill/dclm_400m_1x.txt
+experiments/distill/subsets/
+experiments/scaling_law_sweeps/.warc_scaling_dashboard_cache.json
+plots/
+
+# Local-only paper drafts
+paper_*_draft.txt

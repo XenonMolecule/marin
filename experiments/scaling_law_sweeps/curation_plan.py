@@ -81,6 +81,33 @@ BUDGETS: tuple[float, ...] = (3e18, 9e18, 1.8e19, 3e19, 9e19, 1.8e20, 3e20)
 DEFAULT_T_TARGETS: tuple[float, ...] = (20e12,)
 
 
+# --- Experiment C target tokens ----------------------------------------------
+# 33T pushes deeper into the Chinchilla extrapolation while staying within
+# llm_curated's D_obs (56B) and resiliparse's D_obs (143B), so the data-rich
+# methods don't need re-extraction. See EXPERIMENT_C_MATH.md.
+DEFAULT_T_TARGET_C: float = 33e12
+
+# 10k WARC re-extraction (definitive count: 10,364 — the file lacks a trailing
+# newline so `wc -l` returns 10,363, but `grep -c .` and the GCS object count
+# both give 10,364).
+EXPC_SAMPLED_WARCS: int = 10_364
+
+
+def expc_uniform_t_exp_cap(t_target: float, sampled_warcs: int = EXPC_SAMPLED_WARCS) -> float:
+    """Uniform T_exp cap for ExpC, applied to all methods regardless of D_obs.
+
+    Cross-method comparability: even though llm_curated and resiliparse have
+    D_obs much larger than the slicing-regime ceiling (= T_target * sampled_warcs
+    / TOTAL_WARCS_CC), we cap all methods at the same value so candidate sets
+    are aligned at every budget. = 43.14B at T=33T, sampled_warcs=10,364.
+
+    From data_curation_math.TOTAL_WARCS_CC = 7,925,398.
+    """
+    from experiments.scaling_law_sweeps.data_curation_math import TOTAL_WARCS_CC
+
+    return t_target * sampled_warcs / TOTAL_WARCS_CC
+
+
 # --- Slice safety floor -------------------------------------------------------
 MIN_SLICE_TOKENS_DEFAULT: float = 25e6
 
@@ -91,11 +118,63 @@ MIN_SLICE_TOKENS_DEFAULT: float = 25e6
 _D_OBS_DEFAULTS: dict[str, int] = {
     "baseline_dclm-23e9be": 2_663_454_015,
     "baseline_nemotron-c67de9": 1_919_401_016,
-    "baseline_nemotron_full-d4e3af": 2_695_507_851,
     "baseline_fineweb_edu-7a3bc5": 817_221_529,
     "baseline_resiliparse-7278c1": 142_652_598_588,
+    # BOS-fixed rebuilds (tokenized on us-central1 only — not mirrored to other
+    # regions). Replace the original nemotron_full/llm_curated caches, which
+    # were rebuilt with BOS tokens.
+    "baseline_nemotron_full_bos_fixed-4b1ce7": 2_700_501_906,
+    "baseline_llm_curated_bos_fixed-d04ef8": 56_008_357_279,
+    # Deduped llm_curated (fuzzy doc dedup on top of bos_fixed corpus, applied
+    # at document level on the full 56B-token corpus → 43.64B tokens, 76.2M
+    # docs). Tokenized cache mirrored to us-central1 / us-central2 / us-east5
+    # on 2026-05-05. See .agents/projects/dedup_observations.md for params
+    # (286 perms / 26 bands / 5-char n-gram / Jaccard ~0.75).
+    "baseline_llm_curated_deduped-c444e2": 43_644_701_678,
+    # ExpC 10k re-extractions — extraction in progress, hashes/d_obs not yet
+    # known. Sentinel hashes ("TBD_*") are placeholders so the methods can be
+    # registered now and resolved by the launcher; `_iter_valid_candidates`
+    # raises if any of these are enumerated before real values are filled in.
+    # When tokenization completes, replace the dict KEY with the real hash
+    # AND update the d_obs to total_tokens from train/.stats.json. Then update
+    # the corresponding `_method(...)` call below.
+    "dclm_400m_1x_10k_dclm-3df0ba": 7331583927,
+    "dclm_400m_1x_10k_nemotron_full-3dcb75": 10130086896,
+    # FineWeb-Edu 10k — done but parked. Kept commented because fineweb_edu was
+    # dropped from ExpC (strictly worse per upstream review). Uncomment if a
+    # future experiment needs the 10k FineWeb-Edu cache.
+    # "dclm_400m_1x_10k_fineweb_edu-0a3143": 2346934380,
+    # --- WARC-scaling sweep subsamples (N ∈ {100, 500, 1000, 2000}) ---
+    # Read 2026-04-29 from {bucket}/tokenized/{key}/train/.stats.json.
+    # dclm: source us-central2; mirrored to us-central1.
+    "baseline_dclm_100warcs": 97_639_335,
+    "baseline_dclm_500warcs": 441_260_426,
+    "baseline_dclm_1000warcs": 953_517_521,
+    "baseline_dclm_2000warcs": 1_895_152_428,
+    # resiliparse: source us-central2; mirrored to us-central1.
+    "baseline_resiliparse_100warcs": 4_422_854_170,
+    "baseline_resiliparse_500warcs": 21_330_844_102,
+    "baseline_resiliparse_1000warcs": 46_283_090_573,
+    "baseline_resiliparse_2000warcs": 93_393_249_192,
+    # nemotron_full BOS-fixed: us-central1 only.
+    "baseline_nemotron_full_bos_fixed_100warcs": 316_603_329,
+    "baseline_nemotron_full_bos_fixed_500warcs": 799_434_481,
+    "baseline_nemotron_full_bos_fixed_1000warcs": 1_292_527_311,
+    "baseline_nemotron_full_bos_fixed_2000warcs": 1_968_904_506,
+    # llm_curated BOS-fixed: us-central1 only.
+    "baseline_llm_curated_bos_fixed_100warcs": 1_862_581_865,
+    "baseline_llm_curated_bos_fixed_500warcs": 8_857_302_468,
+    "baseline_llm_curated_bos_fixed_1000warcs": 19_007_039_689,
+    "baseline_llm_curated_bos_fixed_2000warcs": 37_856_619_271,
 }
 _SOURCE_BUCKET: str = "gs://marin-us-central2"
+# BOS-fixed rebuilds were only tokenized on us-central1 (see rebuild_bos_fixed.py)
+# so their d_obs must be read from this bucket if live verification is ever enabled.
+_SOURCE_BUCKET_CENTRAL1: str = "gs://marin-us-central1"
+_BOS_FIXED_CACHE_HASHES: set[str] = {
+    "baseline_nemotron_full_bos_fixed-4b1ce7",
+    "baseline_llm_curated_bos_fixed-d04ef8",
+}
 
 
 def _method(
@@ -104,13 +183,17 @@ def _method(
     sampled_warcs: int = 3_000,
     reproduce_per_region: bool = False,
     skip_stats_read: bool = True,
+    pin_region: str | None = None,
 ) -> CurationMethod:
     """Build a CurationMethod from a cache hash (the directory under tokenized/)."""
     if cache_hash not in _D_OBS_DEFAULTS:
         raise KeyError(f"No hardcoded D_obs for {cache_hash!r}. Add to _D_OBS_DEFAULTS.")
     d_obs = _D_OBS_DEFAULTS[cache_hash]
     if not skip_stats_read:
-        source_stats_path = f"{_SOURCE_BUCKET}/tokenized/{cache_hash}/"
+        # BOS-fixed caches only exist on us-central1; everything else is mirrored
+        # from us-central2.
+        source_bucket = _SOURCE_BUCKET_CENTRAL1 if cache_hash in _BOS_FIXED_CACHE_HASHES else _SOURCE_BUCKET
+        source_stats_path = f"{source_bucket}/tokenized/{cache_hash}/"
         try:
             live = load_d_obs_from_stats(source_stats_path)
             if live != d_obs:
@@ -129,30 +212,161 @@ def _method(
         d_obs_tokens=d_obs,
         sampled_warcs=sampled_warcs,
         reproduce_per_region=reproduce_per_region,
+        pin_region=pin_region,
     )
 
 
 METHODS: dict[str, CurationMethod] = {
     "dclm": _method("dclm", "baseline_dclm-23e9be"),
     "nemotron_org": _method("nemotron_org", "baseline_nemotron-c67de9"),
-    "nemotron_full": _method("nemotron_full", "baseline_nemotron_full-d4e3af"),
     "fineweb_edu": _method("fineweb_edu", "baseline_fineweb_edu-7a3bc5"),
-    "resiliparse": _method("resiliparse", "baseline_resiliparse-7278c1", reproduce_per_region=True),
-    # TODO: add the user's LLM-based method once tokenization completes:
-    # "llm_curated": _method("llm_curated", "<TBD>"),
+    # Resiliparse: pinned to us-central1 for ExpC reuse from fixed-model and
+    # consistency with llm_curated. `reproduce_per_region=True` is informational
+    # — the cache could in principle be re-tokenized in another region — but
+    # for ExpC we want a single canonical region to keep cross-experiment
+    # dedup keys stable.
+    "resiliparse": _method(
+        "resiliparse",
+        "baseline_resiliparse-7278c1",
+        reproduce_per_region=True,
+        # Cache merged-only mirrored to us-east5 on 2026-05-03 (254 GB, ~$5);
+        # dropped pin_region so iris can dispatch to either region. Per-shard
+        # build artifacts intentionally NOT copied (Levanter only reads
+        # train/input_ids/{data,offsets} + train/shard_ledger.json at runtime;
+        # cache.py:103).
+    ),
+    # BOS-fixed rebuilds — ONLY on us-central1 (not mirrored). Training that
+    # uses these must pin to us-central1; pin_region enforces it at submit time.
+    "nemotron_full_bos_fixed": _method(
+        "nemotron_full_bos_fixed",
+        "baseline_nemotron_full_bos_fixed-4b1ce7",
+        pin_region="us-central1",
+    ),
+    "llm_curated_bos_fixed": _method(
+        "llm_curated_bos_fixed",
+        "baseline_llm_curated_bos_fixed-d04ef8",
+        # Cache mirrored to us-east5 on 2026-04-28; dropped pin_region so iris
+        # can dispatch to whichever region has v5p capacity. Original pin was
+        # for when cache only existed in us-central1.
+    ),
+    # Fuzzy doc-deduped llm_curated (drop-in replacement for
+    # llm_curated_bos_fixed; trains on 43.64B tokens vs 56.01B). Cache mirrored
+    # to us-central1 / us-central2 / us-east5 (2026-05-05) so iris can dispatch
+    # to whichever region has TPU capacity.
+    "llm_curated_dedup": _method(
+        "llm_curated_dedup",
+        "baseline_llm_curated_deduped-c444e2",
+    ),
+    # ExpC 10k re-extractions — placeholders. Replace cache_hash and the
+    # corresponding _D_OBS_DEFAULTS entry once tokenization completes.
+    # `_iter_valid_candidates` will raise if these are enumerated with d_obs=0.
+    "dclm_10k": _method(
+        "dclm_10k",
+        "dclm_400m_1x_10k_dclm-3df0ba",
+        sampled_warcs=EXPC_SAMPLED_WARCS,
+    ),
+    "nemotron_10k": _method(
+        "nemotron_10k",
+        "dclm_400m_1x_10k_nemotron_full-3dcb75",
+        sampled_warcs=EXPC_SAMPLED_WARCS,
+    ),
+    # FineWeb-Edu 10k — wired but commented out (excluded from ExpC). To enable,
+    # uncomment the entry above in _D_OBS_DEFAULTS first.
+    # "fineweb_edu_10k": _method(
+    #     "fineweb_edu_10k",
+    #     "dclm_400m_1x_10k_fineweb_edu-0a3143",
+    #     sampled_warcs=EXPC_SAMPLED_WARCS,
+    # ),
+    # --- WARC-scaling sweep subsamples ---
+    # dclm: mirrored to us-central1 / us-central2 / us-east1 / us-east5 — float
+    # so children can claim v6e capacity in us-central2 / us-east5 when v5p is
+    # contested in us-central1.
+    "dclm_100": _method("dclm_100", "baseline_dclm_100warcs", sampled_warcs=100),
+    "dclm_500": _method("dclm_500", "baseline_dclm_500warcs", sampled_warcs=500),
+    "dclm_1000": _method("dclm_1000", "baseline_dclm_1000warcs", sampled_warcs=1000),
+    "dclm_2000": _method("dclm_2000", "baseline_dclm_2000warcs", sampled_warcs=2000),
+    # resiliparse: all 4 sizes mirrored to us-central1 + us-east5 — float to
+    # both so children can pick up us-east5 capacity (especially v6e-4) when
+    # us-central1 v5p is contested. One-time expense (~$46) to unblock
+    # resiliparse_1000/2000 (was 0/30 + 0/23 stuck on us-central1).
+    "resiliparse_100": _method(
+        "resiliparse_100", "baseline_resiliparse_100warcs", sampled_warcs=100
+    ),
+    "resiliparse_500": _method(
+        "resiliparse_500", "baseline_resiliparse_500warcs", sampled_warcs=500
+    ),
+    "resiliparse_1000": _method(
+        "resiliparse_1000", "baseline_resiliparse_1000warcs", sampled_warcs=1000
+    ),
+    "resiliparse_2000": _method(
+        "resiliparse_2000", "baseline_resiliparse_2000warcs", sampled_warcs=2000
+    ),
+    # nemotron_full BOS-fixed: mirrored to all 4 regions (us-central1/2 +
+    # us-east1/5) — float for v6e access.
+    "nemotron_full_100": _method(
+        "nemotron_full_100", "baseline_nemotron_full_bos_fixed_100warcs", sampled_warcs=100
+    ),
+    "nemotron_full_500": _method(
+        "nemotron_full_500", "baseline_nemotron_full_bos_fixed_500warcs", sampled_warcs=500
+    ),
+    "nemotron_full_1000": _method(
+        "nemotron_full_1000", "baseline_nemotron_full_bos_fixed_1000warcs", sampled_warcs=1000
+    ),
+    "nemotron_full_2000": _method(
+        "nemotron_full_2000", "baseline_nemotron_full_bos_fixed_2000warcs", sampled_warcs=2000
+    ),
+    # llm_curated BOS-fixed: all 4 sizes mirrored to us-central1 + us-east5,
+    # float across both. One-time mirror cost paid 2026-05-01 to unblock the
+    # remaining sizes that were starving on us-central1 capacity.
+    "llm_curated_100": _method(
+        "llm_curated_100", "baseline_llm_curated_bos_fixed_100warcs", sampled_warcs=100
+    ),
+    "llm_curated_500": _method(
+        "llm_curated_500", "baseline_llm_curated_bos_fixed_500warcs", sampled_warcs=500
+    ),
+    "llm_curated_1000": _method(
+        "llm_curated_1000", "baseline_llm_curated_bos_fixed_1000warcs", sampled_warcs=1000
+    ),
+    "llm_curated_2000": _method(
+        "llm_curated_2000", "baseline_llm_curated_bos_fixed_2000warcs", sampled_warcs=2000
+    ),
 }
+
+
+# Methods that ExpC's `--methods all` should expand to. Excludes fineweb_edu
+# (dropped from ExpC — strictly worse per upstream review) and the older 3k
+# dclm/nemotron entries (superseded by *_10k for the data-constrained methods).
+EXPC_METHOD_NAMES: tuple[str, ...] = (
+    "dclm_10k",
+    "nemotron_10k",
+    "llm_curated_bos_fixed",
+    "resiliparse",
+)
 
 
 # --- Experiment-tag formatter ------------------------------------------------
 
+# (kind, t_target). kind ∈ {"A", "B", "C"}. t_target=None only valid for "A".
+# resolve_experiments returns a list of these; enumerate_plans dispatches on kind.
+ExperimentSpec = tuple[str, float | None]
 
-def experiment_tag(t_target: float | None) -> str:
+
+def experiment_tag(t_target: float | None, kind: str = "B") -> str:
+    """Format the experiment_tag string used in run names, WandB tags, tracker keys.
+
+    `kind` distinguishes ExpB ("expB_T<N>T") from ExpC ("expC_T<N>T"); ignored
+    when t_target is None (ExpA always emits "expA_natural"). Default "B"
+    preserves the previous behavior for callers that don't specify a kind.
+    """
     if t_target is None:
         return "expA_natural"
+    if kind not in ("B", "C"):
+        raise ValueError(f"Unsupported experiment kind {kind!r} for t_target={t_target}; expected 'B' or 'C'.")
+    prefix = f"exp{kind}"
     trillions = t_target / 1e12
     if trillions == int(trillions):
-        return f"expB_T{int(trillions)}T"
-    return f"expB_T{trillions:.1f}T"
+        return f"{prefix}_T{int(trillions)}T"
+    return f"{prefix}_T{trillions:.1f}T"
 
 
 # --- PlannedRun: the coordinator → child contract ----------------------------
@@ -315,22 +529,46 @@ def _iter_valid_candidates(
     method: CurationMethod,
     *,
     t_target: float | None,
+    kind: str = "B",
     budgets: tuple[float, ...] = BUDGETS,
     min_slice_tokens: float = MIN_SLICE_TOKENS_DEFAULT,
     seq_len: int = SEQ_LEN,
+    uniform_t_exp_cap: float | None = None,
 ) -> Iterator[tuple[float, CandidateConfig, int]]:
     """Yield (budget, candidate, target_budget) for each candidate that survives filtering.
 
-    - Experiment A (t_target=None): no ceiling, implicit target = T_exp * s.
-    - Experiment B (t_target set):  reject T_exp > ceiling; reject slice < floor.
+    - Experiment A (kind="A", t_target=None): no ceiling, implicit target = T_exp * s.
+    - Experiment B (kind="B", t_target set):  reject T_exp > ceiling; reject slice < floor.
+    - Experiment C (kind="C", t_target set):  ceiling uses the data-rich branch
+      (returns D_obs when target_epochs<1, T/s otherwise) AND a uniform cap
+      (`uniform_t_exp_cap`) is applied across all methods for cross-method
+      comparability. Min-slice floor is skipped for the data-rich case (the
+      slicing path doesn't run there, so the floor is irrelevant).
     """
+    if kind == "C" and method.d_obs_tokens <= 0:
+        # Placeholder method (e.g. dclm_10k before its cache hash is filled in).
+        # Refuse to enumerate to prevent silently emitting plans with bogus
+        # slice math; surface the issue at the coordinator's dry-run.
+        raise ValueError(
+            f"Method {method.name!r} has d_obs_tokens={method.d_obs_tokens} — "
+            f"likely an ExpC 10k cache placeholder. Update _D_OBS_DEFAULTS "
+            f"and the cache_hash in METHODS once tokenization completes."
+        )
+    allow_data_rich = kind == "C"
     for budget in budgets:
         for cand in completed_adamh_heuristic.candidates_for_budget(budget, seq_len=seq_len):
             t_exp = cand.tokens
             if t_target is not None:
-                if t_exp > t_exp_ceiling(method, t_target):
+                ceiling = t_exp_ceiling(method, t_target, allow_data_rich=allow_data_rich)
+                if uniform_t_exp_cap is not None:
+                    ceiling = min(ceiling, uniform_t_exp_cap)
+                if t_exp > ceiling:
                     continue
-                if slice_tokens_for(method, t_exp, t_target) < min_slice_tokens:
+                # Min-slice floor only matters when slicing actually applies.
+                # In the data-rich branch (target_epochs<1) the runner skips
+                # slicing entirely, so a thin slice value is harmless.
+                in_slicing_regime = t_target >= method.d_proj
+                if in_slicing_regime and slice_tokens_for(method, t_exp, t_target) < min_slice_tokens:
                     continue
                 target_budget = int(t_target)
             else:
@@ -399,25 +637,54 @@ def _planned_run_from_candidate(
     )
 
 
+def _normalize_experiment_spec(item: float | None | ExperimentSpec) -> ExperimentSpec:
+    """Accept either the legacy `float | None` form or an explicit ExperimentSpec.
+
+    Legacy: None -> ("A", None), float -> ("B", float). Existing ExpA/ExpB
+    callers can keep passing the bare float / None; ExpC callers pass tuples.
+    """
+    if isinstance(item, tuple):
+        kind, t_target = item
+        if kind not in ("A", "B", "C"):
+            raise ValueError(f"Unknown experiment kind {kind!r}; expected A/B/C.")
+        if kind == "A" and t_target is not None:
+            raise ValueError("Experiment A must have t_target=None.")
+        if kind != "A" and t_target is None:
+            raise ValueError(f"Experiment {kind} requires t_target to be set.")
+        return kind, t_target
+    if item is None:
+        return "A", None
+    return "B", float(item)
+
+
 def enumerate_plans(
     methods: list[CurationMethod],
-    experiments: list[float | None],
+    experiments: list[float | None] | list[ExperimentSpec],
     *,
     budgets: tuple[float, ...] = BUDGETS,
     min_slice_tokens: float = MIN_SLICE_TOKENS_DEFAULT,
     seq_len: int = SEQ_LEN,
 ) -> list[PlannedRun]:
-    """Build the full list of `PlannedRun`s for the cartesian product of methods × experiments."""
+    """Build the full list of `PlannedRun`s for the cartesian product of methods × experiments.
+
+    `experiments` accepts mixed legacy and ExpC forms — see `_normalize_experiment_spec`.
+    For ExpC, `_iter_valid_candidates` is invoked with the data-rich-aware
+    ceiling and the `expc_uniform_t_exp_cap(t_target)` cross-method cap.
+    """
     plans: list[PlannedRun] = []
     for method in methods:
-        for t_target in experiments:
-            tag = experiment_tag(t_target)
+        for raw in experiments:
+            kind, t_target = _normalize_experiment_spec(raw)
+            tag = experiment_tag(t_target, kind=kind if kind != "A" else "B")
+            uniform_cap = expc_uniform_t_exp_cap(t_target) if (kind == "C" and t_target is not None) else None
             for budget, cand, target_budget in _iter_valid_candidates(
                 method,
                 t_target=t_target,
+                kind=kind,
                 budgets=budgets,
                 min_slice_tokens=min_slice_tokens,
                 seq_len=seq_len,
+                uniform_t_exp_cap=uniform_cap,
             ):
                 plans.append(_planned_run_from_candidate(method, cand, budget, target_budget, tag, seq_len))
     return plans
@@ -430,18 +697,22 @@ def count_valid(
     method: CurationMethod,
     *,
     t_target: float | None,
+    kind: str = "B",
     budgets: tuple[float, ...] = BUDGETS,
     min_slice_tokens: float = MIN_SLICE_TOKENS_DEFAULT,
     seq_len: int = SEQ_LEN,
+    uniform_t_exp_cap: float | None = None,
 ) -> int:
     return sum(
         1
         for _ in _iter_valid_candidates(
             method,
             t_target=t_target,
+            kind=kind,
             budgets=budgets,
             min_slice_tokens=min_slice_tokens,
             seq_len=seq_len,
+            uniform_t_exp_cap=uniform_t_exp_cap,
         )
     )
 
@@ -450,17 +721,21 @@ def per_budget_counts(
     method: CurationMethod,
     *,
     t_target: float | None,
+    kind: str = "B",
     budgets: tuple[float, ...] = BUDGETS,
     min_slice_tokens: float = MIN_SLICE_TOKENS_DEFAULT,
     seq_len: int = SEQ_LEN,
+    uniform_t_exp_cap: float | None = None,
 ) -> dict[float, int]:
     counts: dict[float, int] = {b: 0 for b in budgets}
     for budget, _, _ in _iter_valid_candidates(
         method,
         t_target=t_target,
+        kind=kind,
         budgets=budgets,
         min_slice_tokens=min_slice_tokens,
         seq_len=seq_len,
+        uniform_t_exp_cap=uniform_t_exp_cap,
     ):
         counts[budget] += 1
     return counts
@@ -469,8 +744,17 @@ def per_budget_counts(
 # --- CLI helpers (shared between coordinator and dry-run) --------------------
 
 
-def resolve_methods(method_names: list[str]) -> list[CurationMethod]:
+def resolve_methods(method_names: list[str], *, for_expc: bool = False) -> list[CurationMethod]:
+    """Resolve --methods CLI to CurationMethod list.
+
+    `for_expc=True`: "all" expands to EXPC_METHOD_NAMES (the four canonical ExpC
+    methods: dclm_10k, nemotron_10k, llm_curated_bos_fixed, resiliparse).
+    Default (`for_expc=False`): "all" expands to every registered method
+    (preserves prior ExpA/ExpB launcher behavior).
+    """
     if "all" in method_names:
+        if for_expc:
+            return [METHODS[n] for n in EXPC_METHOD_NAMES]
         return list(METHODS.values())
     missing = [m for m in method_names if m not in METHODS]
     if missing:
@@ -478,14 +762,35 @@ def resolve_methods(method_names: list[str]) -> list[CurationMethod]:
     return [METHODS[m] for m in method_names]
 
 
-def resolve_experiments(experiments: list[str], t_targets: list[float]) -> list[float | None]:
-    resolved: list[float | None] = []
+def resolve_experiments(
+    experiments: list[str],
+    t_targets: list[float],
+    *,
+    t_target_c: float = DEFAULT_T_TARGET_C,
+) -> list[ExperimentSpec]:
+    """Resolve --experiments CLI flags to a list of ExperimentSpec.
+
+    Returns tagged tuples (kind, t_target):
+      - "A" / "all" → ("A", None)
+      - "B" / "all" → ("B", t) for each t in t_targets
+      - "C"         → ("C", t_target_c)
+
+    Backward compat: launchers that expect the old `list[float | None]` form
+    can pass through `enumerate_plans`, which accepts both via
+    `_normalize_experiment_spec`. New ExpC callers should consume the tuple
+    form directly so they can dispatch on kind (e.g. for region pinning).
+    """
+    resolved: list[ExperimentSpec] = []
     want_a = "A" in experiments or "all" in experiments
     want_b = "B" in experiments or "all" in experiments
+    want_c = "C" in experiments  # "all" does NOT include C — C requires explicit opt-in
     if want_a:
-        resolved.append(None)
+        resolved.append(("A", None))
     if want_b:
-        resolved.extend(t_targets)
+        for t in t_targets:
+            resolved.append(("B", float(t)))
+    if want_c:
+        resolved.append(("C", float(t_target_c)))
     return resolved
 
 

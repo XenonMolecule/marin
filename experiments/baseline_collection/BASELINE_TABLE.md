@@ -39,3 +39,37 @@ cache exists on GCS (the `tokenize_raw_html` step in
 `experiments/baseline_collection/pipeline.py:260` is defined but has not
 been run end-to-end). 3.63T comes from an external measurement logged in
 the user's notes.
+
+## LLM Extraction inference accounting (Qwen3-8B)
+
+Computed 2026-05-04 by aggregating per-record `.tokens.gz` sidecars across
+all 5 regions of the consolidated mirror and projecting per-batch means to
+281,254 canonical resolved batches via bootstrap (Option A — MAR validated
+by per-region consistency check, see Per-region table below).
+
+| Slice | Projected | 95% CI |
+|---|---:|---|
+| **Total inference FLOPs** | **6.72 × 10²²** | [6.718e22, 6.727e22] |
+| FLOPs on kept records | 5.10 × 10²² | [5.097e22, 5.104e22] |
+| FLOPs on filtered (wasted) | 1.62 × 10²² | — |
+| Input tokens, all records | 2.207 T | — |
+| Input tokens, kept records | 1.687 T | — |
+| Thinking tokens, kept records | 126.23 B | — |
+| Response tokens, kept records | 59.65 B | — |
+
+n = 145,648 sidecar-bearing canonical batches (51.8% of 281,254 resolved
+unique batches); 46 transient GCS read errors (0.03%). Per-region
+per-batch means agree to within ~1% across europe-west4 / us-central1 /
+us-east1 / us-east5 / us-west4, confirming MAR. Per-batch CV: input
+tokens 11.5%, FLOPs 12.7%, response tokens 18.2%.
+
+Status distribution (observed records):
+- kept 74.03%, filtered_short 18.86%,
+- thinking_overflow_max_tokens 4.37%, thinking_overflow_context 2.71%,
+- filtered_pattern 0.03%
+
+Artifacts:
+- `gs://marin-us-central2/scratch/llm_curated_flop_estimate/aggregate.jsonl.gz` (per-batch dump)
+- `gs://marin-us-central2/scratch/llm_curated_flop_estimate/summary.{json,txt}`
+- Aggregator: `experiments/baseline_collection/option_a_flop_report.py`
+- Pre-stage: `experiments/baseline_collection/pre_stage_sidecars.py` (copies the small `.tokens.gz` sidecars to a us-central2 bucket so the aggregator runs intra-region; total egress paid: ~$0.012 for 604 MiB)

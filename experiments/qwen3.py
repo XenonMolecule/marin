@@ -5,6 +5,8 @@
 Specifies a sequence of Llama 3 models from small to large.
 """
 
+import dataclasses
+
 from levanter.layers.rotary import DefaultRotaryEmbeddingsConfig, Llama3RotaryEmbeddingsConfig
 from levanter.models.qwen import Qwen3Config, QwenConfig
 from levanter.utils.activation import ActivationFunctionEnum
@@ -103,6 +105,15 @@ qwen3_8b = Qwen3Config(
     reference_checkpoint="Qwen/Qwen3-8B",
     rope=DefaultRotaryEmbeddingsConfig(theta=1000000.0, factor=1.0),
 )
+
+# Qwen3-8B-Base variant. Architecturally identical to Qwen3-8B (same vocab,
+# same hidden/layers/heads/RoPE) — the only difference is the reference
+# checkpoint, which selects the BASE pretrained weights instead of the
+# post-trained instruct variant. Used by the 8B-Base SFT sweep across
+# code/math/medical domains. Tokenizer.json is byte-identical to Qwen3-0.6B-Base
+# and Qwen3-14B-Base (sha256 c0382117ea329cdf, verified 2026-05-04), so all
+# Base-tokenized caches are reusable across these sizes.
+qwen3_8b_base = dataclasses.replace(qwen3_8b, reference_checkpoint="Qwen/Qwen3-8B-Base")
 
 # same as olmo 32b
 qwen3_32b = Qwen3Config(

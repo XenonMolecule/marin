@@ -84,6 +84,20 @@ _PALOMA_CACHE_HASHES: dict[str, str] = {
 }
 
 
+# LIMA ("Less Is More for Alignment", Zhou et al. 2023) -- 1,330 high-quality
+# conversations, used as a high-signal validation set for the data-curation
+# sweep (complements Paloma's distributional-fit signal with an alignment-
+# flavored signal). The cache is produced by `experiments/lima.py` which is
+# deterministic across regions (sorted inputs, canonical JSON, pinned HF
+# revision + tokenizer).
+#
+# The path layout differs from paloma/uncheatable_eval (flat rather than
+# nested under a `lima/` prefix) because LIMA is a single dataset — so we
+# compose the val_path directly in the `with_lima` branch of
+# `as_lm_mixture_config` rather than going through `_add_validation_components`.
+_LIMA_CACHE_HASH: str = "41ca0d"
+
+
 @dataclass(frozen=True)
 class CurationMethod:
     """One data curation method in the benchmark.
@@ -116,6 +130,14 @@ class CurationMethod:
     one-time manual copy script. True for large but cheaply re-tokenized
     caches (e.g. Resiliparse, 571 GB) where re-running tokenization locally
     is cheaper than cross-region copy; False for caches we pre-copied.
+    """
+    pin_region: str | None = None
+    """Hard region pin for training jobs that use this method.
+
+    Set when the method's cache exists in only one region (e.g. BOS-fixed
+    rebuilds at us-central1) or when ExpC re-uses fixed-model artifacts that
+    were pinned to a specific region. None = float across regions via the
+    SOFT region preference in the launcher (see launch_curation_sweep.py).
     """
 
     def __post_init__(self) -> None:
@@ -161,6 +183,7 @@ class CurationMethod:
         region: str,
         with_uncheatable_eval: bool = True,
         with_paloma: bool = True,
+        with_lima: bool = True,
     ) -> LMMixtureDatasetConfig:
         # Capture the local region's bucket once — used for both the training
         # component and all validation components. See `local_cache_dir` for
@@ -226,6 +249,25 @@ class CurationMethod:
             _add_validation_components("uncheatable_eval", _UNCHEATABLE_EVAL_CACHE_HASHES)
         if with_paloma:
             _add_validation_components("paloma", _PALOMA_CACHE_HASHES)
+        if with_lima:
+            # LIMA sits directly under `tokenized/` (flat layout) -- see
+            # `experiments/lima.py` for the pipeline that produces the cache.
+            key = "lima"
+            lima_path = f"{region_bucket}/tokenized/lima_text-{_LIMA_CACHE_HASH}/"
+            lima_source = UrlDatasetSourceConfig(
+                cache_dir=lima_path,
+                train_urls=[],
+                validation_urls=[],
+                format=TextLmDatasetFormat(),
+                tags=[key],
+            )
+            components[key] = DatasetComponent(
+                source=lima_source,
+                cache_dir=lima_path,
+                format=TextLmDatasetFormat(),
+                tags=[key],
+            )
+            train_weights[key] = 0.0
 
         return LMMixtureDatasetConfig(
             tokenizer=self.tokenizer,
@@ -236,16 +278,26 @@ class CurationMethod:
         )
 
 
-def t_exp_ceiling(method: CurationMethod, t_target: float) -> float:
+def t_exp_ceiling(method: CurationMethod, t_target: float, *, allow_data_rich: bool = False) -> float:
     """Max `T_exp` that can faithfully simulate `t_target` for this method.
 
-    Derived from the constraint `slice <= D_obs`:
+    Two regimes, switched by the target's epoch count `T_target / D_proj`:
 
-        slice = T_exp * D_proj / T_target <= D_obs
-        =>  T_exp <= T_target * D_obs / D_proj
-        =>  T_exp <= T_target / s
+    1. Slicing regime (target_epochs >= 1): the target run epochs the full
+       projected pool, so the simulation must epoch a slice. Slice fits in
+       D_obs constraints `slice = T_exp * D_proj / T_target <= D_obs`,
+       giving `T_exp <= T_target / s`. Always returned when
+       `allow_data_rich=False` (the default, used by ExpB).
 
-    Two ways to raise the ceiling:
+    2. Data-rich regime (target_epochs < 1, only when `allow_data_rich=True`):
+       the target run sees less than one full epoch of D_proj. Under
+       uniformity, training T_exp i.i.d. tokens from the cache is
+       statistically equivalent to drawing T_exp tokens from D_proj — no
+       slicing needed. Ceiling is the physical cache size: `T_exp <= D_obs`.
+       Used by ExpC for llm_curated and resiliparse, where 33T target tokens
+       sit well below D_proj and the cache is much larger than T_target/s.
+
+    Two ways to raise the slicing-regime ceiling:
 
     1. Increase `t_target`. Cheap in code (add to `T_TARGETS`), but changes
        the scientific question: the simulated regime becomes more aggressive
@@ -254,6 +306,8 @@ def t_exp_ceiling(method: CurationMethod, t_target: float) -> float:
        requires re-running the extraction pipeline for that method. NOT cheap
        for LLM-based extraction methods.
     """
+    if allow_data_rich and t_target < method.d_proj:
+        return float(method.d_obs_tokens)
     return t_target / method.s
 
 

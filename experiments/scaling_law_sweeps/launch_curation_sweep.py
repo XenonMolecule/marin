@@ -67,6 +67,7 @@ def _vm_count(tpu_variant: str) -> int:
     """
     return get_tpu_topology(tpu_variant).vm_count
 
+
 # The TPU-side child script that each iris job will run.
 SCRIPT = "experiments/scaling_law_sweeps/run_curation_train_standalone.py"
 
@@ -99,6 +100,7 @@ def submit_one(
     run_suffix: str = "",
     wandb_mode: str = "auto",
     force_primary_tpu: str | None = None,
+    results_prefix: str | None = None,
 ) -> str:
     """Submit one PlannedRun as an iris TPU job. Returns the iris job id.
 
@@ -160,6 +162,7 @@ def submit_one(
         wandb_entity,
         "--wandb-group",
         wandb_group,
+        *(("--results-prefix", results_prefix) if results_prefix else ()),
     ]
 
     env_vars = {
@@ -175,18 +178,39 @@ def submit_one(
         env_vars.update(extra_env)
 
     # Region constraint:
-    #   - Default (`allowed_regions=None`): SOFT preference for ALL_REGIONS.
-    #     Prevents parent-region inheritance (iris client.py:645) without
-    #     restricting the autoscaler. Same pattern as launch_adaptive.py:109-121.
-    #   - When `allowed_regions` is provided: HARD restriction to that subset.
-    #     Use this to pin children to regions whose buckets already hold the
-    #     pre-copied tokenized caches (zero cross-region reads).
-    if allowed_regions:
+    #   - `method.pin_region` set: HARD pin to that single region (highest
+    #     priority). Used for caches that exist in only one region (BOS-fixed
+    #     rebuilds at us-central1) and for ExpC's data-rich methods to keep
+    #     cross-experiment dedup keys stable. Must come BEFORE the user's
+    #     allowed_regions argument so the per-method invariant always wins.
+    #   - `allowed_regions` provided: HARD restriction to that subset.
+    #     Use to pin children to regions whose buckets hold pre-copied caches.
+    #   - Default (neither set): SOFT preference for ALL_REGIONS. Prevents
+    #     parent-region inheritance (iris client.py:645) without restricting
+    #     the autoscaler. Same pattern as launch_adaptive.py:109-121.
+    method = next(
+        (m for m in curation_plan.METHODS.values() if m.name == plan.method_name),
+        None,
+    )
+    method_pin = method.pin_region if method is not None else None
+    if method_pin:
+        if allowed_regions and method_pin not in allowed_regions:
+            raise ValueError(
+                f"Method {plan.method_name!r} requires pin_region={method_pin!r} but "
+                f"caller passed allowed_regions={allowed_regions} which excludes it. "
+                f"Drop --allowed-regions, or include {method_pin!r}."
+            )
+        region_constraint = Constraint(
+            key=WellKnownAttribute.REGION,
+            op=ConstraintOp.IN,
+            values=(method_pin,),
+        )  # default mode = CONSTRAINT_MODE_REQUIRED (hard)
+    elif allowed_regions:
         region_constraint = Constraint(
             key=WellKnownAttribute.REGION,
             op=ConstraintOp.IN,
             values=tuple(allowed_regions),
-        )  # default mode = CONSTRAINT_MODE_REQUIRED (hard)
+        )
     else:
         region_constraint = Constraint(
             key=WellKnownAttribute.REGION,
@@ -249,6 +273,79 @@ def submit_one(
         priority_band=child_priority_band,
     )
     return str(job.job_id)
+
+
+# Where the fixed-model launcher writes summary JSONs (used by ExpC dedup).
+# Kept in sync with `run_curation_train_standalone.py`'s default --results-prefix
+# and with the user-memory note about plot_fixed_model_sweep.
+FIXED_MODEL_RESULTS_PREFIX = "gs://marin-us-central1/metadata/data_curation_fixed_model_results"
+
+
+def fixed_model_run_name_core(plan: curation_plan.PlannedRun) -> str:
+    """Project an ExpC plan's run_name_core to the corresponding fixed-model run name.
+
+    Same (method, budget, model, batch) → only the experiment_tag differs.
+    Used by ExpC's cross-experiment dedup to look up matching fixed-model runs.
+    """
+    return plan.run_name_core.replace(plan.experiment_tag, "expFM_natural")
+
+
+def is_run_done_in_fixed_model(plan: curation_plan.PlannedRun) -> bool:
+    """True if a matching fixed-model summary JSON exists in GCS.
+
+    Only meaningful for ExpC plans on data-rich methods (LC, Resiliparse) where
+    the natural-D_obs training is operationally identical to a fixed-model run
+    at the same (method, model, budget). For sliced ExpC methods (dclm_10k,
+    nemotron_10k) the slicing makes the runs distinct from fixed-model — never
+    use this dedup for those.
+    """
+    fm_run_name = fixed_model_run_name_core(plan)
+    summary_path = f"{FIXED_MODEL_RESULTS_PREFIX}/{fm_run_name}.json"
+    try:
+        fs, urlpath = fsspec.core.url_to_fs(summary_path)
+        return fs.exists(urlpath)
+    except Exception as e:
+        logger.debug("Fixed-model summary check failed for %s: %s", fm_run_name, e)
+        return False
+
+
+def is_run_in_flight_in_fixed_model(plan: curation_plan.PlannedRun, tracker_prefix: str) -> bool:
+    """True if a fixed-model tracker entry exists for the matching run.
+
+    Conservative interpretation: if any tracker exists at the fixed-model run_key
+    (regardless of whether the job is still running, completed, or failed), we
+    skip the ExpC plan. The cost of a false positive is a missing data point;
+    the cost of a false negative is duplicate compute on a run that's already
+    going. Rare-edge: if a fixed-model run ABANDONED its work, ExpC won't
+    pick it up — operator can manually re-launch if needed.
+    """
+    fm_run_name = fixed_model_run_name_core(plan)
+    fm_run_key = f"{plan.method_name}__expFM_natural__{fm_run_name}.region"
+    tracker_path = f"{tracker_prefix.rstrip('/')}/{fm_run_key}"
+    try:
+        fs, urlpath = fsspec.core.url_to_fs(tracker_path)
+        return fs.exists(urlpath)
+    except Exception as e:
+        logger.debug("Fixed-model tracker check failed for %s: %s", fm_run_key, e)
+        return False
+
+
+# Methods where ExpC training is operationally equivalent to a fixed-model run
+# (target_epochs < 1, no slicing). For these we can dedup against fixed-model
+# summaries. Sliced methods (dclm_10k, nemotron_10k) train against a slice
+# specific to T_target=33T, so their training trajectory is NOT equivalent to
+# any fixed-model run.
+_EXPC_DATA_RICH_METHODS: frozenset[str] = frozenset({"llm_curated_bos_fixed", "resiliparse"})
+
+
+def is_expc_data_rich_plan(plan: curation_plan.PlannedRun) -> bool:
+    """True iff this plan is an ExpC plan that maps onto fixed-model training.
+
+    Specifically: experiment_tag starts with "expC" AND method is one of the
+    data-rich methods listed in `_EXPC_DATA_RICH_METHODS`. The launcher uses
+    this to gate the cross-experiment dedup.
+    """
+    return plan.experiment_tag.startswith("expC") and plan.method_name in _EXPC_DATA_RICH_METHODS
 
 
 def is_run_already_complete(
@@ -325,6 +422,31 @@ def submit_all(
             skipped.append(plan)
             logger.info("[%d/%d] SKIP (already done): %s", i + 1, len(plans), plan.run_name_core)
             continue
+        # ExpC data-rich dedup: when the ExpC plan trains identically to a
+        # fixed-model run (target_epochs<1, no slicing), reuse the fixed-model
+        # artifact instead of duplicating the work. Done summary OR in-flight
+        # tracker both count as "this work is covered."
+        if skip_if_done and is_expc_data_rich_plan(plan):
+            if is_run_done_in_fixed_model(plan):
+                skipped.append(plan)
+                logger.info(
+                    "[%d/%d] SKIP (fixed-model summary exists): %s -> %s",
+                    i + 1,
+                    len(plans),
+                    plan.run_name_core,
+                    fixed_model_run_name_core(plan),
+                )
+                continue
+            if is_run_in_flight_in_fixed_model(plan, tracker_prefix):
+                skipped.append(plan)
+                logger.info(
+                    "[%d/%d] SKIP (fixed-model in-flight): %s -> %s",
+                    i + 1,
+                    len(plans),
+                    plan.run_name_core,
+                    fixed_model_run_name_core(plan),
+                )
+                continue
         try:
             job_id = submit_one(client, plan, tracker_prefix=tracker_prefix, **submit_kwargs)
             submitted.append(job_id)
@@ -346,8 +468,10 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--experiments",
         nargs="+",
         default=["all"],
-        choices=["A", "B", "all"],
-        help="A=natural epoching; B=pinned T_target.",
+        choices=["A", "B", "C", "all"],
+        help="A=natural epoching; B=pinned T_target with slicing; C=ExpC at 33T "
+        "with 10k WARC ceiling, data-rich-aware (LC/Res train naturally on D_obs). "
+        "'all' includes A and B but NOT C — opt into C explicitly.",
     )
     parser.add_argument(
         "--t-targets",
@@ -355,6 +479,19 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=float,
         default=list(curation_plan.DEFAULT_T_TARGETS),
         help="T_target values for Experiment B (extension lever).",
+    )
+    parser.add_argument(
+        "--t-target-c",
+        type=float,
+        default=curation_plan.DEFAULT_T_TARGET_C,
+        help="T_target for Experiment C. Default 33T.",
+    )
+    parser.add_argument(
+        "--for-expc",
+        action="store_true",
+        help="If set, --methods 'all' expands to EXPC_METHOD_NAMES (the 4 ExpC "
+        "methods: dclm_10k, nemotron_10k, llm_curated_bos_fixed, resiliparse) "
+        "instead of every registered method. Use when launching ExpC sweeps.",
     )
     parser.add_argument(
         "--budgets",
@@ -453,7 +590,47 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default="auto",
         help="Passed through to every child's --wandb-mode flag. See " "run_curation_train_standalone.py for semantics.",
     )
+    parser.add_argument(
+        "--allow-custom-budgets",
+        action="store_true",
+        help=(
+            "Escape hatch: accept --budgets values that are not in "
+            "curation_plan.BUDGETS. Without this flag, non-canonical budgets "
+            "cause the launcher to refuse (prevents silent run_name collisions "
+            "where 1.8e20 and 2.0e20 both render as '2e+20')."
+        ),
+    )
     return parser.parse_args(argv)
+
+
+def _validate_budgets(budgets: list[float], allow_custom: bool) -> None:
+    """Refuse to launch non-canonical budgets unless the user opts in.
+
+    See experiments.scaling_law_sweeps.launch_fixed_model_sweep._validate_budgets
+    for the full rationale. Same guard, same logic, shared reason (run_name_core
+    uses f"{budget:.0e}" which collides 1.8e20 and 2.0e20).
+    """
+    canonical = set(curation_plan.BUDGETS)
+    nonstandard = [b for b in budgets if b not in canonical]
+    if not nonstandard:
+        return
+    collisions: list[str] = []
+    for b in nonstandard:
+        label = f"{b:.0e}"
+        clashes = [c for c in canonical if f"{c:.0e}" == label]
+        clash_str = f" (display-collides with canonical {clashes})" if clashes else ""
+        collisions.append(f"  {b:.3e} -> run_name label {label!r}{clash_str}")
+    msg = (
+        "Refusing to launch: --budgets contains values NOT in curation_plan.BUDGETS "
+        f"{sorted(canonical)}:\n"
+        + "\n".join(collisions)
+        + "\n\nIf this is intentional (e.g. a one-off experiment), pass "
+        "--allow-custom-budgets. Strongly recommend pairing with --run-suffix "
+        "to avoid output-path collisions with any canonical run."
+    )
+    if not allow_custom:
+        raise SystemExit(msg)
+    logger.warning("NON-CANONICAL BUDGETS (--allow-custom-budgets passed):\n%s", msg)
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -462,6 +639,7 @@ def main(argv: list[str] | None = None) -> None:
 
     methods = curation_plan.resolve_methods(args.methods)
     experiments = curation_plan.resolve_experiments(args.experiments, args.t_targets)
+    _validate_budgets(args.budgets, allow_custom=args.allow_custom_budgets)
     plans = curation_plan.enumerate_plans(
         methods,
         experiments,

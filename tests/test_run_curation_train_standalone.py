@@ -554,7 +554,7 @@ def test_exp_b_slice_never_exceeds_d_obs():
 # ExpB has constant target-regime epoch count across candidates.
 # =============================================================================
 
-_ALL_REGISTERED_METHODS = ["dclm", "nemotron_org", "nemotron_full", "fineweb_edu"]
+_ALL_REGISTERED_METHODS = ["dclm", "nemotron_org", "nemotron_full_bos_fixed", "fineweb_edu"]
 
 
 def test_every_plan_experiment_tag_correctly_partitions_a_vs_b():
@@ -712,6 +712,165 @@ def test_build_summary_exp_b_slice_matches_intended_formula():
     # Effective epochs in ExpB should equal target-regime epoch count.
     target_epochs = plan.t_target / method.d_proj
     assert summary["tokens"]["effective_epochs"] == pytest.approx(target_epochs, rel=1e-3)
+
+
+# =============================================================================
+# ExpC regime gate: data-rich (LC, Res) skip slicing; sliced (dclm_10k) apply
+# =============================================================================
+
+
+def test_build_summary_expc_data_rich_lc_does_not_slice():
+    """For LC at T=33T (target_epochs ≈ 0.22 < 1), the runner trains naturally on
+    D_obs. _build_summary must report slice_tokens = D_obs (NOT the slicing-formula
+    output, which would be > D_obs and meaningless in this regime).
+    """
+    plans = curation_plan.enumerate_plans([METHODS["llm_curated_bos_fixed"]], [("C", 33e12)])
+    assert plans, "expected ExpC LC plans"
+    plan = plans[0]
+    method = METHODS["llm_curated_bos_fixed"]
+    # Sanity: LC at T=33T must be in the data-rich regime.
+    assert plan.t_target < method.d_proj, "test premise broken: LC should be data-rich at T=33T"
+    summary = standalone._build_summary(
+        plan=plan,
+        method=method,
+        region="us-central1",
+        run_name=plan.run_name_core,
+        output_path="gs://bucket/out",
+        final_eval=None,
+    )
+    # No slicing — slice_tokens should equal D_obs (full cache):
+    assert summary["tokens"]["slice_tokens"] == method.d_obs_tokens
+    # Epoch count = T_exp / D_obs (NOT target-regime epochs):
+    expected_epochs = (plan.batch_size * plan.seq_len * plan.train_steps) / method.d_obs_tokens
+    assert summary["tokens"]["effective_epochs"] == pytest.approx(expected_epochs, rel=1e-6)
+
+
+def test_build_summary_expc_data_rich_resiliparse_does_not_slice():
+    """Same regime gate for resiliparse (target_epochs ≈ 0.09 at T=33T)."""
+    plans = curation_plan.enumerate_plans([METHODS["resiliparse"]], [("C", 33e12)])
+    assert plans, "expected ExpC resiliparse plans"
+    plan = plans[0]
+    method = METHODS["resiliparse"]
+    assert plan.t_target < method.d_proj, "test premise broken"
+    summary = standalone._build_summary(
+        plan=plan,
+        method=method,
+        region="us-central1",
+        run_name=plan.run_name_core,
+        output_path="gs://bucket/out",
+        final_eval=None,
+    )
+    assert summary["tokens"]["slice_tokens"] == method.d_obs_tokens
+    expected_epochs = (plan.batch_size * plan.seq_len * plan.train_steps) / method.d_obs_tokens
+    assert summary["tokens"]["effective_epochs"] == pytest.approx(expected_epochs, rel=1e-6)
+
+
+def test_build_summary_expc_sliced_method_applies_slicing():
+    """Synthetic dclm_10k (D_proj ≈ 7T at sampled_warcs=10,364): target_epochs at
+    T=33T is ≈ 4.7, so the slicing branch fires. The slice formula applies.
+    """
+    # Synthesize a dclm_10k plan via PlannedRun so we don't depend on the
+    # placeholder-d_obs guard. Use realistic 10k D_obs (≈ DCLM_3k × 10364/3000).
+    from experiments.scaling_law_sweeps.data_curation_math import CurationMethod
+
+    method = CurationMethod(
+        name="dclm_10k",
+        tokenized_rel_path="tokenized/dclm_10k_test/",
+        d_obs_tokens=int(2_663_454_015 * 10_364 / 3_000),  # ≈ 9.20B
+        sampled_warcs=10_364,
+    )
+    # Sanity: target_epochs >= 1 at T=33T.
+    assert 33e12 / method.d_proj >= 1.0, "test premise broken: dclm_10k should be sliced regime"
+
+    # Build a plan via the LC ExpC enumeration (we just need a valid PlannedRun
+    # frame; the method+t_target are what drive _build_summary's branching).
+    template = curation_plan.enumerate_plans([METHODS["llm_curated_bos_fixed"]], [("C", 33e12)])[0]
+    sliced_plan = curation_plan.PlannedRun(
+        method_name="dclm_10k",
+        experiment_tag=template.experiment_tag,  # "expC_T33T"
+        budget=template.budget,
+        hidden_dim=template.hidden_dim,
+        num_layers=template.num_layers,
+        num_heads=template.num_heads,
+        intermediate_dim=template.intermediate_dim,
+        batch_size=template.batch_size,
+        train_steps=template.train_steps,
+        learning_rate=template.learning_rate,
+        adam_lr=template.adam_lr,
+        epsilon=template.epsilon,
+        beta1=template.beta1,
+        beta2=template.beta2,
+        t_exp=min(template.t_exp, method.d_obs_tokens * 0.8),  # safe slice
+        t_target=template.t_target,
+    )
+    summary = standalone._build_summary(
+        plan=sliced_plan,
+        method=method,
+        region="us-east5",
+        run_name=sliced_plan.run_name_core,
+        output_path="gs://bucket/out",
+        final_eval=None,
+    )
+    # Slicing applied: slice_tokens = D_proj × T_exp / T_target.
+    expected_slice = int(method.d_proj * sliced_plan.t_exp / sliced_plan.t_target)
+    assert summary["tokens"]["slice_tokens"] == pytest.approx(expected_slice, rel=1e-3)
+    # Effective epochs = target_regime_epochs.
+    target_epochs = sliced_plan.t_target / method.d_proj
+    assert summary["tokens"]["effective_epochs"] == pytest.approx(target_epochs, rel=1e-3)
+
+
+def test_build_summary_expa_unaffected_by_regime_gate():
+    """ExpA plans (expA_natural tag) MUST NOT enter the slicing branch regardless
+    of t_target / d_proj relationship — slice = D_obs always."""
+    plan = _sample_plan()  # ExpA dclm
+    method = METHODS["dclm"]
+    summary = standalone._build_summary(
+        plan=plan,
+        method=method,
+        region="us-east5",
+        run_name=plan.run_name_core,
+        output_path="gs://bucket/out",
+        final_eval=None,
+    )
+    assert plan.experiment_tag == "expA_natural"
+    assert summary["tokens"]["slice_tokens"] == method.d_obs_tokens
+
+
+def test_build_summary_expfm_natural_unaffected_by_regime_gate():
+    """fixed_model uses tag 'expFM_natural' which doesn't start with expB/expC.
+    Even on a data-rich method like LC, it must NOT slice — preserves the
+    existing fixed_model contract."""
+    plan = curation_plan.enumerate_plans([METHODS["llm_curated_bos_fixed"]], [None])[0]
+    # Force-mock the tag to expFM_natural (simulating fixed_model output).
+    fm_plan = curation_plan.PlannedRun(
+        method_name=plan.method_name,
+        experiment_tag="expFM_natural",
+        budget=plan.budget,
+        hidden_dim=plan.hidden_dim,
+        num_layers=plan.num_layers,
+        num_heads=plan.num_heads,
+        intermediate_dim=plan.intermediate_dim,
+        batch_size=plan.batch_size,
+        train_steps=plan.train_steps,
+        learning_rate=plan.learning_rate,
+        adam_lr=plan.adam_lr,
+        epsilon=plan.epsilon,
+        beta1=plan.beta1,
+        beta2=plan.beta2,
+        t_exp=plan.t_exp,
+        t_target=plan.t_target,
+    )
+    method = METHODS[fm_plan.method_name]
+    summary = standalone._build_summary(
+        plan=fm_plan,
+        method=method,
+        region="us-central1",
+        run_name=fm_plan.run_name_core,
+        output_path="gs://bucket/out",
+        final_eval=None,
+    )
+    # No slicing — slice_tokens = D_obs.
+    assert summary["tokens"]["slice_tokens"] == method.d_obs_tokens
 
 
 # =============================================================================

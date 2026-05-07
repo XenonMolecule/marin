@@ -11,7 +11,7 @@ at LOCAL `gs://marin-{region}/...` paths), and calls Levanter directly
 in-process.
 
 This is the analog of `experiments/baseline_collection/run_extract_standalone.py`
-for training. Each child is fully self-contained — no executor coordination,
+for training. Each child is fully self-contained -- no executor coordination,
 no MARIN_PREFIX inheritance from the parent.
 
 Usage (normally invoked by the coordinator, but can be run by hand for debug):
@@ -59,7 +59,7 @@ from experiments.scaling_law_sweeps.curation_plan import (
 
 logger = logging.getLogger(__name__)
 
-# Where region-lock tracker files live (single neutral home bucket — tiny files,
+# Where region-lock tracker files live (single neutral home bucket -- tiny files,
 # rare cross-region reads are negligible cost).
 DEFAULT_TRACKER_PREFIX = "gs://marin-us-central1/metadata/region_locks/data_curation_isoflop/"
 
@@ -99,7 +99,7 @@ def _assert_all_components_local(tokenized, region: str) -> None:
                 raise ValueError(
                     f"component {name!r} has non-local {field_name}={path!r}; "
                     f"expected prefix {expected_prefix!r}. Cross-region reads "
-                    f"forbidden — pre-copy the cache into {expected_prefix} first."
+                    f"forbidden -- pre-copy the cache into {expected_prefix} first."
                 )
 
 
@@ -148,7 +148,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="'auto' probes api.wandb.ai and uses offline mode on probe failure. "
         "'online' or 'offline' skip the probe and force the mode. "
         "'offline_no_sync' behaves like 'offline' but does NOT download/upload "
-        "the wandb cache or append to the sync-pending log — the run's wandb data "
+        "the wandb cache or append to the sync-pending log -- the run's wandb data "
         "dies with the container. Use this to skip WandB egress entirely once you "
         "trust the pipeline and only care about the eval_metrics.jsonl / summary.json.",
     )
@@ -222,7 +222,7 @@ def _build_tags(plan: PlannedRun, method) -> list[str]:
     WandB Runs sidebar lets you filter with one click. Architecture + budget
     details follow as `key=value` tags for precise slicing.
     """
-    # Short experiment label ("A" or "B") — easiest filter in the UI.
+    # Short experiment label ("A" or "B") -- easiest filter in the UI.
     short_exp = "A" if plan.experiment_tag.startswith("expA") else "B"
     # Params in "156M" / "1.2B" form.
     # Model config → total param count (see `_build_summary` for the same calc).
@@ -309,8 +309,8 @@ def _build_train_lm_config(
             # Checkpoint policy: rolling 15-min time-based for preemption recovery
             # (auto-deleted on next save) + one permanent final checkpoint (via
             # trainer.py's `force=True` save at end of training). NO intermediate
-            # step checkpoints — `keep=[]` disables them, saving ~2 TB across the
-            # 508-run sweep (3 permanent intermediates × 1.2 GB × 508 runs).
+            # step checkpoints -- `keep=[]` disables them, saving ~2 TB across the
+            # 508-run sweep (3 permanent intermediates x 1.2 GB x 508 runs).
             checkpointer=CheckpointerConfig(
                 save_interval=timedelta(minutes=15),
                 keep=[],
@@ -327,11 +327,11 @@ def _probe_wandb_healthy(timeout_seconds: float = 10.0) -> bool:
     """Probe WandB's GraphQL endpoint with the smallest real query.
 
     Hits `POST https://api.wandb.ai/graphql` with the introspection query
-    `{ __typename }` — the minimum valid GraphQL request. WandB answers with:
+    `{ __typename }` -- the minimum valid GraphQL request. WandB answers with:
 
       - 200 + JSON body `{"data": {"__typename": "Query"}}` when the API is
         healthy and the server can parse and execute a trivial query.
-      - 401 Unauthorized when the API is healthy but we didn't auth — still
+      - 401 Unauthorized when the API is healthy but we didn't auth -- still
         means WandB is up and responding, just rejecting our request.
 
     Anything else (5xx, connection refused, DNS fail, timeout) → WandB is
@@ -355,19 +355,19 @@ def _probe_wandb_healthy(timeout_seconds: float = 10.0) -> bool:
         urllib.request.urlopen(req, timeout=timeout_seconds)
         return True
     except urllib.error.HTTPError as e:
-        # API responded — HTTP error means alive-but-rejecting. 401 is the
+        # API responded -- HTTP error means alive-but-rejecting. 401 is the
         # expected unauthenticated answer; treat any 4xx similarly. 5xx means
         # the API server itself is unhealthy → mark as bad.
         if 400 <= e.code < 500:
-            logger.info("WandB probe: HTTP %s (expected for unauthed GraphQL) — healthy", e.code)
+            logger.info("WandB probe: HTTP %s (expected for unauthed GraphQL) -- healthy", e.code)
             return True
-        logger.warning("WandB probe: HTTP %s (server error) — marking unhealthy", e.code)
+        logger.warning("WandB probe: HTTP %s (server error) -- marking unhealthy", e.code)
         return False
     except (urllib.error.URLError, TimeoutError) as e:
-        logger.warning("WandB probe: connection failure (%s) — marking unhealthy", e)
+        logger.warning("WandB probe: connection failure (%s) -- marking unhealthy", e)
         return False
     except Exception as e:
-        logger.warning("WandB probe: unexpected error (%s) — marking unhealthy", e)
+        logger.warning("WandB probe: unexpected error (%s) -- marking unhealthy", e)
         return False
 
 
@@ -429,7 +429,7 @@ def _start_wandb_cache_uploader_thread(
 
     def loop():
         while not stop.is_set():
-            # Wait first — we don't want to double-upload immediately after startup.
+            # Wait first -- we don't want to double-upload immediately after startup.
             if stop.wait(interval_seconds):
                 return
             _upload_wandb_cache(local_dir, dest_gcs)
@@ -450,7 +450,7 @@ def _upload_wandb_cache(local_dir: str, dest_gcs: str) -> bool:
 
     src = pathlib.Path(local_dir)
     if not src.exists() or not any(src.iterdir()):
-        logger.info("No WandB offline cache at %s — nothing to upload", src)
+        logger.info("No WandB offline cache at %s -- nothing to upload", src)
         return False
 
     try:
@@ -469,7 +469,7 @@ def _append_sync_pending_row(row: dict, jsonl_path: str) -> None:
 
     JSONL append is safe (1-line-per-row, atomic at GCS write granularity for
     the coordination volumes we see). Even if two workers race, lines don't
-    corrupt each other — we only ever write one row per run per child.
+    corrupt each other -- we only ever write one row per run per child.
     """
     try:
         fs, urlpath = fsspec.core.url_to_fs(jsonl_path)
@@ -519,7 +519,7 @@ def _init_jax_distributed_for_multihost_tpu() -> bool:
         logger.info("No iris job context; single-process or non-iris run.")
         return False
     if job_info.num_tasks <= 1:
-        logger.info("Iris job has num_tasks=%d; single-host TPU — libtpu handles init.", job_info.num_tasks)
+        logger.info("Iris job has num_tasks=%d; single-host TPU -- libtpu handles init.", job_info.num_tasks)
         return False
 
     import jax
@@ -537,37 +537,67 @@ def _init_jax_distributed_for_multihost_tpu() -> bool:
     import time as _time
 
     # Default JAX coordinator timeout is 300s (5 min). For 4-VM gang-scheduled
-    # plans (v4-32), VMs often don't boot within that window — container pull,
+    # plans (v4-32), VMs often don't boot within that window -- container pull,
     # venv install, GCS sync can each add minutes. 900s (15 min) covers the
     # worst-case boot skew we've observed while still failing reasonably fast
     # on truly broken topologies.
     INIT_TIMEOUT_SECONDS = 900
 
-    def _initialize_with_retry(coordinator: str, num_tasks: int, task_index: int, max_attempts: int = 6) -> None:
+    # Transient error patterns we retry on. The `RegisterTask` /
+    # `CoordinationService` family in particular covers the late-worker race
+    # observed on v4-32 / v5p-64: a later-ranked worker's initial gRPC call to
+    # the coordinator fails with an EMPTY CoordinationServiceError (gRPC
+    # channel torn down before the coordinator's accept window opens).
+    # Previously only {ALREADY_EXISTS, newer incarnation, DEADLINE_EXCEEDED}
+    # were classified transient, so the naked RegisterTask failure propagated
+    # to the iris layer which then paid a full image-pull cost for the retry
+    # (~5 min). Catching it at Python level reduces that to ~10-160s per retry
+    # and fits the worst-case worker boot skew (~8-12 min) within one iris
+    # attempt instead of spreading across many.
+    _TRANSIENT_PATTERNS = (
+        "ALREADY_EXISTS",
+        "newer incarnation",
+        "DEADLINE_EXCEEDED",
+        "UNAVAILABLE",
+        "CANCELLED",
+        "/tensorflow.CoordinationService/",  # RegisterTask + friends
+        "CoordinationServiceError",
+        "Connection refused",
+        "failed to connect",
+    )
+
+    def _initialize_with_retry(coordinator: str, num_tasks: int, task_index: int, max_attempts: int = 10) -> None:
         for attempt in range(max_attempts):
             try:
                 jax.distributed.initialize(
-                    coordinator, num_tasks, task_index,
+                    coordinator,
+                    num_tasks,
+                    task_index,
                     initialization_timeout=INIT_TIMEOUT_SECONDS,
                 )
                 return
             except Exception as exc:
                 msg = str(exc)
-                transient = "ALREADY_EXISTS" in msg or "newer incarnation" in msg or "DEADLINE_EXCEEDED" in msg
+                transient = any(p in msg for p in _TRANSIENT_PATTERNS)
                 if not transient or attempt == max_attempts - 1:
                     raise
-                backoff = 10 * (2**attempt)  # 10, 20, 40, 80, 160s; total ~5 min
+                # Exponential backoff with 300s cap. 10 attempts x capped backoff
+                # totals ~17 min, which covers observed worst-case multi-VM
+                # worker boot skew without burning an iris image-pull retry.
+                backoff = min(300, 10 * (2**attempt))
                 logger.warning(
-                    "jax.distributed.initialize transient error (attempt %d/%d); "
-                    "sleeping %ds before retry: %s",
-                    attempt + 1, max_attempts, backoff, msg[:200],
+                    "jax.distributed.initialize transient error (attempt %d/%d); " "sleeping %ds before retry: %s",
+                    attempt + 1,
+                    max_attempts,
+                    backoff,
+                    msg[:200],
                 )
                 _time.sleep(backoff)
 
     if task_index == 0:
         bound_port = job_info.ports.get("jax", DEFAULT_PORT)
         coordinator = f"{job_info.advertise_host}:{bound_port}"
-        # Task 0 is the coordinator — register the endpoint so other tasks can
+        # Task 0 is the coordinator -- register the endpoint so other tasks can
         # discover us, then call jax.distributed.initialize (blocks until all
         # num_tasks processes connect).
         endpoint_id = ctx.registry.register(ENDPOINT_NAME, coordinator)
@@ -598,57 +628,19 @@ def _init_jax_distributed_for_multihost_tpu() -> bool:
     return True
 
 
-def _start_heartbeat_thread(
-    run_key: str,
-    region: str,
-    tracker_prefix: str,
-    interval_seconds: int = 5 * 60,
-) -> tuple[threading.Thread, threading.Event]:
-    """Start a daemon thread that refreshes the region-tracker heartbeat.
-
-    Returns (thread, stop_event). Caller must `stop_event.set()` and
-    `thread.join()` at end of training to stop refreshes cleanly.
-
-    The refresh cadence is every 5 min by default — well inside the 30-min
-    staleness threshold, so one-off GCS blips don't trigger false reclaim.
-
-    We wrap each iteration in a broad try/except so a transient GCS error
-    (thread-local fsspec state corruption, network blip, etc.) can't silently
-    kill the loop — observed symptom was the thread dying after iteration 2
-    with no logged exception. The iteration error is logged with full
-    traceback so we can diagnose the underlying cause, then the loop sleeps
-    and retries.
-    """
-    stop = threading.Event()
-
-    def loop():
-        iteration = 0
-        while not stop.is_set():
-            iteration += 1
-            try:
-                region_tracker.refresh_heartbeat(run_key, region, tracker_prefix=tracker_prefix)
-                logger.debug("Heartbeat refresh #%d succeeded for %s", iteration, run_key)
-            except Exception:
-                # Full traceback so we can see what broke. Don't re-raise;
-                # an exception in the thread would kill it silently.
-                logger.exception(
-                    "Heartbeat refresh #%d FAILED for %s — thread will retry next tick",
-                    iteration,
-                    run_key,
-                )
-            if stop.wait(interval_seconds):
-                return
-
-    thread = threading.Thread(target=loop, name="region-tracker-heartbeat", daemon=True)
-    thread.start()
-    return thread, stop
+# Step slack for sourcing final-eval metrics. Levanter's final eval normally
+# logs at step = train_steps - 1, so a slack of 10 absorbs any off-by-N
+# discrepancy across Levanter versions/configs while still catching the
+# preempt-resume race that has shipped multiple wrong summaries (see
+# `audit_summary_vs_wandb.py` for context).
+_FINAL_EVAL_STEP_SLACK = 10
 
 
 def _read_last_eval_metrics(output_path: str) -> dict | None:
     """Read the last row of `{output_path}/checkpoints/eval_metrics.jsonl`.
 
     Returns the dict of final-eval metrics, or None if the file is missing or
-    empty. Non-fatal — a failure here should not tank the training run.
+    empty. Non-fatal -- a failure here should not tank the training run.
     """
     path = f"{output_path.rstrip('/')}/checkpoints/eval_metrics.jsonl"
     try:
@@ -660,6 +652,119 @@ def _read_last_eval_metrics(output_path: str) -> dict | None:
     except Exception as e:
         logger.warning("Failed to read eval_metrics.jsonl at %s: %s", path, e)
         return None
+
+
+def _read_last_eval_metrics_checked(output_path: str, expected_step: int) -> dict | None:
+    """`_read_last_eval_metrics` plus a step-consistency check.
+
+    Rejects (returns None) if the captured row's `step` is more than
+    `_FINAL_EVAL_STEP_SLACK` behind `expected_step`. The checked-too-early
+    failure mode -- where eval_metrics.jsonl read returns a row from earlier
+    in training while the run is actually complete -- has produced multiple
+    wrong summaries in this sweep; refusing the row forces the caller to fall
+    back to W&B (or fail loudly) rather than write a corrupted summary.
+    """
+    last = _read_last_eval_metrics(output_path)
+    if last is None:
+        return None
+    captured = last.get("step")
+    if captured is None:
+        logger.warning("eval_metrics.jsonl last row has no 'step' field; treating as untrusted.")
+        return None
+    if int(captured) < expected_step - _FINAL_EVAL_STEP_SLACK:
+        logger.error(
+            "eval_metrics.jsonl last row step=%d is %d steps behind expected_step=%d (slack=%d). "
+            "This is the partial-write race documented in audit_summary_vs_wandb.py; "
+            "refusing to use this row.",
+            int(captured),
+            expected_step - int(captured),
+            expected_step,
+            _FINAL_EVAL_STEP_SLACK,
+        )
+        return None
+    return last
+
+
+def _fetch_final_eval_from_wandb(run_name: str, project: str, entity: str | None, expected_step: int) -> dict | None:
+    """Pull eval/* keys from W&B's run.summary as the canonical final-eval source.
+
+    Returns None (caller falls back to file) if:
+      - the wandb library / API call fails (e.g., offline mode, no creds);
+      - the run isn't `finished`;
+      - run.summary's `_step` is more than `_FINAL_EVAL_STEP_SLACK` behind
+        `expected_step` (W&B run is truncated / from a partial incarnation);
+      - the run summary has no eval/* keys at all.
+
+    On success returns a dict of all eval/* keys with numeric values cast to
+    float (matching the on-disk eval_metrics.jsonl shape).
+    """
+    try:
+        import wandb
+    except Exception as e:
+        logger.warning("wandb import failed (%s); cannot fetch final-eval from W&B.", e)
+        return None
+    try:
+        api = wandb.Api()
+        run_path = f"{entity}/{project}/{run_name}" if entity else f"{project}/{run_name}"
+        run = api.run(run_path)
+    except Exception as e:
+        logger.warning("W&B run lookup failed for %s: %s", run_name, e)
+        return None
+    if run.state != "finished":
+        logger.warning("W&B run %s state=%s (not finished); skipping W&B summary source.", run_name, run.state)
+        return None
+    last_step = run.summary.get("_step")
+    if last_step is None or int(last_step) < expected_step - _FINAL_EVAL_STEP_SLACK:
+        logger.warning(
+            "W&B run %s _step=%s is behind expected_step=%d (slack=%d); skipping.",
+            run_name,
+            last_step,
+            expected_step,
+            _FINAL_EVAL_STEP_SLACK,
+        )
+        return None
+    eval_dict: dict = {}
+    for k, v in run.summary.items():
+        if not k.startswith("eval/") or v is None:
+            continue
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            eval_dict[k] = float(v)
+        else:
+            eval_dict[k] = v
+    if not eval_dict:
+        logger.warning("W&B run %s has no eval/* keys in summary; skipping.", run_name)
+        return None
+    return eval_dict
+
+
+def _resolve_final_eval(
+    run_name: str,
+    output_path: str,
+    plan: PlannedRun,
+    wandb_project: str,
+    wandb_entity: str | None,
+) -> dict | None:
+    """Source final-eval metrics with W&B as primary, eval_metrics.jsonl fallback.
+
+    The fallback is itself step-checked, so a partial eval_metrics.jsonl read
+    won't silently produce a wrong summary. Returns None when neither source
+    is trustworthy -- callers should treat that as "do not write summary or
+    DONE marker", letting the coordinator retry the run.
+    """
+    expected_step = plan.train_steps - 1  # Levanter logs final eval at train_steps - 1
+    via_wandb = _fetch_final_eval_from_wandb(run_name, wandb_project, wandb_entity, expected_step)
+    if via_wandb is not None:
+        logger.info("Final-eval sourced from W&B run.summary (%d keys).", len(via_wandb))
+        return via_wandb
+    via_file = _read_last_eval_metrics_checked(output_path, expected_step)
+    if via_file is not None:
+        logger.info(
+            "Final-eval sourced from eval_metrics.jsonl (%d keys, step=%d).",
+            len(via_file),
+            int(via_file.get("step", -1)),
+        )
+        return via_file
+    return None
 
 
 def _build_summary(
@@ -675,19 +780,25 @@ def _build_summary(
     Fields are grouped into: plan (identity + hyperparams), method (D_obs, s,
     tokenizer), model (params), tokens (trained + slice + epochs), run
     (completion metadata), and eval (final eval metrics from the last eval
-    cycle — per-dataset bpb/loss + macro/micro aggregates).
+    cycle -- per-dataset bpb/loss + macro/micro aggregates).
 
-    For ExpA: effective slice is D_obs (no Levanter slicing).
-    For ExpB: effective slice is D_proj × T_exp / T_target, which matches
-    Levanter's D_obs × T_exp / (T_target/s) computation with the fix in place.
+    For ExpA / expFM_natural: effective slice is D_obs (no Levanter slicing).
+    For ExpB / ExpC sliced regime (target_epochs >= 1): effective slice is
+    D_obs * T_exp / (T_target/s), matching Levanter's slice formula.
+    For ExpC data-rich regime (target_epochs < 1): no slicing applied — the
+    runner trains naturally on D_obs and effective slice = D_obs.
     """
     model_config = _build_model_config(plan)
     vocab_size = 128256  # meta-llama/Meta-Llama-3.1-8B tokenizer
     total_params = model_config.total_trainable_params(vocab_size)
 
-    is_exp_b = plan.experiment_tag.startswith("expB")
+    # Slicing semantics: gate on tag (expB/expC opt in to simulated epoching) AND
+    # on the regime (target_epochs >= 1, i.e. T_target >= D_proj). Data-rich
+    # ExpC methods (LC, Resiliparse) have target_epochs < 1 so they fall through
+    # to the natural-D_obs path even though their tag is expC_*.
+    needs_slicing = plan.experiment_tag.startswith(("expB", "expC")) and plan.t_target >= method.d_proj
     tokens_trained = plan.batch_size * plan.seq_len * plan.train_steps
-    if is_exp_b:
+    if needs_slicing:
         slice_tokens = int(method.d_obs_tokens * plan.t_exp / (plan.t_target / method.s))
     else:
         slice_tokens = method.d_obs_tokens
@@ -782,7 +893,7 @@ def main(argv: list[str] | None = None) -> None:
 
     # 1. Detect region (parses MARIN_REGION or MARIN_PREFIX env var).
     region = region_tracker.detect_current_region()
-    logger.info("Standalone training child boot — region=%s, run=%s", region, run_name)
+    logger.info("Standalone training child boot -- region=%s, run=%s", region, run_name)
 
     # 2. Region-lock: claim if first run, verify match if not.
     #    Raises RegionMismatch (non-zero exit) if a different region claimed it earlier.
@@ -797,22 +908,6 @@ def main(argv: list[str] | None = None) -> None:
     )
     logger.info("Region-locked: %s → %s", run_name, bucket)
 
-    # 2b. Start background heartbeat refresher (rank-0 only). The tracker stores
-    #     a `last_heartbeat_ts` field, and a future launcher treats a tracker
-    #     with no heartbeat in the last 30 min as STALE (reclaimable by any
-    #     region). Our refresh cadence is 5 min — small fraction of the
-    #     staleness window, so a brief GCS outage doesn't free the lock.
-    #     Multi-VM gating: only rank 0 heartbeats. Other VMs skip — N replicas
-    #     all writing the same key is safe (idempotent overwrite) but wasteful.
-    run_key = region_tracker.run_key_for(plan.method_name, plan.experiment_tag, run_name)
-    heartbeat_thread, heartbeat_stop = (None, None)
-    if is_process_0:
-        heartbeat_thread, heartbeat_stop = _start_heartbeat_thread(
-            run_key=run_key,
-            region=region,
-            tracker_prefix=args.tracker_prefix,
-        )
-
     # 3. Compute output_path in the pinned region's bucket.
     output_path = f"{bucket}/checkpoints/isoflop-curation/{run_name}"
     logger.info("Checkpoint output_path: %s", output_path)
@@ -821,11 +916,11 @@ def main(argv: list[str] | None = None) -> None:
     #     download any prior attempt's wandb cache so the SDK sees continuity
     #     across preempt-resume boundaries. A 15-min periodic uploader keeps
     #     GCS in sync with the local cache at the same cadence as Levanter's
-    #     time-based checkpointer — so model state and wandb state survive
+    #     time-based checkpointer -- so model state and wandb state survive
     #     preemption at the same granularity.
     wandb_mode = _decide_wandb_mode(args.wandb_mode)
     # Both "offline" and "offline_no_sync" translate to WANDB_MODE=offline for
-    # the SDK — they differ only in our GCS cache+sync behavior below.
+    # the SDK -- they differ only in our GCS cache+sync behavior below.
     os.environ["WANDB_MODE"] = "offline" if wandb_mode in ("offline", "offline_no_sync") else wandb_mode
     logger.info("WandB mode: %s (user-pref: %s)", wandb_mode, args.wandb_mode)
     wandb_gcs_dir = f"{output_path}/wandb"
@@ -871,10 +966,19 @@ def main(argv: list[str] | None = None) -> None:
     #
     # Without this scaling, ExpA previously set target_budget = T_exp * s,
     # which made Levanter slice the dataset to D_obs/s (~1M tokens), causing
-    # the model to over-epoch ~s times and memorize the slice — exactly the
+    # the model to over-epoch ~s times and memorize the slice -- exactly the
     # divergence symptom observed in the smoke run.
-    is_exp_b = plan.experiment_tag.startswith("expB")
-    if is_exp_b:
+    #
+    # ExpC adds a third regime: data-rich methods (LC, Resiliparse) have
+    # T_target < D_proj (target_epochs < 1) so the model would only see a
+    # fraction of D_proj at the target scale. Under uniformity the cache is
+    # i.i.d. with D_proj, so training NATIVELY on the cache for T_exp tokens
+    # is statistically equivalent to drawing T_exp i.i.d. tokens from D_proj
+    # — no slicing needed. We gate on (tag in {expB, expC}) AND
+    # (target_epochs >= 1, i.e. T_target >= D_proj) so ExpC's data-rich runs
+    # fall through to the natural-D_obs path.
+    needs_slicing = plan.experiment_tag.startswith(("expB", "expC")) and plan.t_target >= method.d_proj
+    if needs_slicing:
         tokenized = dataclasses.replace(
             tokenized,
             target_budget=int(plan.t_target / method.s),
@@ -882,18 +986,31 @@ def main(argv: list[str] | None = None) -> None:
         )
         logger.info(
             "Mixture: train=%s (weight 1.0), validation=%d datasets (weight 0.0); "
-            "ExpB slicing: target_budget=%d (= T_target %.2e / s %.1f), experiment_budget=%d",
+            "%s slicing: target_budget=%d (= T_target %.2e / s %.1f), experiment_budget=%d",
             plan.method_name,
             len(tokenized.components) - 1,
+            plan.experiment_tag,
             tokenized.target_budget,
             plan.t_target,
             method.s,
             tokenized.experiment_budget,
         )
+    elif plan.experiment_tag.startswith(("expB", "expC")):
+        logger.info(
+            "Mixture: train=%s (weight 1.0), validation=%d datasets (weight 0.0); "
+            "%s data-rich (T_target=%.2e < D_proj=%.2e, target_epochs=%.3f) "
+            "-- no Levanter slicing, training naturally on D_obs",
+            plan.method_name,
+            len(tokenized.components) - 1,
+            plan.experiment_tag,
+            plan.t_target,
+            method.d_proj,
+            plan.t_target / method.d_proj,
+        )
     else:
         logger.info(
             "Mixture: train=%s (weight 1.0), validation=%d datasets (weight 0.0); "
-            "ExpA natural epoching — no Levanter slicing (target/experiment budgets unset)",
+            "ExpA natural epoching -- no Levanter slicing (target/experiment budgets unset)",
             plan.method_name,
             len(tokenized.components) - 1,
         )
@@ -919,26 +1036,53 @@ def main(argv: list[str] | None = None) -> None:
     # 6. IN-PROCESS Levanter call. We are already running on the TPU iris
     #    worker that the coordinator allocated. Calling `run_levanter_train_lm`
     #    would submit a NESTED iris job for training (consuming a 2nd TPU
-    #    worker — wasteful, and capacity-prone). Instead we apply the env vars
+    #    worker -- wasteful, and capacity-prone). Instead we apply the env vars
     #    `_prepare_training_run` would have set, then invoke `train_lm.main`
     #    directly in this process.
-    prepared_config, train_config_ready, env, extras = _prepare_training_run(pod_config)
+    _prepared_config, train_config_ready, env, _extras = _prepare_training_run(pod_config)
     for k, v in env.items():
         os.environ[k] = v
 
-    # Multi-host TPU init: libtpu's TPU_WORKER_HOSTNAMES bootstrap populates
-    # jax.devices() (all N chips visible) but does NOT initialize the Python
-    # jax.distributed.Client — Levanter's multihost_broadcast_sync / barrier /
-    # checkpoint coordination all need that client. So we DO need an explicit
-    # jax.distributed.initialize for multi-host.
+    # TPU multi-host init: use JAX's built-in auto-detection rather than
+    # constructing our own coordinator address.
     #
-    # ALREADY_EXISTS on preempt-retry: when one task restarts with a new
-    # incarnation id but surviving peers still hold the old coordinator's
-    # connection, the newer incarnation's RegisterTask aborts. Swallow that
-    # specific failure and retry a few times — iris's gang-scheduling will
-    # eventually bring all 4 tasks back in sync. Any other jax.distributed
-    # exception propagates.
-    _init_jax_distributed_for_multihost_tpu()
+    # Why not "do nothing" (libtpu alone)?
+    #   libtpu sets up the PJRT device mesh so jax.devices() sees all N chips,
+    #   but it does NOT create the Python `jax.distributed.Client`. Levanter's
+    #   `multihost_broadcast_sync` (used by WandbConfig.init and elsewhere)
+    #   reads that client and raises "requires jax distributed client to be
+    #   initialized" if it's missing.
+    #
+    # Why not our previous custom (coordinator, num_processes, task_index) path?
+    #   We built a coordinator address from iris's registry and passed it
+    #   alongside explicit process topology. That racing libtpu's own
+    #   CoordinationService registration produced "different incarnation" /
+    #   RegisterTask RPC aborts. The failure probability scaled with N-hosts
+    #   (observed: 2-host recovered via iris retries, 4/8-host did not).
+    #
+    # What we do instead:
+    #   Call `jax.distributed.initialize()` with NO args. JAX's BaseTpuCluster
+    #   auto-detector (jax/_src/clusters/cloud_tpu_cluster.py) reads the
+    #   MEGASCALE_COORDINATOR_ADDRESS / MEGASCALE_NUM_SLICES / MEGASCALE_SLICE_ID
+    #   env vars that libtpu has already populated. JAX reuses libtpu's
+    #   coordinator endpoint instead of opening a second one, so no race. The
+    #   call is a no-op when none of those env vars are set (single-host TPU,
+    #   CPU, etc.), so it's safe to invoke unconditionally.
+    try:
+        import jax as _jax
+
+        _jax.distributed.initialize()
+        logger.info(
+            "jax.distributed initialized (process_count=%d, process_index=%d)",
+            _jax.process_count(),
+            _jax.process_index(),
+        )
+    except Exception as exc:  # pragma: no cover - noisy logging on real failure
+        logger.warning(
+            "jax.distributed.initialize() (no-args auto-detect) raised: %s. "
+            "Continuing; Levanter's own initialize() will retry if needed.",
+            exc,
+        )
 
     train_lm_module = importlib.import_module("levanter.main.train_lm")
     logger.info("Launching levanter.main.train_lm.main() in-process (no nested submit)")
@@ -946,15 +1090,9 @@ def main(argv: list[str] | None = None) -> None:
         train_lm_module.main(train_config_ready)
         logger.info("Training finished cleanly.")
     finally:
-        # Stop heartbeats so the thread doesn't keep writing after we exit.
-        # Multi-VM: heartbeat_thread is None on non-rank-0 VMs (skipped at start).
-        if heartbeat_stop is not None:
-            heartbeat_stop.set()
-        if heartbeat_thread is not None:
-            heartbeat_thread.join(timeout=10)
         # Stop the periodic wandb cache uploader + do a final upload in offline
         # mode. Append a sync-pending row so a later helper script can
-        # `wandb sync` these runs back online. Rank-0 only — non-rank-0 VMs
+        # `wandb sync` these runs back online. Rank-0 only -- non-rank-0 VMs
         # have no wandb cache to upload (Levanter's wandb is process-0 only).
         if wandb_mode == "offline" and is_process_0:
             if wandb_cache_stop is not None:
@@ -980,14 +1118,36 @@ def main(argv: list[str] | None = None) -> None:
     #    racing on the same GCS object is correctness-safe (last-writer-wins,
     #    same content) but pointless. Non-rank-0 VMs exit cleanly here.
     if not is_process_0:
-        logger.info("Non-rank-0 VM (TPU_WORKER_ID=%s); exiting without writing summary/DONE.",
-                    os.environ.get("TPU_WORKER_ID"))
+        logger.info(
+            "Non-rank-0 VM (TPU_WORKER_ID=%s); exiting without writing summary/DONE.", os.environ.get("TPU_WORKER_ID")
+        )
         return
 
     # Per-run summary JSON to the central results prefix. This is the canonical
-    # feed for scaling-law plots — one flat file per completed run with plan,
+    # feed for scaling-law plots -- one flat file per completed run with plan,
     # method, model, tokens, final-eval metrics. See `_build_summary`.
-    final_eval = _read_last_eval_metrics(output_path)
+    #
+    # Source of truth for `final_eval` is W&B's `run.summary` (canonical record),
+    # with eval_metrics.jsonl as fallback. Both paths assert the captured step
+    # matches plan.train_steps to catch the preempt-resume / partial-write race
+    # that has produced wrong summaries in this sweep before. If neither source
+    # is trustworthy we skip the summary AND DONE marker so the coordinator
+    # retries the run on next launch instead of silently shipping bad numbers.
+    final_eval = _resolve_final_eval(
+        run_name=run_name,
+        output_path=output_path,
+        plan=plan,
+        wandb_project=args.wandb_project,
+        wandb_entity=args.wandb_entity,
+    )
+    if final_eval is None:
+        logger.error(
+            "Could not source trustworthy final-eval for %s from either W&B or "
+            "eval_metrics.jsonl. Skipping summary + DONE marker; the coordinator "
+            "will retry this run on next launch.",
+            run_name,
+        )
+        return
     summary = _build_summary(
         plan=plan,
         method=method,
@@ -997,6 +1157,11 @@ def main(argv: list[str] | None = None) -> None:
         final_eval=final_eval,
     )
     _write_summary(summary, args.results_prefix, run_name)
+    # When a run-suffix is in play (rescue/retry runs), also write the summary
+    # under the canonical (no-suffix) name so the dashboard + plotter pick it
+    # up without manual copy. The suffixed copy stays for provenance.
+    if args.run_suffix.strip():
+        _write_summary(summary, args.results_prefix, plan.run_name_core)
 
     # 8. Write a completion marker so the coordinator can skip this run on
     #    future launches. Same purpose as Marin's ExecutorStep STATUS_SUCCESS.
@@ -1016,7 +1181,7 @@ def main(argv: list[str] | None = None) -> None:
             f.write(marker_payload)
         logger.info("Wrote completion marker: %s", done_marker_path)
     except Exception as e:
-        # Non-fatal — training succeeded, we just couldn't write the marker.
+        # Non-fatal -- training succeeded, we just couldn't write the marker.
         # Coordinator will retry this run next launch, but it'll be a cheap
         # resume (Levanter sees the existing checkpoints).
         logger.warning("Failed to write completion marker at %s: %s", done_marker_path, e)

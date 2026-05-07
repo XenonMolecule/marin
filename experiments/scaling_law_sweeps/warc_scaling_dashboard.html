@@ -1,0 +1,759 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>WARC-Scaling Sweep Dashboard</title>
+<style>
+:root {
+  --bg: #0e1116;
+  --panel: #161b22;
+  --panel-2: #1f262e;
+  --text: #e6edf3;
+  --text-dim: #8b949e;
+  --border: #30363d;
+  --green: #3fb950;
+  --yellow: #d29922;
+  --red: #f85149;
+  --blue: #58a6ff;
+  --purple: #bc8cff;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+}
+header {
+  padding: 14px 20px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+header h1 { font-size: 18px; margin: 0; font-weight: 600; }
+.tabs {
+  display: flex;
+  gap: 4px;
+  padding: 0 20px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+.tab {
+  padding: 10px 16px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  border-bottom: 2px solid transparent;
+  color: var(--text-dim);
+  user-select: none;
+}
+.tab.active {
+  color: var(--text);
+  border-bottom-color: var(--blue);
+  background: var(--panel-2);
+}
+.tab-content { display: none; padding: 16px 20px; }
+.tab-content.active { display: block; }
+button {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  padding: 6px 12px;
+  cursor: pointer;
+  border-radius: 4px;
+  font-size: 12px;
+}
+button:hover:not(:disabled) { border-color: var(--blue); }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+.timestamp { color: var(--text-dim); font-size: 11px; margin-left: 12px; }
+.bar-container {
+  display: inline-block;
+  width: 200px;
+  height: 14px;
+  background: var(--panel-2);
+  border-radius: 3px;
+  overflow: hidden;
+  vertical-align: middle;
+  border: 1px solid var(--border);
+}
+.bar-fill {
+  height: 100%;
+  background: var(--green);
+  transition: width 0.3s;
+}
+.bar-fill.partial { background: linear-gradient(90deg, var(--green), var(--yellow)); }
+table { border-collapse: collapse; width: 100%; margin-top: 8px; font-size: 12px; }
+th, td {
+  padding: 6px 10px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+th {
+  background: var(--panel-2);
+  color: var(--text-dim);
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.5px;
+}
+tr:hover td { background: var(--panel-2); }
+.cell {
+  display: inline-block;
+  min-width: 40px;
+  text-align: right;
+}
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+.badge.running { background: rgba(63, 185, 80, 0.2); color: var(--green); }
+.badge.pending { background: rgba(210, 153, 34, 0.2); color: var(--yellow); }
+.badge.failed { background: rgba(248, 81, 73, 0.2); color: var(--red); }
+.badge.complete { background: rgba(88, 166, 255, 0.2); color: var(--blue); }
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.stat-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  padding: 12px;
+  border-radius: 6px;
+}
+.stat-label { color: var(--text-dim); font-size: 11px; text-transform: uppercase; }
+.stat-value { font-size: 22px; font-weight: 600; margin-top: 4px; }
+.stat-sub { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
+.region-pill {
+  display: inline-block;
+  padding: 2px 8px;
+  margin: 2px 2px 2px 0;
+  border-radius: 10px;
+  font-size: 11px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+}
+.region-pill.us-central1 { border-color: var(--blue); }
+.region-pill.us-east5 { border-color: var(--purple); }
+.region-pill.us-east1 { border-color: var(--green); }
+.region-pill.us-central2 { border-color: var(--yellow); }
+.region-pill.europe-west4 { border-color: var(--red); }
+.section-title {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 18px 0 8px;
+  color: var(--text);
+}
+.spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--text-dim);
+  border-top-color: var(--blue);
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.code { font-family: "SFMono-Regular", Consolas, Menlo, monospace; font-size: 11px; color: var(--text-dim); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>WARC-Scaling Sweep Dashboard</h1>
+  <div style="font-size:11px; color: var(--text-dim);">
+    expWARC_natural · 4 methods × 4 N values
+  </div>
+</header>
+
+<div class="tabs">
+  <div class="tab active" data-tab="progress">Progress</div>
+  <div class="tab" data-tab="deep">Deep Scan</div>
+  <div class="tab" data-tab="jobs">Jobs</div>
+  <div class="tab" data-tab="compute">Compute</div>
+  <div class="tab" data-tab="plots">Plots</div>
+</div>
+
+<!-- Progress -->
+<div class="tab-content active" id="tab-progress">
+  <div>
+    <button id="btn-progress-refresh" onclick="refreshProgress()">Refresh Progress</button>
+    <span class="timestamp" id="ts-progress">never refreshed</span>
+  </div>
+  <div id="progress-body"></div>
+</div>
+
+<!-- Deep scan -->
+<div class="tab-content" id="tab-deep">
+  <div>
+    <button id="btn-deep-refresh" onclick="refreshDeep()">Deep Scan (~30s)</button>
+    <span class="timestamp" id="ts-deep">never refreshed</span>
+    <span style="margin-left:12px; color: var(--text-dim); font-size: 11px;">
+      Walks <span class="code">checkpoints/isoflop-curation/*</span> across 5 regions; reads max step-N + DONE marker per run.
+    </span>
+  </div>
+  <div style="margin-top:8px;">
+    <input type="text" id="deep-filter" placeholder="filter by run_name / method / region..." style="width: 320px; padding: 6px; background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 4px;" oninput="renderDeepFiltered()">
+    <label style="margin-left:12px; color:var(--text-dim);">
+      <input type="checkbox" id="deep-hide-done" onchange="renderDeepFiltered()"> hide DONE
+    </label>
+    <label style="margin-left:8px; color:var(--text-dim);">
+      <input type="checkbox" id="deep-hide-zero" onchange="renderDeepFiltered()"> hide 0-step
+    </label>
+    <label style="margin-left:8px; color:var(--text-dim);">
+      <input type="checkbox" id="deep-hide-untouched" onchange="renderDeepFiltered()"> hide untouched
+    </label>
+  </div>
+  <div id="deep-body"></div>
+</div>
+
+<!-- Jobs -->
+<div class="tab-content" id="tab-jobs">
+  <div>
+    <button id="btn-jobs-refresh" onclick="refreshJobs()">Refresh Jobs</button>
+    <span class="timestamp" id="ts-jobs">never refreshed</span>
+  </div>
+  <div id="jobs-body"></div>
+</div>
+
+<!-- Compute -->
+<div class="tab-content" id="tab-compute">
+  <div>
+    <button id="btn-cluster-refresh" onclick="refreshCluster()">Refresh Compute</button>
+    <span class="timestamp" id="ts-cluster">never refreshed</span>
+    <span style="margin-left:12px; color:var(--text-dim); font-size: 11px;">
+      Iris autoscaler snapshot — which (region × TPU) groups have idle/ready capacity to target with the next launch.
+    </span>
+  </div>
+  <div id="cluster-body"></div>
+</div>
+
+<!-- Plots -->
+<div class="tab-content" id="tab-plots">
+  <div>
+    <button id="btn-plots-refresh" onclick="refreshPlots()">Refresh Plots (~30s)</button>
+    <span class="timestamp" id="ts-plots">never refreshed</span>
+    <span style="margin-left:12px; color:var(--text-dim); font-size: 11px;">
+      Pulls latest summaries (warc + fixed_model + LIMA sidecar) and regenerates all plots.
+    </span>
+  </div>
+  <div id="plots-body"></div>
+</div>
+
+<script>
+const METHODS = ["dclm", "nemotron_full", "llm_curated", "resiliparse"];
+const N_VALUES = [100, 500, 1000, 2000];
+const REGIONS = ["us-central1", "us-central2", "us-east1", "us-east5", "europe-west4"];
+
+// ---- Tab switching ----
+document.querySelectorAll('.tab').forEach(el => {
+  el.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+    el.classList.add('active');
+    document.getElementById('tab-' + el.dataset.tab).classList.add('active');
+  });
+});
+
+// ---- Helpers ----
+const _timestamps = {};
+function setTimestamp(id, ts) {
+  _timestamps[id] = ts;
+  _updateTimestamp(id);
+}
+function _updateTimestamp(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const ts = _timestamps[id];
+  if (!ts) { el.textContent = 'never refreshed'; return; }
+  const ageSec = (Date.now() / 1000) - ts;
+  const stale = ageSec > 300;
+  const color = stale ? 'var(--yellow)' : 'var(--text-dim)';
+  el.innerHTML = `Last refreshed <span style="color:${color}">${timeAgo(ts)}</span>`;
+}
+function timeAgo(ts) {
+  const sec = Math.floor((Date.now() / 1000) - ts);
+  if (sec < 60) return `${sec}s ago`;
+  if (sec < 3600) return `${Math.floor(sec / 60)}m ago`;
+  if (sec < 86400) return `${(sec / 3600).toFixed(1)}h ago`;
+  return `${Math.floor(sec / 86400)}d ago`;
+}
+setInterval(() => Object.keys(_timestamps).forEach(_updateTimestamp), 10000);
+
+function setLoading(btnId, loading) {
+  const btn = document.getElementById(btnId);
+  if (loading) { btn.disabled = true; btn.dataset.label = btn.textContent; btn.innerHTML = '<span class="spinner"></span>Refreshing...'; }
+  else { btn.disabled = false; btn.textContent = btn.dataset.label || btn.textContent; }
+}
+
+function bar(done, total) {
+  const pct = total > 0 ? Math.round(100 * done / total) : 0;
+  const cls = done === total && total > 0 ? '' : 'partial';
+  return `<div class="bar-container"><div class="bar-fill ${cls}" style="width:${pct}%"></div></div> <span class="cell">${done}/${total}</span>`;
+}
+
+function regionPill(name, count) {
+  return `<span class="region-pill ${name}">${name}: ${count}</span>`;
+}
+
+// ---- Progress rendering ----
+function renderProgress(data, updatedAt) {
+  setTimestamp('ts-progress', updatedAt);
+  const body = document.getElementById('progress-body');
+  if (!data) { body.innerHTML = '<p style="color:var(--text-dim)">No data yet — click Refresh.</p>'; return; }
+
+  const totalDone = data.total_completed || 0;
+  const totalPlan = data.total_planned || 1;
+  const pctDone = (100 * totalDone / totalPlan).toFixed(1);
+
+  // Stats row
+  let html = `
+    <div class="stats-grid">
+      <div class="stat-card">
+        <div class="stat-label">Total Completed</div>
+        <div class="stat-value">${totalDone}</div>
+        <div class="stat-sub">of ${totalPlan} planned (${pctDone}%)</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Region locks (lifetime)</div>
+        <div class="stat-value">${Object.values(data.region_locks || {}).reduce((a, b) => a + b, 0)}</div>
+        <div class="stat-sub">${REGIONS.map(r => regionPill(r, data.region_locks[r] || 0)).join('')}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">24h activity</div>
+        <div class="stat-value">${Object.values(data.completion_history_24h || {}).reduce((a, b) => a + b, 0)}</div>
+        <div class="stat-sub">runs landed in the last 24h</div>
+      </div>
+    </div>
+  `;
+
+  // Per (method, N) progress grid
+  html += '<div class="section-title">Coverage per (method, N)</div>';
+  html += '<table><thead><tr><th>method</th>';
+  for (const n of N_VALUES) html += `<th>N=${n}</th>`;
+  html += '<th>row total</th></tr></thead><tbody>';
+  for (const m of METHODS) {
+    let rowDone = 0, rowPlan = 0;
+    let cells = '';
+    for (const n of N_VALUES) {
+      const key = `${m}|${n}`;
+      const done = data.completed[key] || 0;
+      const plan = data.plan[key] || 0;
+      rowDone += done; rowPlan += plan;
+      cells += `<td>${bar(done, plan)}</td>`;
+    }
+    html += `<tr><td><b>${m}</b></td>${cells}<td>${bar(rowDone, rowPlan)}</td></tr>`;
+  }
+  // Column totals
+  let colHtml = '<tr><td><b>col total</b></td>';
+  let grand_done = 0, grand_plan = 0;
+  for (const n of N_VALUES) {
+    let cd = 0, cp = 0;
+    for (const m of METHODS) {
+      cd += data.completed[`${m}|${n}`] || 0;
+      cp += data.plan[`${m}|${n}`] || 0;
+    }
+    grand_done += cd; grand_plan += cp;
+    colHtml += `<td>${bar(cd, cp)}</td>`;
+  }
+  colHtml += `<td>${bar(grand_done, grand_plan)}</td></tr>`;
+  html += colHtml + '</tbody></table>';
+
+  // Recent completions
+  html += '<div class="section-title">Recent completions (last 20)</div>';
+  if ((data.recent || []).length === 0) {
+    html += '<p style="color:var(--text-dim)">No recent completions detected.</p>';
+  } else {
+    html += '<table><thead><tr><th>completed_at</th><th>method</th><th>N</th><th>hidden</th><th>budget</th><th>region</th><th>macro_bpb</th><th>run_name</th></tr></thead><tbody>';
+    for (const r of data.recent) {
+      html += `<tr>
+        <td>${(r.completed_at || '').replace('T', ' ').split('.')[0]}</td>
+        <td>${r.method}</td>
+        <td>${r.n_warcs}</td>
+        <td>${r.hidden_dim || '-'}</td>
+        <td>${r.budget ? r.budget.toExponential(0) : '-'}</td>
+        <td><span class="region-pill ${r.region}">${r.region}</span></td>
+        <td>${r.macro_bpb ? r.macro_bpb.toFixed(4) : '-'}</td>
+        <td class="code">${r.run_name}</td>
+      </tr>`;
+    }
+    html += '</tbody></table>';
+  }
+
+  body.innerHTML = html;
+}
+
+// ---- Deep scan rendering ----
+let _deepData = null;
+function renderDeepFiltered() {
+  if (!_deepData) return;
+  renderDeep(_deepData, _timestamps['ts-deep']);
+}
+function renderDeep(data, updatedAt) {
+  _deepData = data;
+  setTimestamp('ts-deep', updatedAt);
+  const body = document.getElementById('deep-body');
+  if (!data) { body.innerHTML = '<p style="color:var(--text-dim)">No deep-scan data yet — click the button.</p>'; return; }
+
+  const filter = (document.getElementById('deep-filter').value || '').toLowerCase();
+  const hideDone = document.getElementById('deep-hide-done').checked;
+  const hideZero = document.getElementById('deep-hide-zero').checked;
+  const hideUntouched = document.getElementById('deep-hide-untouched').checked;
+
+  let runs = (data.runs || []).filter(r => {
+    if (hideDone && r.has_done) return false;
+    if (hideUntouched && !r.started && !r.has_done) return false;
+    if (hideZero && r.current_step === 0 && r.started) return false;
+    if (!filter) return true;
+    return (r.run_name + ' ' + r.method + ' ' + r.region).toLowerCase().includes(filter);
+  });
+
+  // ETA reliability: how much of the in-progress queue is actively writing?
+  const inprog = data.in_progress || 0;
+  const active = data.active || 0;
+  const etaCount = data.eta_runs_count || 0;
+  const longestEta = data.longest_eta_hours;
+  const reliable = inprog > 0 && active >= 0.5 * inprog;
+  const reliabilityNote = inprog === 0
+    ? 'no in-progress runs to ETA'
+    : `${active}/${inprog} active (wrote in last 30m)${reliable ? ' — reliable' : ' — partial / stale'}`;
+
+  let html = `
+    <div class="stats-grid">
+      <div class="stat-card">
+        <div class="stat-label">In progress</div>
+        <div class="stat-value" style="color:var(--green)">${inprog}</div>
+        <div class="stat-sub">${active} active in last 30m</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">DONE</div>
+        <div class="stat-value" style="color:var(--blue)">${data.done || 0}</div>
+        <div class="stat-sub">summary written</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Untouched</div>
+        <div class="stat-value" style="color:var(--text-dim)">${data.untouched || 0}</div>
+        <div class="stat-sub">planned, never picked up</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Longest ETA</div>
+        <div class="stat-value" style="color:${reliable ? 'var(--yellow)' : 'var(--red)'}">${longestEta != null ? longestEta.toFixed(1) + 'h' : '—'}</div>
+        <div class="stat-sub">${reliabilityNote} (${etaCount} runs w/ rate)</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Showing</div>
+        <div class="stat-value">${runs.length}</div>
+        <div class="stat-sub">after filters</div>
+      </div>
+    </div>
+  `;
+  html += '<table><thead><tr><th>method</th><th>N</th><th>budget</th><th>d</th><th>region</th><th>step / total</th><th>%</th><th>rate (steps/h)</th><th>ETA</th><th>last update</th><th>state</th><th>wandb</th></tr></thead><tbody>';
+  for (const r of runs) {
+    const ageSec = data.now - r.last_update;
+    const ageStr = r.last_update > 0 ? timeAgo(r.last_update) : '-';
+    const ageColor = ageSec < 600 ? 'var(--green)' : ageSec < 3600 ? 'var(--yellow)' : 'var(--red)';
+    const started = r.started !== undefined ? r.started : r.current_step > 0;
+    let stateBadge;
+    if (r.has_done) stateBadge = '<span class="badge complete">done</span>';
+    else if (!started) stateBadge = '<span class="badge pending" style="background:rgba(139,148,158,0.15);color:var(--text-dim)">untouched</span>';
+    else if (r.current_step === 0) stateBadge = '<span class="badge pending">no-progress</span>';
+    else stateBadge = '<span class="badge running">in-progress</span>';
+    const rateStr = r.steps_per_hour != null ? Math.round(r.steps_per_hour).toLocaleString() : '-';
+    const etaStr = r.eta_hours != null
+      ? (r.eta_hours < 1 ? (r.eta_hours * 60).toFixed(0) + 'm' : r.eta_hours.toFixed(1) + 'h')
+      : '-';
+    const etaColor = r.eta_hours != null && r.eta_hours > 24 ? 'var(--red)' : r.eta_hours != null && r.eta_hours > 4 ? 'var(--yellow)' : 'var(--text)';
+    html += `<tr>
+      <td><b>${r.method}</b></td>
+      <td>${r.n_warcs}</td>
+      <td>${r.budget ? r.budget.toExponential(0) : '-'}</td>
+      <td>${r.hidden_dim}</td>
+      <td><span class="region-pill ${r.region}">${r.region}</span></td>
+      <td>${bar(r.current_step, r.total_steps)}</td>
+      <td>${r.pct_complete.toFixed(1)}%</td>
+      <td>${rateStr}</td>
+      <td style="color:${etaColor}">${etaStr}</td>
+      <td><span style="color:${ageColor}">${ageStr}</span></td>
+      <td>${stateBadge}</td>
+      <td><a href="${r.wandb_url}" target="_blank" style="color:var(--blue);">wandb &rarr;</a></td>
+    </tr>`;
+  }
+  html += '</tbody></table>';
+  body.innerHTML = html;
+}
+
+async function refreshDeep() {
+  setLoading('btn-deep-refresh', true);
+  try {
+    const resp = await fetch('/api/deep/refresh', { method: 'POST' });
+    const j = await resp.json();
+    if (j.error) throw new Error(j.error);
+    renderDeep(j.data, j.updated_at);
+  } catch (e) {
+    document.getElementById('deep-body').innerHTML = `<p style="color:var(--red)">Error: ${e.message}</p>`;
+  } finally {
+    setLoading('btn-deep-refresh', false);
+  }
+}
+
+// ---- Jobs rendering ----
+function renderJobs(data, updatedAt) {
+  setTimestamp('ts-jobs', updatedAt);
+  const body = document.getElementById('jobs-body');
+  if (!data) { body.innerHTML = '<p style="color:var(--text-dim)">No data yet — click Refresh.</p>'; return; }
+
+  const totals = data.totals || {};
+  let html = `
+    <div class="stats-grid">
+      <div class="stat-card">
+        <div class="stat-label">Running</div>
+        <div class="stat-value" style="color:var(--green)">${totals.running || 0}</div>
+        <div class="stat-sub">children currently training</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Pending</div>
+        <div class="stat-value" style="color:var(--yellow)">${totals.pending || 0}</div>
+        <div class="stat-sub">queued, waiting for capacity</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Failed</div>
+        <div class="stat-value" style="color:var(--red)">${totals.failed || 0}</div>
+        <div class="stat-sub">need triage</div>
+      </div>
+    </div>
+  `;
+
+  // Per-coord table
+  html += '<div class="section-title">Coordinators</div>';
+  html += '<table><thead><tr><th>coord</th><th>state</th><th>running</th><th>pending</th><th>failed</th></tr></thead><tbody>';
+  for (const c of (data.by_coord || [])) {
+    html += `<tr>
+      <td class="code">${c.path}</td>
+      <td><span class="badge ${c.state}">${c.state}</span></td>
+      <td><b style="color:var(--green)">${c.running}</b></td>
+      <td><span style="color:var(--yellow)">${c.pending}</span></td>
+      <td><span style="color:var(--red)">${c.failed}</span></td>
+    </tr>`;
+  }
+  html += '</tbody></table>';
+
+  // In-flight by (method, N)
+  html += '<div class="section-title">In-flight by (method, N)</div>';
+  html += '<table><thead><tr><th>method</th>';
+  for (const n of N_VALUES) html += `<th>N=${n}</th>`;
+  html += '</tr></thead><tbody>';
+  for (const m of METHODS) {
+    html += `<tr><td><b>${m}</b></td>`;
+    for (const n of N_VALUES) {
+      const key = `${m}|${n}`;
+      const r = data.running_by_cell[key] || 0;
+      const p = data.pending_by_cell[key] || 0;
+      const f = data.failed_by_cell[key] || 0;
+      html += `<td>
+        <span style="color:var(--green)">${r}</span> /
+        <span style="color:var(--yellow)">${p}</span> /
+        <span style="color:var(--red)">${f}</span>
+      </td>`;
+    }
+    html += '</tr>';
+  }
+  html += '</tbody></table>';
+  html += '<div style="font-size:11px;color:var(--text-dim);margin-top:4px;">Format: running / pending / failed (current snapshot)</div>';
+
+  body.innerHTML = html;
+}
+
+// ---- Cluster (Compute tab) rendering ----
+function renderCluster(data, updatedAt) {
+  setTimestamp('ts-cluster', updatedAt);
+  const body = document.getElementById('cluster-body');
+  if (!data) { body.innerHTML = '<p style="color:var(--text-dim)">No data yet — click Refresh.</p>'; return; }
+  const totals = data.totals || {};
+
+  // Stats row
+  let html = `
+    <div class="stats-grid">
+      <div class="stat-card">
+        <div class="stat-label">Ready (cluster-wide)</div>
+        <div class="stat-value" style="color:var(--green)">${totals.ready || 0}</div>
+        <div class="stat-sub">slices online & ready</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Idle</div>
+        <div class="stat-value" style="color:var(--blue)">${totals.idle || 0}</div>
+        <div class="stat-sub">ready but unused — target these</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Demand</div>
+        <div class="stat-value" style="color:var(--yellow)">${totals.demand || 0}</div>
+        <div class="stat-sub">scheduled but not yet booted</div>
+      </div>
+    </div>
+  `;
+
+  // Per-TPU rollup
+  html += '<div class="section-title">By TPU type (across regions)</div>';
+  html += '<table><thead><tr><th>TPU</th><th>ready</th><th>booting</th><th>idle</th><th>demand</th><th>my running</th><th>regions</th></tr></thead><tbody>';
+  const byTpu = data.by_tpu || {};
+  const myUsage = data.my_usage || {};
+  for (const tpu of Object.keys(byTpu).sort()) {
+    const v = byTpu[tpu];
+    const mine = myUsage[tpu] || 0;
+    const idleColor = v.idle > 0 ? 'var(--green)' : 'var(--text-dim)';
+    html += `<tr>
+      <td><b>${tpu}</b></td>
+      <td>${v.ready}</td>
+      <td>${v.booting}</td>
+      <td style="color:${idleColor}"><b>${v.idle}</b></td>
+      <td style="color:var(--yellow)">${v.demand}</td>
+      <td>${mine}</td>
+      <td class="code">${[...new Set(v.regions)].join(', ')}</td>
+    </tr>`;
+  }
+  html += '</tbody></table>';
+
+  // Per-(region × TPU) detail
+  html += '<div class="section-title">Scale groups (region × TPU detail)</div>';
+  html += '<table><thead><tr><th>region</th><th>TPU</th><th>ready</th><th>booting</th><th>init</th><th>failed</th><th>demand</th><th>idle</th></tr></thead><tbody>';
+  const groups = (data.groups || []).slice().sort((a, b) => {
+    if (a.region !== b.region) return a.region.localeCompare(b.region);
+    return a.tpu_type.localeCompare(b.tpu_type);
+  });
+  for (const g of groups) {
+    const idleColor = g.idle > 0 ? 'var(--green)' : 'var(--text-dim)';
+    html += `<tr>
+      <td><span class="region-pill ${g.region.split('-').slice(0,2).join('-')}">${g.region}</span></td>
+      <td>${g.tpu_type || '<span class="code">'+g.name+'</span>'}</td>
+      <td>${g.ready}</td>
+      <td>${g.booting}</td>
+      <td>${g.initializing}</td>
+      <td style="color:${g.failed>0?'var(--red)':'var(--text-dim)'}">${g.failed}</td>
+      <td style="color:var(--yellow)">${g.demand}</td>
+      <td style="color:${idleColor}"><b>${g.idle}</b></td>
+    </tr>`;
+  }
+  html += '</tbody></table>';
+  body.innerHTML = html;
+}
+
+async function refreshCluster() {
+  setLoading('btn-cluster-refresh', true);
+  try {
+    const resp = await fetch('/api/cluster/refresh', { method: 'POST' });
+    const j = await resp.json();
+    if (j.error) throw new Error(j.error);
+    renderCluster(j.data, j.updated_at);
+  } catch (e) {
+    document.getElementById('cluster-body').innerHTML = `<p style="color:var(--red)">Error: ${e.message}</p>`;
+  } finally {
+    setLoading('btn-cluster-refresh', false);
+  }
+}
+
+// ---- Plots rendering ----
+function renderPlots(data, updatedAt) {
+  setTimestamp('ts-plots', updatedAt);
+  const body = document.getElementById('plots-body');
+  if (!data) { body.innerHTML = '<p style="color:var(--text-dim)">No plots generated yet — click Refresh.</p>'; return; }
+  const plots = data.plots || {};
+  let html = `<div style="color:var(--text-dim);font-size:11px;margin-bottom:8px;">${data.summary_count || 0} summaries used. Click any link to open the plot in a new tab.</div>`;
+  for (const metric of Object.keys(plots).sort()) {
+    const entry = plots[metric];
+    html += `<div class="section-title">${metric}</div>`;
+    if ((entry.grids || []).length > 0) {
+      html += '<div style="margin: 4px 0 8px;">';
+      for (const f of entry.grids) {
+        html += `<a href="/plots/${metric}/${f.path.split('/').slice(1).join('/')}" target="_blank" style="display:inline-block; margin: 4px 6px 4px 0; padding: 6px 10px; border: 1px solid var(--border); background: var(--panel-2); color: var(--blue); text-decoration: none; border-radius: 4px; font-size: 12px;">${f.label} &rarr;</a>`;
+      }
+      html += '</div>';
+    }
+    if (entry.per_n && Object.keys(entry.per_n).length > 0) {
+      html += '<table style="margin-top:6px;"><thead><tr><th>N</th><th>plots</th></tr></thead><tbody>';
+      for (const n of Object.keys(entry.per_n).sort()) {
+        const files = entry.per_n[n];
+        let row = `<tr><td><b>${n}</b></td><td>`;
+        for (const f of files) {
+          row += `<a href="/plots/${metric}/${n}/${f.label}.html" target="_blank" style="margin-right: 8px; color: var(--blue);">${f.label}</a>`;
+        }
+        row += '</td></tr>';
+        html += row;
+      }
+      html += '</tbody></table>';
+    }
+  }
+  body.innerHTML = html;
+}
+
+async function refreshPlots() {
+  setLoading('btn-plots-refresh', true);
+  document.getElementById('plots-body').innerHTML = '<p style="color:var(--text-dim)"><span class="spinner"></span>Pulling summaries and regenerating plots…</p>';
+  try {
+    const resp = await fetch('/api/plots/refresh', { method: 'POST' });
+    const j = await resp.json();
+    if (j.error) throw new Error(j.error);
+    renderPlots(j.data, j.updated_at);
+  } catch (e) {
+    document.getElementById('plots-body').innerHTML = `<p style="color:var(--red)">Error: ${e.message}</p>`;
+  } finally {
+    setLoading('btn-plots-refresh', false);
+  }
+}
+
+// ---- Refresh actions ----
+async function refreshProgress() {
+  setLoading('btn-progress-refresh', true);
+  try {
+    const resp = await fetch('/api/progress/refresh', { method: 'POST' });
+    const j = await resp.json();
+    if (j.error) throw new Error(j.error);
+    renderProgress(j.data, j.updated_at);
+  } catch (e) {
+    document.getElementById('progress-body').innerHTML = `<p style="color:var(--red)">Error: ${e.message}</p>`;
+  } finally {
+    setLoading('btn-progress-refresh', false);
+  }
+}
+
+async function refreshJobs() {
+  setLoading('btn-jobs-refresh', true);
+  try {
+    const resp = await fetch('/api/jobs/refresh', { method: 'POST' });
+    const j = await resp.json();
+    if (j.error) throw new Error(j.error);
+    renderJobs(j.data, j.updated_at);
+  } catch (e) {
+    document.getElementById('jobs-body').innerHTML = `<p style="color:var(--red)">Error: ${e.message}</p>`;
+  } finally {
+    setLoading('btn-jobs-refresh', false);
+  }
+}
+
+// ---- Initial load: pull cached data INDEPENDENTLY ----
+// Each tab fetches separately so a slow/broken endpoint doesn't block others.
+async function _loadOne(url, render) {
+  try {
+    const resp = await fetch(url, { cache: 'no-store' });
+    if (!resp.ok) return;
+    const j = await resp.json();
+    if (j && j.data) render(j.data, j.updated_at);
+  } catch (e) {
+    console.warn('cached load failed for', url, e);
+  }
+}
+_loadOne('/api/progress', renderProgress);
+_loadOne('/api/jobs', renderJobs);
+_loadOne('/api/deep', renderDeep);
+_loadOne('/api/cluster', renderCluster);
+_loadOne('/api/plots', renderPlots);
+</script>
+</body>
+</html>

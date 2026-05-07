@@ -312,3 +312,174 @@ def test_load_d_obs_from_stats(tmp_path, monkeypatch):
     assert load_d_obs_from_stats(str(tmp_path)) == 1234567890
     # Trailing slash is tolerated
     assert load_d_obs_from_stats(f"{tmp_path}/") == 1234567890
+
+
+# =============================================================================
+# ExpC regime-aware ceiling: data-rich vs sliced
+# =============================================================================
+
+
+def test_t_exp_ceiling_default_preserves_expb_behavior(dclm, resiliparse):
+    """allow_data_rich=False (default) MUST return T_target/s for all methods.
+
+    This is what ExpB depends on. Changing this would silently move ExpB's
+    ceiling for LC/Res-like methods, which we explicitly do NOT want.
+    """
+    for m in (dclm, resiliparse):
+        assert t_exp_ceiling(m, t_target=20e12) == pytest.approx(20e12 / m.s)
+        assert t_exp_ceiling(m, t_target=20e12, allow_data_rich=False) == pytest.approx(20e12 / m.s)
+
+
+def test_t_exp_ceiling_data_rich_returns_d_obs_when_target_epochs_below_one(resiliparse):
+    """When target_epochs = T_target/D_proj < 1, the data-rich branch returns D_obs.
+
+    Resiliparse: D_proj ≈ 377T; at T=33T, target_epochs ≈ 0.088 < 1.
+    Ceiling should be D_obs (142.6B), NOT T_target/s (~12.5B).
+    """
+    target_epochs = 33e12 / resiliparse.d_proj
+    assert target_epochs < 1.0  # guard the regime
+    ceiling = t_exp_ceiling(resiliparse, t_target=33e12, allow_data_rich=True)
+    assert ceiling == pytest.approx(float(RESILIPARSE_D_OBS))
+    # And it's strictly bigger than the slicing-regime answer:
+    assert ceiling > 33e12 / resiliparse.s
+
+
+def test_t_exp_ceiling_data_rich_returns_slicing_value_when_target_epochs_at_least_one(dclm):
+    """When target_epochs >= 1, the data-rich branch falls through to T_target/s.
+
+    DCLM: D_proj ≈ 7.0T; at T=33T, target_epochs ≈ 4.71 > 1. So even with
+    allow_data_rich=True, the ceiling is the slicing-regime T_target/s (~12.5B
+    at 3k or ~43.1B at 10k), NOT D_obs.
+    """
+    target_epochs = 33e12 / dclm.d_proj
+    assert target_epochs >= 1.0  # guard the regime
+    ceiling = t_exp_ceiling(dclm, t_target=33e12, allow_data_rich=True)
+    assert ceiling == pytest.approx(33e12 / dclm.s)
+
+
+def test_t_exp_ceiling_regime_boundary_at_exactly_one_epoch():
+    """At target_epochs == 1 exactly, the data-rich branch should NOT trigger
+    (it requires target_epochs strictly < 1). Returns T_target/s in both modes."""
+    # Construct a method where T_target == D_proj exactly.
+    m = CurationMethod(
+        name="boundary",
+        tokenized_rel_path="tokenized/test/",
+        d_obs_tokens=1_000_000_000,
+        sampled_warcs=3_000,
+    )
+    t_target = m.d_proj
+    assert t_exp_ceiling(m, t_target=t_target, allow_data_rich=True) == pytest.approx(t_target / m.s)
+    assert t_exp_ceiling(m, t_target=t_target, allow_data_rich=False) == pytest.approx(t_target / m.s)
+
+
+def test_t_exp_ceiling_data_rich_invariant_to_sampled_warcs(resiliparse):
+    """In the data-rich regime, the ceiling = D_obs is INVARIANT to sampled_warcs.
+
+    Whereas the slicing-regime ceiling (T/s) scales linearly with sampled_warcs.
+    This is the central insight of ExpC's free ride for high-yield methods.
+    """
+    m_3k = CurationMethod(
+        name="r",
+        tokenized_rel_path="tokenized/test/",
+        d_obs_tokens=RESILIPARSE_D_OBS,
+        sampled_warcs=3_000,
+    )
+    m_10k = CurationMethod(
+        name="r",
+        tokenized_rel_path="tokenized/test/",
+        d_obs_tokens=RESILIPARSE_D_OBS,
+        sampled_warcs=10_364,
+    )
+    c_3k = t_exp_ceiling(m_3k, t_target=33e12, allow_data_rich=True)
+    c_10k = t_exp_ceiling(m_10k, t_target=33e12, allow_data_rich=True)
+    # Same D_obs → same ceiling in data-rich mode, regardless of sampled_warcs.
+    assert c_3k == pytest.approx(c_10k)
+    # But sliced ceilings DO move with sampled_warcs:
+    assert t_exp_ceiling(m_10k, 33e12) > t_exp_ceiling(m_3k, 33e12)
+
+
+# =============================================================================
+# Slicing math correctness in both regimes
+# =============================================================================
+
+
+def test_slice_below_d_obs_when_t_exp_below_old_ceiling(dclm):
+    """Slicing math: for any T_exp <= T_target/s, the slice fits in D_obs."""
+    t_target = 20e12
+    ceiling = t_exp_ceiling(dclm, t_target)
+    for t_exp in (ceiling * 0.1, ceiling * 0.5, ceiling * 0.99):
+        slice_size = slice_tokens_for(dclm, t_exp, t_target)
+        assert slice_size <= dclm.d_obs_tokens
+
+
+def test_slice_equals_d_obs_at_old_ceiling(dclm):
+    """At T_exp = T_target/s exactly, slice == D_obs (the slicing constraint binds)."""
+    t_target = 20e12
+    ceiling = t_exp_ceiling(dclm, t_target)
+    slice_size = slice_tokens_for(dclm, ceiling, t_target)
+    assert slice_size == pytest.approx(float(dclm.d_obs_tokens), rel=1e-9)
+
+
+def test_slice_exceeds_d_obs_above_old_ceiling_for_data_constrained(dclm):
+    """For DCLM (data-constrained), pushing T_exp above T/s makes slice > D_obs.
+
+    This is the constraint that motivates the slicing-regime ceiling at T/s.
+    """
+    t_target = 20e12
+    ceiling = t_exp_ceiling(dclm, t_target)
+    for t_exp_over in (ceiling * 1.1, ceiling * 2.0):
+        slice_size = slice_tokens_for(dclm, t_exp_over, t_target)
+        assert slice_size > dclm.d_obs_tokens
+
+
+def test_t_exp_below_d_obs_at_uniform_cap_for_data_rich_method(resiliparse):
+    """The data-rich safety property: at the 43.1B uniform cap, T_exp < D_obs.
+
+    The runner does NOT apply slicing for resiliparse (target_epochs<1, so
+    the slicing branch is gated off). What matters is the *physical*
+    constraint: the model trains on T_exp tokens drawn natively from the
+    cache, so we need T_exp ≤ D_obs to avoid epoching. This holds at
+    T_exp = 43.14B for both LC (D_obs=56B) and Res (D_obs=143B).
+
+    Note: the SLICING formula `slice = T_exp × D_proj / T_target` would
+    produce a value LARGER than D_obs at this T_exp (492B for resiliparse) —
+    that's by design, the regime is data-rich so the slicing formula's
+    output isn't meaningful. The data-rich runner skips slicing entirely.
+    """
+    t_target = 33e12
+    uniform_cap = 33e12 * 10_364 / TOTAL_WARCS_CC  # = 43.14B
+    # Confirm the regime guard:
+    target_epochs = t_target / resiliparse.d_proj
+    assert target_epochs < 1.0, "test setup invalid: resiliparse should be in data-rich regime"
+    # The actual safety property (no over-epoching when training natively on cache):
+    assert uniform_cap < resiliparse.d_obs_tokens
+    # And demonstrate that the slicing FORMULA breaks down here — slice > D_obs.
+    # This is the failure mode that motivates the data-rich branch in the first
+    # place: we MUST NOT apply slicing for these methods, or we'd attempt to
+    # slice more tokens than the cache holds.
+    slice_size = slice_tokens_for(resiliparse, uniform_cap, t_target)
+    assert slice_size > resiliparse.d_obs_tokens  # slicing formula NOT usable here
+
+
+# =============================================================================
+# Pin region field
+# =============================================================================
+
+
+def test_curation_method_pin_region_default_none():
+    m = CurationMethod(
+        name="x",
+        tokenized_rel_path="tokenized/test/",
+        d_obs_tokens=1_000_000_000,
+    )
+    assert m.pin_region is None
+
+
+def test_curation_method_pin_region_set():
+    m = CurationMethod(
+        name="x",
+        tokenized_rel_path="tokenized/test/",
+        d_obs_tokens=1_000_000_000,
+        pin_region="us-central1",
+    )
+    assert m.pin_region == "us-central1"
