@@ -9,15 +9,12 @@ import traceback
 from collections.abc import Iterator
 from contextlib import contextmanager
 
-from fray.v1.cluster import ResourceConfig
-from fray.v1.cluster.ray.deps import build_runtime_env_for_packages
-
 from rigging.filesystem import open_url, url_to_fs
 
 from marin.evaluation.evaluation_config import EvalTaskConfig
-from marin.evaluation.evaluators.evaluator import Evaluator, ModelConfig, launch_evaluate_with_ray
+from marin.evaluation.evaluators.evaluator import Evaluator, ModelConfig
 from marin.evaluation.utils import is_remote_path, upload_to_gcs
-from marin.inference.vllm_server import VLLM_NATIVE_PIP_PACKAGES, VllmEnvironment, resolve_vllm_mode
+from marin.inference.vllm_server import VllmEnvironment
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +41,6 @@ class LMEvaluationHarnessEvaluator(Evaluator):
     @classmethod
     @contextmanager
     def _stage_remote_tokenizer_dir(cls, remote_dir: str) -> Iterator[str | None]:
-        # context manager so this deletes even with ray's process pooling
         with tempfile.TemporaryDirectory(prefix="marin-tokenizer-") as local_dir:
             copied_any = False
             for filename in cls.TOKENIZER_FILENAMES:
@@ -64,52 +60,6 @@ class LMEvaluationHarnessEvaluator(Evaluator):
                 yield None
                 return
             yield local_dir
-
-    def get_runtime_env(self) -> dict:
-        """
-        Returns the runtime environment to run the evaluator on the Ray cluster.
-        """
-        return build_runtime_env_for_packages(
-            extra=["eval"],
-            env_vars={"HF_ALLOW_CODE_EVAL": "1"},
-            # Human eval tests code from the model which requires permission to run.
-        )
-
-    def launch_evaluate_with_ray(
-        self,
-        model: ModelConfig,
-        evals: list[EvalTaskConfig],
-        output_path: str,
-        resource_config: ResourceConfig,
-        max_eval_instances: int | None = None,
-        wandb_tags: list[str] | None = None,
-    ) -> None:
-        """Launch the evaluation run with Fray."""
-
-        mode_str = resolve_vllm_mode(None)
-        pip_packages = VLLM_NATIVE_PIP_PACKAGES if mode_str == "native" else ()
-        # Native mode needs the "vllm" extra so vllm-tpu is installed in the
-        # worker environment.  On Ray this was unnecessary because Docker mode
-        # ran vLLM in a sidecar container, but Iris workers don't have Docker.
-        extras: tuple[str, ...] = ("eval", "tpu", "vllm") if mode_str == "native" else ("eval", "tpu")
-        eval_env_vars: dict[str, str] = {"HF_ALLOW_CODE_EVAL": "1"}
-        # Forward MARIN_VLLM_MODE so the TPU worker uses the same vLLM backend
-        vllm_mode = os.environ.get("MARIN_VLLM_MODE")
-        if vllm_mode:
-            eval_env_vars["MARIN_VLLM_MODE"] = vllm_mode
-        launch_evaluate_with_ray(
-            evaluator=self,
-            job_name="lm-eval",
-            model=model,
-            evals=evals,
-            output_path=output_path,
-            resource_config=resource_config,
-            max_eval_instances=max_eval_instances,
-            wandb_tags=wandb_tags,
-            extras=extras,
-            pip_packages=pip_packages,
-            env_vars=eval_env_vars,
-        )
 
     def evaluate(
         self,
