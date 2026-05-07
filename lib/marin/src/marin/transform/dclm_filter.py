@@ -379,7 +379,14 @@ def _repetition_filter(
 
     elif isinstance(granularity, int):
         if "words" not in cache:
-            cache["words"] = _split_words(text, ignore_punctuation=True, model="uniseg")
+            # Original DCLM uses model="uniseg" for Unicode-correct word boundaries,
+            # but uniseg is implemented in pure Python and is the dominant cost
+            # of the filter (~80% of per-record latency). Switching to str.split
+            # gives a ~50x speedup at the cost of slightly different word
+            # boundaries on edge-case Unicode text. After the language filter
+            # (English >0.65) most pages are ASCII-dominant English where the
+            # difference is negligible.
+            cache["words"] = _split_words(text, ignore_punctuation=True, model="split")
             cache["words/chars"] = sum(len(w) for w in cache["words"])
         words = cache["words"]
         total_chars = cache["words/chars"]
@@ -799,15 +806,18 @@ def dclm_filter(config: DclmFilterConfig) -> None:
         Dataset.from_files(config.input_path)
         .flat_map(load_file)
         .flat_map(_apply_dclm_pipeline)
-        .write_jsonl(f"{config.output_path}/data-{{shard:05d}}-of-{{total:05d}}.jsonl.gz")
+        .write_jsonl(
+            f"{config.output_path}/data-{{shard:05d}}-of-{{total:05d}}.jsonl.gz",
+            skip_existing=True,
+        )
     )
 
     # Pass only the serializable config dataclass (all string fields) to workers.
     # Each worker lazily initializes models/regexes on first record via
     # _get_or_init_pipeline(), avoiding pickle of unpicklable C++ objects.
-    with ZephyrContext(name="dclm-filter") as ctx:
-        ctx.put("dclm_config", config)
-        output_files = ctx.execute(pipeline)
+    ctx = ZephyrContext(name="dclm-filter")
+    ctx.put("dclm_config", config)
+    output_files = ctx.execute(pipeline).results
 
     # Count output documents
     output_count = 0

@@ -50,8 +50,10 @@ from zephyr.plan import (
     Scatter,
     Shard,
     SourceItem,
+    StageContext,
     StageType,
     compute_plan,
+    run_stage,
 )
 from zephyr.writers import ensure_parent_dir
 
@@ -616,12 +618,6 @@ class ZephyrCoordinator:
             if self._fatal_error:
                 return None
 
-            # Dead workers (from report_error) should not receive new tasks.
-            # This prevents broken workers (e.g. TPU device busy) from repeatedly
-            # pulling and failing on shards.
-            if self._worker_states.get(worker_id) == WorkerState.DEAD:
-                return None
-
             self._worker_states[worker_id] = WorkerState.READY
 
             if not self._task_queue:
@@ -706,6 +702,7 @@ class ZephyrCoordinator:
             # so late heartbeats from this task are rejected.
             self._worker_counters[worker_id] = CounterSnapshot.empty(counter_snapshot.generation)
 
+    def report_error(self, worker_id: str, shard_idx: int, error_info: str) -> None:
         """Worker reports a task failure. Re-queues up to MAX_SHARD_FAILURES.
 
         Marks the worker READY on a non-fatal failure so it can pick up the
@@ -1045,6 +1042,16 @@ class ZephyrWorker:
         self._counter_generation: int = 0
         self._last_reported_counters: dict[str, int] = {}
         self._subprocess_counter_file: str | None = None
+        # In-process counter state. Upstream uses subprocess isolation and
+        # reads counters from the child's file; we run tasks in-process so
+        # we maintain the counters directly in the worker actor. Updated
+        # via the WorkerContext protocol (increment_counter) and reset at
+        # the start of each task in ``_execute_shard``.
+        self._counters: dict[str, int] = {}
+        # Shared data cache. Populated lazily via ``get_shared`` (called from
+        # user code via ``zephyr_worker_ctx().get_shared(name)``); cached
+        # across tasks on the same worker.
+        self._shared_data_cache: dict[str, Any] = {}
 
         # Capture shutdown_event from the actor context while the ContextVar
         # is still set (child threads in Python <3.12 don't inherit it).
@@ -1063,6 +1070,49 @@ class ZephyrWorker:
             name=f"zephyr-poll-{self._worker_id}",
         )
         self._polling_thread.start()
+
+    def _reset_counters(self) -> None:
+        """Clear the worker's in-process counters before starting a new task."""
+        self._counters = {}
+
+    def increment_counter(self, name: str, value: int = 1) -> None:
+        """WorkerContext protocol: increment an in-process user counter.
+
+        Called by user code via ``zephyr_worker_ctx().increment_counter(...)``
+        while a task is running in this worker. The value accumulates in
+        ``self._counters`` and is flushed to the coordinator at task end
+        via the tuple returned by ``_execute_shard``.
+        """
+        self._counters[name] = self._counters.get(name, 0) + value
+
+    def get_shared(self, name: str) -> Any:
+        """WorkerContext protocol: lazily load a shared data blob from GCS.
+
+        Shared data is loaded once per worker actor and cached across tasks,
+        so repeat access within the same worker is free. The data is written
+        by the caller via ``ZephyrContext`` before the pipeline starts.
+        """
+        if name not in self._shared_data_cache:
+            path = _shared_data_path(self._chunk_prefix, self._execution_id, name)
+            logger.info("[%s] Loading shared data '%s' from %s", self._worker_id, name, path)
+            t0 = time.monotonic()
+            with open_url(path, "rb") as f:
+                data = f.read()
+            elapsed = time.monotonic() - t0
+            self._shared_data_cache[name] = cloudpickle.loads(data)
+            logger.info(
+                "[%s] Loaded shared data '%s' in %.2fs (%d bytes)",
+                self._worker_id,
+                name,
+                elapsed,
+                len(data),
+            )
+        return self._shared_data_cache[name]
+
+    def get_counter_snapshot(self) -> CounterSnapshot:
+        """WorkerContext protocol: snapshot of in-process counters."""
+        self._counter_generation += 1
+        return CounterSnapshot(counters=dict(self._counters), generation=self._counter_generation)
 
     def _heartbeat_counter_snapshot(self) -> CounterSnapshot | None:
         """Read the live subprocess counter file and return a snapshot if changed.
@@ -1088,6 +1138,9 @@ class ZephyrWorker:
                 pass
             except Exception:
                 logger.warning("Failed to read counter file %s", counter_file, exc_info=True)
+        else:
+            # In-process mode: read directly from the worker's counters dict.
+            current = dict(self._counters)
 
         if current == self._last_reported_counters:
             return None

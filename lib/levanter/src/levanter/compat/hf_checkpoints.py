@@ -500,7 +500,23 @@ class HFCheckpointConverter(Generic[LevConfig]):
         """
         hf_config = self.hf_config_from_hf_checkpoint(ref)
         model_vocab_size = hf_config.vocab_size
-        tokenizer_vocab_size = len(self.tokenizer)
+
+        # Convert to HF tokenizer FIRST, then measure len. MarinTokenizer's
+        # __len__ is frozen at construction time and only counts tokenizer.json
+        # entries (e.g., 151665 for Qwen3-0.6B-Base). When we convert to an HF
+        # AutoTokenizer, it loads additional special tokens from the model's
+        # special_tokens_map (e.g., 4 extra pad/bos/eos slots not in vocab.json),
+        # so HF's len() reports 151669. If we measured len BEFORE the conversion
+        # we'd compute num_to_add against the wrong baseline (151665 instead of
+        # 151669) and overshoot by exactly that delta — producing a tokenizer
+        # of len 151940 instead of the desired 151936, which then mismatches
+        # the loaded HF model's embedding (also 151936) at the eqx.combine
+        # step in load_pretrained. Empirically observed 2026-05-04 with
+        # Qwen3-0.6B-Base.
+        tokenizer = self.tokenizer
+        if isinstance(tokenizer, MarinTokenizer):
+            tokenizer = tokenizer.as_hf_tokenizer()
+        tokenizer_vocab_size = len(tokenizer)
 
         if tokenizer_vocab_size >= model_vocab_size:
             logger.info(
@@ -515,12 +531,7 @@ class HFCheckpointConverter(Generic[LevConfig]):
             f"(adding {num_to_add} dummy tokens) to match model vocab size."
         )
 
-        # Add dummy tokens to the tokenizer. MarinTokenizer is read-only,
-        # so we convert to an HF tokenizer which supports add_tokens.
         dummy_tokens = [f"<|padding_{i}|>" for i in range(num_to_add)]
-        tokenizer = self.tokenizer
-        if isinstance(tokenizer, MarinTokenizer):
-            tokenizer = tokenizer.as_hf_tokenizer()
         tokenizer.add_tokens(dummy_tokens)
 
         return dataclasses.replace(self, tokenizer=tokenizer)  # type: ignore

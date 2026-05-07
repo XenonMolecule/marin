@@ -101,6 +101,15 @@ def main(config: TrainLmConfig):
 
         if config.pad_tokenizer_to_match_model:
             converter = converter.with_tokenizer_padded_to_match_model()
+            # Keep the local `tokenizer` reference in sync with the padded
+            # converter. Without this, line ~165's `vocab_size = len(tokenizer)`
+            # reads the ORIGINAL un-padded tokenizer (151,665 for Qwen3-Base),
+            # builds the trainer state's model template at that size, and then
+            # mismatches the HF model loaded in load_pretrained (151,936) →
+            # ValueError "Mismatch custom node data" at the eqx.combine in
+            # load_pretrained's load_from_state_dict path. Updating the local
+            # to converter.tokenizer makes the template match the model.
+            tokenizer = converter.tokenizer
 
         if config.use_hf_model_config:
             # TODO: log diff of old and new config
@@ -111,6 +120,7 @@ def main(config: TrainLmConfig):
         converter = converter.replaced(tokenizer=tokenizer)
         if config.pad_tokenizer_to_match_model:
             converter = converter.with_tokenizer_padded_to_match_model()
+            tokenizer = converter.tokenizer  # see note above
     else:
         converter = None
 

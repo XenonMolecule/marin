@@ -258,22 +258,18 @@ def test_claim_file_contents_are_readable_json(tracker_dir, tmp_path):
 
 
 def test_claim_backwards_compatible_with_plain_text():
-    """Legacy plaintext claims (no JSON, no heartbeat) are correctly parsed AND,
-    because they have no heartbeat, treated as stale and reclaimed by the next
-    launch. This is intentional: without a heartbeat we have no proof the
-    claimer is still alive, so the safer default is to allow reclaim.
+    """Legacy plaintext claims (no JSON) are parsed as just the region string.
+    A local launch in the same region sees the claim and resumes; a launch in
+    a different region hits the migration path in `resolve_checkpoint_prefix`.
     """
     import tempfile
     from pathlib import Path
 
     with tempfile.TemporaryDirectory() as tmp:
         prefix = f"file://{tmp}"
-        # Write a legacy plaintext claim manually.
         Path(tmp, "legacy.region").write_text("us-east5\n")
-        claim = rt.claim_or_read_region("legacy.region", "us-central1", tracker_prefix=prefix)
-        # Reclaimed: our region wins, and the claim records it.
-        assert claim.region == "us-central1"
-        assert claim.reclaimed_from_stale is True
+        claim = rt.claim_or_read_region("legacy.region", "us-east5", tracker_prefix=prefix)
+        assert claim.region == "us-east5"
         assert claim.was_first_claim is False
 
 
@@ -338,113 +334,3 @@ def test_sequential_launches_pin_each_run(tracker_dir):
             tracker_prefix=tracker_dir,
             allow_region_migration=False,
         )
-
-
-# =============================================================================
-# Heartbeat + stale reclaim
-# =============================================================================
-
-
-import datetime as _dt
-import json as _json
-import fsspec as _fsspec
-
-
-def _hours_ago(hours: float) -> _dt.datetime:
-    return _dt.datetime.utcnow() - _dt.timedelta(hours=hours)
-
-
-def _write_tracker_with_ts(tracker_dir: str, run_key: str, region: str, heartbeat: _dt.datetime | None) -> None:
-    """Helper: directly write a tracker file at a specific heartbeat (for testing staleness)."""
-    payload = {"region": region, "run_key": run_key}
-    if heartbeat is not None:
-        payload["last_heartbeat_ts"] = heartbeat.isoformat() + "Z"
-    path = f"{tracker_dir.rstrip('/')}/{run_key}"
-    fs, urlpath = _fsspec.core.url_to_fs(path)
-    with fs.open(urlpath, "wb") as f:
-        f.write(_json.dumps(payload).encode())
-
-
-def test_first_claim_writes_heartbeat(tracker_dir):
-    """First claim must persist a heartbeat timestamp so future stale-detection works."""
-    rt.claim_or_read_region("run_hb1.region", "us-central1", tracker_prefix=tracker_dir)
-    # Read back and inspect.
-    fs, urlpath = _fsspec.core.url_to_fs(f"{tracker_dir.rstrip('/')}/run_hb1.region")
-    with fs.open(urlpath, "rb") as f:
-        obj = _json.loads(f.read().decode())
-    assert obj["region"] == "us-central1"
-    assert "last_heartbeat_ts" in obj
-    # Timestamp is parseable and recent (within last minute).
-    ts = _dt.datetime.fromisoformat(obj["last_heartbeat_ts"].rstrip("Z"))
-    assert (_dt.datetime.utcnow() - ts).total_seconds() < 60
-
-
-def test_fresh_tracker_is_not_reclaimed(tracker_dir):
-    """A tracker with a recent heartbeat must NOT be overwritten by another region."""
-    _write_tracker_with_ts(tracker_dir, "run_hb2.region", "us-central1", _hours_ago(0.1))
-    claim = rt.claim_or_read_region("run_hb2.region", "us-east5", tracker_prefix=tracker_dir)
-    assert claim.region == "us-central1"
-    assert claim.reclaimed_from_stale is False
-
-
-def test_stale_tracker_is_reclaimed_by_new_region(tracker_dir):
-    """A tracker whose heartbeat is over 30 min old is considered stale; a new
-    launch in any region should reclaim it."""
-    _write_tracker_with_ts(tracker_dir, "run_hb3.region", "us-central1", _hours_ago(1.0))
-    claim = rt.claim_or_read_region("run_hb3.region", "us-east5", tracker_prefix=tracker_dir)
-    assert claim.region == "us-east5"
-    assert claim.reclaimed_from_stale is True
-
-
-def test_missing_heartbeat_treated_as_stale(tracker_dir):
-    """Legacy tracker files without `last_heartbeat_ts` must be treated as stale
-    (we have no proof the claiming worker is still alive)."""
-    _write_tracker_with_ts(tracker_dir, "run_hb4.region", "us-central1", heartbeat=None)
-    claim = rt.claim_or_read_region("run_hb4.region", "us-east5", tracker_prefix=tracker_dir)
-    assert claim.region == "us-east5"
-    assert claim.reclaimed_from_stale is True
-
-
-def test_refresh_heartbeat_updates_timestamp(tracker_dir):
-    """refresh_heartbeat should bump the tracker's timestamp while preserving region."""
-    _write_tracker_with_ts(tracker_dir, "run_hb5.region", "us-central1", _hours_ago(0.25))
-    rt.refresh_heartbeat("run_hb5.region", "us-central1", tracker_prefix=tracker_dir)
-    fs, urlpath = _fsspec.core.url_to_fs(f"{tracker_dir.rstrip('/')}/run_hb5.region")
-    with fs.open(urlpath, "rb") as f:
-        obj = _json.loads(f.read().decode())
-    assert obj["region"] == "us-central1"
-    ts = _dt.datetime.fromisoformat(obj["last_heartbeat_ts"].rstrip("Z"))
-    assert (_dt.datetime.utcnow() - ts).total_seconds() < 60
-
-
-def test_refresh_heartbeat_refuses_mismatched_region(tracker_dir, caplog):
-    """If the tracker is pinned to region A but region B tries to refresh,
-    refresh_heartbeat must NOT overwrite the tracker (that would be a silent
-    region migration)."""
-    _write_tracker_with_ts(tracker_dir, "run_hb6.region", "us-central1", _hours_ago(0.1))
-    with caplog.at_level("WARNING"):
-        rt.refresh_heartbeat("run_hb6.region", "us-east5", tracker_prefix=tracker_dir)
-    # Tracker still pinned to us-central1.
-    fs, urlpath = _fsspec.core.url_to_fs(f"{tracker_dir.rstrip('/')}/run_hb6.region")
-    with fs.open(urlpath, "rb") as f:
-        obj = _json.loads(f.read().decode())
-    assert obj["region"] == "us-central1"
-
-
-def test_stale_reclaim_updates_to_fresh(tracker_dir):
-    """After reclaiming a stale tracker, the heartbeat must be fresh so the
-    next re-check sees it as owned, not immediately re-reclaimable."""
-    _write_tracker_with_ts(tracker_dir, "run_hb7.region", "us-central1", _hours_ago(2.0))
-    rt.claim_or_read_region("run_hb7.region", "us-east5", tracker_prefix=tracker_dir)
-    # Immediately re-read: should NOT reclaim again.
-    claim = rt.claim_or_read_region("run_hb7.region", "us-central1", tracker_prefix=tracker_dir)
-    assert claim.region == "us-east5"
-    assert claim.reclaimed_from_stale is False
-
-
-def test_is_stale_threshold(tracker_dir):
-    """Spot-check the threshold: just-expired heartbeat is stale; just-fresh is not."""
-    # STALE_HEARTBEAT_SECONDS = 1800
-    assert rt._is_stale(_dt.datetime.utcnow() - _dt.timedelta(seconds=1801))
-    assert not rt._is_stale(_dt.datetime.utcnow() - _dt.timedelta(seconds=1799))
-    assert rt._is_stale(None)  # missing heartbeat always stale

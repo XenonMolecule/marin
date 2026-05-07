@@ -677,7 +677,14 @@ def test_fatal_errors_fail_fast(local_client, tmp_path):
 
 
 def test_worker_error_requeues_to_healthy_worker(tmp_path):
-    """When one worker fails, its shard is re-queued to another healthy worker."""
+    """When one worker fails, its shard is re-queued and the worker stays alive.
+
+    Upstream semantics (as of #4579): on a non-fatal failure, the worker is
+    marked READY again so it can pick up the next task. This matters for
+    expensive workers (TPU + vLLM engine) where re-initialization would cost
+    minutes. Workers only transition to DEAD if the shard exhausts its retry
+    budget and aborts the pipeline.
+    """
     from zephyr.execution import ShardTask, TaskResult, ZephyrCoordinator
     from zephyr.shuffle import ListShard
 
@@ -706,91 +713,47 @@ def test_worker_error_requeues_to_healthy_worker(tmp_path):
     task_b, attempt_b, _ = pulled_b
     assert task_b.shard_idx == 1
 
-    # Worker A fails on shard 0
+    # Worker A fails on shard 0 (non-fatal — first attempt out of 3)
     coord.report_error("worker-A", 0, "TPU device busy")
 
-    # Worker A is now DEAD — should not get new tasks
-    assert coord._worker_states["worker-A"] == WorkerState.DEAD
-    assert coord.pull_task("worker-A") is None
+    # Worker A is READY again — it can still pick up new tasks after a non-fatal failure.
+    assert coord._worker_states["worker-A"] == WorkerState.READY
 
-    # No fatal error — worker B is still alive
+    # No fatal error — shard 0 is just re-queued
     assert coord.get_fatal_error() is None
 
-    # Shard 0 was re-queued at end of queue (after shard 2)
+    # Worker B finishes shard 1
     coord.report_result("worker-B", 1, attempt_b, TaskResult(shard=ListShard(refs=[])), CounterSnapshot.empty())
 
-    # Worker B picks up shard 2 first (it was ahead of re-queued shard 0)
+    # Worker A (now READY) can pull the next available task. Shard 0 was
+    # re-queued at the end of the queue, so worker A picks up shard 2 first
+    # (which was ahead of the re-queued shard 0).
+    pulled_a2 = coord.pull_task("worker-A")
+    assert pulled_a2 is not None and pulled_a2 != "SHUTDOWN"
+    task_a2, attempt_a2, _ = pulled_a2
+    assert task_a2.shard_idx == 2
+    coord.report_result("worker-A", 2, attempt_a2, TaskResult(shard=ListShard(refs=[])), CounterSnapshot.empty())
+
+    # Now worker B picks up the re-queued shard 0 (incremented attempt)
     pulled_b2 = coord.pull_task("worker-B")
     assert pulled_b2 is not None and pulled_b2 != "SHUTDOWN"
     task_b2, attempt_b2, _ = pulled_b2
-    assert task_b2.shard_idx == 2
-    coord.report_result("worker-B", 2, attempt_b2, TaskResult(shard=ListShard(refs=[])), CounterSnapshot.empty())
+    assert task_b2.shard_idx == 0
+    assert attempt_b2 == 1  # Attempt incremented after the failure
+    coord.report_result("worker-B", 0, attempt_b2, TaskResult(shard=ListShard(refs=[])), CounterSnapshot.empty())
 
-    # Now worker B picks up the re-queued shard 0
-    pulled_b3 = coord.pull_task("worker-B")
-    assert pulled_b3 is not None and pulled_b3 != "SHUTDOWN"
-    task_b3, attempt_b3, _ = pulled_b3
-    assert task_b3.shard_idx == 0
-    assert attempt_b3 == 1  # Attempt incremented
-    coord.report_result("worker-B", 0, attempt_b3, TaskResult(shard=ListShard(refs=[])), CounterSnapshot.empty())
-
-    # All 3 shards completed despite worker A dying
+    # All 3 shards completed, no fatal error, and worker A survived the failure
     assert coord._completed_shards == 3
     assert coord.get_fatal_error() is None
 
 
-def test_all_workers_dead_is_fatal(tmp_path):
-    """When all workers die, report_error sets a fatal error."""
-    from zephyr.execution import ShardTask, ZephyrCoordinator
-    from zephyr.shuffle import ListShard
-
-    coord = ZephyrCoordinator()
-    coord.set_chunk_config(str(tmp_path / "chunks"), "test-exec")
-
-    tasks = [ShardTask(shard_idx=0, total_shards=1, shard=ListShard(refs=[]), operations=[], stage_name="test")]
-    coord.start_stage("test", tasks)
-
-    coord.register_worker("worker-A", None)
-
-    pulled = coord.pull_task("worker-A")
-    assert pulled is not None and pulled != "SHUTDOWN"
-
-    # Single worker dies → all workers dead → fatal
-    coord.report_error("worker-A", 0, "ValueError: bad value")
-
-    assert coord.get_fatal_error() is not None
-    assert "All workers are dead" in coord.get_fatal_error()
-    assert "ValueError" in coord.get_fatal_error()
-
-
-def test_shard_exceeds_max_retries_is_fatal(tmp_path):
-    """When a shard fails on max_task_retries different workers, it becomes fatal."""
-    from zephyr.execution import ShardTask, ZephyrCoordinator
-    from zephyr.shuffle import ListShard
-
-    coord = ZephyrCoordinator(max_task_retries=2)
-    coord.set_chunk_config(str(tmp_path / "chunks"), "test-exec")
-
-    tasks = [ShardTask(shard_idx=0, total_shards=1, shard=ListShard(refs=[]), operations=[], stage_name="test")]
-    coord.start_stage("test", tasks)
-
-    # Register 3 workers so all-workers-dead doesn't trigger first
-    coord.register_worker("worker-A", None)
-    coord.register_worker("worker-B", None)
-    coord.register_worker("worker-C", None)
-
-    # Worker A fails on shard 0 (attempt 1/2)
-    pulled = coord.pull_task("worker-A")
-    assert pulled is not None
-    coord.report_error("worker-A", 0, "error 1")
-    assert coord.get_fatal_error() is None  # Still under limit
-
-    # Worker B picks up re-queued shard 0, also fails (attempt 2/2 → fatal)
-    pulled = coord.pull_task("worker-B")
-    assert pulled is not None
-    coord.report_error("worker-B", 0, "error 2")
-    assert coord.get_fatal_error() is not None
-    assert "failed 2 times" in coord.get_fatal_error()
+# test_all_workers_dead_is_fatal and test_shard_exceeds_max_retries_is_fatal
+# (which tested our old "mark DEAD on any failure" semantics + configurable
+# max_task_retries parameter) were removed during the upstream merge.
+# Upstream adopts gentler "mark READY on non-fatal failure" semantics, and
+# shard retry exhaustion is covered by test_report_error_requeues_until_max_shard_failures
+# which upstream added. Worker death (not task death) is still detected via
+# heartbeat timeout in test_heartbeat_death_aborts_at_max_shard_failures.
 
 
 def test_chunk_storage_with_join(integration_client, tmp_path):

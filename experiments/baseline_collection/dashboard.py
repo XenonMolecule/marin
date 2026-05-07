@@ -107,12 +107,38 @@ def _load_manifest() -> dict[str, str]:
     return _manifest_hashes
 
 
+def _invalidate_iris_client() -> None:
+    """Drop the cached iris client + tunnel so the next call rebuilds.
+
+    Used on connection failures (typically: SSH tunnel died after long idle).
+    """
+    global _iris_client, _tunnel_cm
+    if _tunnel_cm is not None:
+        try:
+            _tunnel_cm.__exit__(None, None, None)
+        except Exception:
+            logger.exception("error closing stale iris tunnel (ignored)")
+    _iris_client = None
+    _tunnel_cm = None
+
+
 def _get_iris_client():
-    """Get or create the Iris client with SSH tunnel."""
+    """Get or create the Iris client with SSH tunnel.
+
+    Probes the cached client with a cheap RPC (`get_job_states([])`) before
+    returning it. If the probe raises a connection error, the tunnel and
+    client are invalidated and rebuilt. This handles the case where the
+    dashboard sits idle for hours and the underlying SSH tunnel times out.
+    """
     global _iris_client, _tunnel_cm
 
     if _iris_client is not None:
-        return _iris_client
+        try:
+            _iris_client._cluster_client.get_job_states([])
+            return _iris_client
+        except Exception as e:
+            logger.warning("iris tunnel probe failed (%s); rebuilding", e)
+            _invalidate_iris_client()
 
     from iris.client import IrisClient
     from iris.cluster.config import IrisConfig

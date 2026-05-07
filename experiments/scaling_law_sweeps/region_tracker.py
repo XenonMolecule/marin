@@ -19,7 +19,6 @@ small GCS operation per run per launch.
 
 from __future__ import annotations
 
-import datetime
 import json
 import logging
 import os
@@ -32,15 +31,8 @@ logger = logging.getLogger(__name__)
 
 # Where the tracker files live. A single shared prefix so any cluster can
 # read/write. `marin-us-central1` is a neutral home bucket; tracker files are
-# ~50 bytes each, so cross-region reads cost effectively zero.
+# ~50 bytes each, read/written at most once per launch.
 DEFAULT_TRACKER_PREFIX: str = "gs://marin-us-central1/metadata/region_locks/data_curation_isoflop/"
-
-# A tracker whose last heartbeat was written more than this many seconds ago is
-# considered "stale" — the worker that claimed it is assumed dead, and a new
-# launch in ANY region may reclaim the lock. The threshold is generous: the
-# child refreshes every ~5 min, and a one-off GCS blip shouldn't trigger reclaim
-# — but after 30 min of silence the owner has almost certainly died.
-STALE_HEARTBEAT_SECONDS: int = 30 * 60
 
 
 # Bucket-per-region mapping — sourced from `rigging.filesystem.REGION_TO_DATA_BUCKET`
@@ -147,66 +139,25 @@ class RegionClaim:
     run_key: str
     region: str
     was_first_claim: bool  # True iff we wrote the tracker; False iff we read existing
-    reclaimed_from_stale: bool = False  # True iff we overwrote a stale claim
 
 
-def _now_utc() -> datetime.datetime:
-    return datetime.datetime.utcnow()
+def _encode_tracker(region: str, run_key: str) -> bytes:
+    """Serialize a tracker payload."""
+    return json.dumps({"region": region, "run_key": run_key}).encode()
 
 
-def _encode_tracker(region: str, run_key: str, heartbeat: datetime.datetime | None = None) -> bytes:
-    """Serialize a tracker payload. `heartbeat` defaults to now."""
-    hb = (heartbeat or _now_utc()).isoformat() + "Z"
-    return json.dumps(
-        {
-            "region": region,
-            "run_key": run_key,
-            "last_heartbeat_ts": hb,
-        }
-    ).encode()
-
-
-def _decode_tracker(data: str) -> tuple[str, datetime.datetime | None]:
-    """Parse tracker bytes into (region, heartbeat_or_None).
-
-    Legacy plain-text and heartbeat-less JSON payloads are supported — they
-    return `(region, None)`, which downstream callers treat as "stale" since
-    no heartbeat means no proof of life.
-    """
+def _decode_tracker(data: str) -> str:
+    """Parse tracker bytes into region. Tolerates legacy plain-text payloads."""
     try:
         obj = json.loads(data)
     except json.JSONDecodeError:
-        return data.strip(), None
-    region = obj.get("region", "").strip()
-    hb_str = obj.get("last_heartbeat_ts")
-    if not hb_str:
-        return region, None
-    try:
-        # Tolerate both "...Z" suffix and plain ISO.
-        return region, datetime.datetime.fromisoformat(hb_str.rstrip("Z"))
-    except ValueError:
-        logger.warning("Could not parse heartbeat ts %r; treating as stale", hb_str)
-        return region, None
+        return data.strip()
+    return obj.get("region", "").strip()
 
 
-def _is_stale(heartbeat: datetime.datetime | None, now: datetime.datetime | None = None) -> bool:
-    """True if heartbeat is missing or older than STALE_HEARTBEAT_SECONDS."""
-    if heartbeat is None:
-        return True
-    now = now or _now_utc()
-    return (now - heartbeat).total_seconds() > STALE_HEARTBEAT_SECONDS
-
-
-def _read_tracker(fs, urlpath: str) -> tuple[str, datetime.datetime | None]:
-    with fs.open(urlpath, "rb") as f:
-        data = f.read().decode()
-    return _decode_tracker(data)
-
-
-# Back-compat alias — older callers only need the region.
 def _read_region_from(fs, urlpath: str) -> str:
-    region, _ = _read_tracker(fs, urlpath)
-    return region
+    with fs.open(urlpath, "rb") as f:
+        return _decode_tracker(f.read().decode())
 
 
 def claim_or_read_region(
@@ -214,19 +165,15 @@ def claim_or_read_region(
     local_region: str,
     *,
     tracker_prefix: str = DEFAULT_TRACKER_PREFIX,
-    now: datetime.datetime | None = None,
 ) -> RegionClaim:
     """Atomically claim `local_region` for `run_key`, or read existing claim.
 
     Semantics:
-      - No tracker file exists → write `local_region` (with heartbeat=now).
-        First-claim path.
-      - Tracker exists and is FRESH → return its region (caller handles
-        potential RegionMismatch).
-      - Tracker exists and is STALE (heartbeat missing or older than
-        STALE_HEARTBEAT_SECONDS) → overwrite with `local_region` + fresh
-        heartbeat. Enables automatic recovery when a worker died mid-run
-        without writing a DONE marker.
+      - No tracker file exists → write `local_region`. First-claim path.
+      - Tracker exists → return its region. Caller (`resolve_checkpoint_prefix`)
+        decides whether to migrate when the stored region differs from
+        `local_region` — with `allow_region_migration=True` it overwrites the
+        tracker; with `allow_region_migration=False` it raises `RegionMismatch`.
 
     Uses GCS's `if_generation_match=0` precondition for atomicity — if two
     workers race, exactly one wins the write and the other reads the winner's
@@ -239,29 +186,8 @@ def claim_or_read_region(
     fs, urlpath = fsspec.core.url_to_fs(path)
 
     if fs.exists(urlpath):
-        existing_region, heartbeat = _read_tracker(fs, urlpath)
-        if not _is_stale(heartbeat, now=now):
-            return RegionClaim(run_key=run_key, region=existing_region, was_first_claim=False)
-        # Stale: reclaim for local_region.
-        logger.warning(
-            "Reclaiming stale tracker for %s (prev region=%s, heartbeat=%s) → %s",
-            run_key,
-            existing_region,
-            heartbeat,
-            local_region,
-        )
-        try:
-            with fs.open(urlpath, "wb") as f:
-                f.write(_encode_tracker(local_region, run_key))
-        except Exception:
-            logger.exception("Failed to reclaim stale tracker at %s", urlpath)
-            raise
-        return RegionClaim(
-            run_key=run_key,
-            region=local_region,
-            was_first_claim=False,
-            reclaimed_from_stale=True,
-        )
+        existing_region = _read_region_from(fs, urlpath)
+        return RegionClaim(run_key=run_key, region=existing_region, was_first_claim=False)
 
     # No tracker exists. First-claim path.
     try:
@@ -272,7 +198,7 @@ def claim_or_read_region(
         raise
 
     # Read back. If the region differs, we lost a race — use the winner's value.
-    written_region, _ = _read_tracker(fs, urlpath)
+    written_region = _read_region_from(fs, urlpath)
     if written_region != local_region:
         logger.info(
             "Lost region-claim race for %s: wrote %s but stored=%s",
@@ -282,45 +208,6 @@ def claim_or_read_region(
         )
         return RegionClaim(run_key=run_key, region=written_region, was_first_claim=False)
     return RegionClaim(run_key=run_key, region=local_region, was_first_claim=True)
-
-
-def refresh_heartbeat(
-    run_key: str,
-    local_region: str,
-    *,
-    tracker_prefix: str = DEFAULT_TRACKER_PREFIX,
-) -> None:
-    """Overwrite the tracker with a fresh heartbeat. Safe to call repeatedly.
-
-    Preserves the region (it must already match local_region, else this is a
-    no-op warning — something went wrong if a different region is trying to
-    refresh). Non-fatal on write error; heartbeat will just go stale and the
-    next launch can reclaim.
-
-    Bypasses fsspec's instance cache via `skip_instance_cache=True`. In the
-    standalone child, the heartbeat runs from a background thread while JAX/
-    libtpu/Levanter are running heavy I/O on the main thread; the shared
-    fsspec GCS session has been observed to stall/deadlock the daemon
-    thread's second write. A fresh fs per call is slower but robust.
-    """
-    path = f"{tracker_prefix.rstrip('/')}/{run_key}"
-    fs, urlpath = fsspec.core.url_to_fs(path, skip_instance_cache=True)
-    try:
-        if fs.exists(urlpath):
-            existing_region, _ = _read_tracker(fs, urlpath)
-            if existing_region != local_region:
-                logger.warning(
-                    "refresh_heartbeat: tracker at %s is pinned to %s, but we're in %s; "
-                    "refusing to refresh (likely indicates a region migration gone wrong).",
-                    urlpath,
-                    existing_region,
-                    local_region,
-                )
-                return
-        with fs.open(urlpath, "wb") as f:
-            f.write(_encode_tracker(local_region, run_key))
-    except Exception as e:
-        logger.warning("refresh_heartbeat failed for %s: %s", urlpath, e)
 
 
 def resolve_checkpoint_prefix(

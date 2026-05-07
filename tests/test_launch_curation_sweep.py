@@ -451,3 +451,193 @@ def test_max_count_truncates_plans(capsys, monkeypatch):
     launcher.main(["--methods", "dclm", "--experiments", "all", "--max-count", "3", "--dry-run"])
     captured = capsys.readouterr().out
     assert "TOTAL: 3 runs" in captured
+
+
+# =============================================================================
+# ExpC: per-method region pin + cross-experiment dedup against fixed-model
+# =============================================================================
+
+
+def _expc_sample_plan(method_name: str = "llm_curated_bos_fixed"):
+    """Build a synthetic ExpC plan for a data-rich method."""
+    plans = curation_plan.enumerate_plans([METHODS[method_name]], [("C", 33e12)])
+    assert plans, f"expected ExpC plans for {method_name!r} but got none"
+    return plans[0]
+
+
+def test_fixed_model_run_name_core_replaces_tag():
+    """Tag substitution: expC_T33T → expFM_natural; rest of name unchanged."""
+    plan = _expc_sample_plan("llm_curated_bos_fixed")
+    fm_name = launcher.fixed_model_run_name_core(plan)
+    assert plan.experiment_tag in plan.run_name_core
+    assert fm_name == plan.run_name_core.replace(plan.experiment_tag, "expFM_natural")
+    assert "expC_T33T" not in fm_name
+    assert "expFM_natural" in fm_name
+
+
+def test_is_expc_data_rich_plan_lc_yes():
+    plan = _expc_sample_plan("llm_curated_bos_fixed")
+    assert launcher.is_expc_data_rich_plan(plan)
+
+
+def test_is_expc_data_rich_plan_resiliparse_yes():
+    plan = _expc_sample_plan("resiliparse")
+    assert launcher.is_expc_data_rich_plan(plan)
+
+
+def test_is_expc_data_rich_plan_excludes_expb():
+    """ExpB plans never trigger fixed-model dedup (different tag)."""
+    expb_plans = curation_plan.enumerate_plans([METHODS["llm_curated_bos_fixed"]], [20e12])
+    assert expb_plans
+    assert not launcher.is_expc_data_rich_plan(expb_plans[0])
+
+
+def test_is_expc_data_rich_plan_excludes_sliced_methods():
+    """dclm_10k / nemotron_10k slice differently than fixed-model — must NOT dedup."""
+    plan = _expc_sample_plan("llm_curated_bos_fixed")
+    sliced_plan = curation_plan.PlannedRun(
+        method_name="dclm_10k",
+        experiment_tag=plan.experiment_tag,
+        budget=plan.budget,
+        hidden_dim=plan.hidden_dim,
+        num_layers=plan.num_layers,
+        num_heads=plan.num_heads,
+        intermediate_dim=plan.intermediate_dim,
+        batch_size=plan.batch_size,
+        train_steps=plan.train_steps,
+        learning_rate=plan.learning_rate,
+        adam_lr=plan.adam_lr,
+        epsilon=plan.epsilon,
+        beta1=plan.beta1,
+        beta2=plan.beta2,
+        t_exp=plan.t_exp,
+        t_target=plan.t_target,
+    )
+    assert not launcher.is_expc_data_rich_plan(sliced_plan)
+
+
+def test_is_run_done_in_fixed_model_returns_false_when_summary_missing(monkeypatch):
+    plan = _expc_sample_plan("llm_curated_bos_fixed")
+
+    class _FakeFS:
+        def exists(self, _):
+            return False
+
+    monkeypatch.setattr(launcher.fsspec.core, "url_to_fs", lambda _: (_FakeFS(), "ignored"))
+    assert launcher.is_run_done_in_fixed_model(plan) is False
+
+
+def test_is_run_done_in_fixed_model_returns_true_when_summary_exists(monkeypatch):
+    plan = _expc_sample_plan("llm_curated_bos_fixed")
+    expected_path = f"{launcher.FIXED_MODEL_RESULTS_PREFIX}/{launcher.fixed_model_run_name_core(plan)}.json"
+
+    class _FakeFS:
+        def exists(self, urlpath):
+            return urlpath == expected_path
+
+    monkeypatch.setattr(launcher.fsspec.core, "url_to_fs", lambda p: (_FakeFS(), p))
+    assert launcher.is_run_done_in_fixed_model(plan) is True
+
+
+def test_is_run_in_flight_uses_fixed_model_tracker_key(monkeypatch):
+    """In-flight check looks up the FIXED_MODEL run_key, not the ExpC key."""
+    plan = _expc_sample_plan("llm_curated_bos_fixed")
+    expected_fm_key = f"{plan.method_name}__expFM_natural__{launcher.fixed_model_run_name_core(plan)}.region"
+    seen_paths: list[str] = []
+
+    class _FakeFS:
+        def exists(self, urlpath):
+            seen_paths.append(urlpath)
+            return False
+
+    monkeypatch.setattr(launcher.fsspec.core, "url_to_fs", lambda p: (_FakeFS(), p))
+    launcher.is_run_in_flight_in_fixed_model(plan, tracker_prefix="gs://test-bucket/trackers")
+    assert any(expected_fm_key in p for p in seen_paths), f"Expected FM tracker lookup; saw {seen_paths}"
+    assert not any("expC" in p for p in seen_paths), f"Should not look up ExpC tracker; saw {seen_paths}"
+
+
+def test_submit_one_pins_lc_to_us_central1(mock_client):
+    """LC's pin_region must override the SOFT ALL_REGIONS default with a HARD pin."""
+    from iris.cluster.constraints import ConstraintOp, WellKnownAttribute
+
+    plan = _expc_sample_plan("llm_curated_bos_fixed")
+    launcher.submit_one(
+        mock_client,
+        plan,
+        child_priority_band=0,
+        wandb_api_key="k",
+        hf_token=None,
+        wandb_project="marin",
+        wandb_entity="marin-community",
+        wandb_group="g",
+        tracker_prefix="gs://t/",
+    )
+    constraints = mock_client.submit.call_args.kwargs["constraints"]
+    region_constraints = [c for c in constraints if c.key == WellKnownAttribute.REGION]
+    assert len(region_constraints) == 1
+    rc = region_constraints[0]
+    assert rc.op == ConstraintOp.IN
+    assert rc.mode != 1, "LC region constraint must be HARD (us-central1 only)"
+    assert tuple(rc.values) == ("us-central1",)
+
+
+def test_submit_one_pins_resiliparse_to_us_central1(mock_client):
+    from iris.cluster.constraints import WellKnownAttribute
+
+    plan = _expc_sample_plan("resiliparse")
+    launcher.submit_one(
+        mock_client,
+        plan,
+        child_priority_band=0,
+        wandb_api_key="k",
+        hf_token=None,
+        wandb_project="marin",
+        wandb_entity="marin-community",
+        wandb_group="g",
+        tracker_prefix="gs://t/",
+    )
+    constraints = mock_client.submit.call_args.kwargs["constraints"]
+    region_constraints = [c for c in constraints if c.key == WellKnownAttribute.REGION]
+    assert len(region_constraints) == 1
+    assert tuple(region_constraints[0].values) == ("us-central1",)
+
+
+def test_submit_one_does_not_pin_when_method_has_no_pin_region(mock_client, sample_plan):
+    """DCLM has pin_region=None — submit_one keeps the SOFT ALL_REGIONS preference."""
+    from iris.cluster.constraints import WellKnownAttribute
+
+    launcher.submit_one(
+        mock_client,
+        sample_plan,
+        child_priority_band=0,
+        wandb_api_key="k",
+        hf_token=None,
+        wandb_project="marin",
+        wandb_entity="marin-community",
+        wandb_group="g",
+        tracker_prefix="gs://t/",
+    )
+    constraints = mock_client.submit.call_args.kwargs["constraints"]
+    region_constraints = [c for c in constraints if c.key == WellKnownAttribute.REGION]
+    assert len(region_constraints) == 1
+    assert region_constraints[0].mode == 1, "SOFT preference expected for unpinned methods"
+
+
+def test_submit_one_raises_when_pin_region_conflicts_with_allowed_regions(mock_client):
+    """If a method has pin_region=us-central1 but operator passed
+    --allowed-regions us-east1, fail loudly rather than silently override."""
+    plan = _expc_sample_plan("llm_curated_bos_fixed")
+    with pytest.raises(ValueError, match="pin_region"):
+        launcher.submit_one(
+            mock_client,
+            plan,
+            child_priority_band=0,
+            wandb_api_key="k",
+            hf_token=None,
+            wandb_project="marin",
+            wandb_entity="marin-community",
+            wandb_group="g",
+            tracker_prefix="gs://t/",
+            allowed_regions=["us-east1"],
+        )
+

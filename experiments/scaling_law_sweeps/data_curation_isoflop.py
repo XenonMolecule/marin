@@ -64,7 +64,6 @@ from experiments.scaling_law_sweeps import region_tracker
 _D_OBS_DEFAULTS: dict[str, int] = {
     "baseline_dclm-23e9be": 2_663_454_015,
     "baseline_nemotron-c67de9": 1_919_401_016,
-    "baseline_nemotron_full-d4e3af": 2_695_507_851,
     "baseline_fineweb_edu-7a3bc5": 817_221_529,
     "baseline_resiliparse-7278c1": 142_652_598_588,
 }
@@ -171,15 +170,12 @@ def _build_methods(skip_stats_read: bool = False) -> dict[str, CurationMethod]:
     return {
         "dclm": mk("dclm", "baseline_dclm-23e9be"),
         "nemotron_org": mk("nemotron_org", "baseline_nemotron-c67de9"),
-        "nemotron_full": mk("nemotron_full", "baseline_nemotron_full-d4e3af"),
         "fineweb_edu": mk("fineweb_edu", "baseline_fineweb_edu-7a3bc5"),
         # Resiliparse: 571 GB cache — `reproduce_per_region=True` signals that
         # the cache should be re-tokenized locally per region rather than
         # mirrored (for cost reasons). The flag is currently informational;
         # mirror:// still works but is expensive cross-continentally.
         "resiliparse": mk("resiliparse", "baseline_resiliparse-7278c1", reproduce_per_region=True),
-        # TODO: add the user's LLM-based method once tokenization completes:
-        # "llm_curated": _method("llm_curated", "<TBD>"),
     }
 
 
