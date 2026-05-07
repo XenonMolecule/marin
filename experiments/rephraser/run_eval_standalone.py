@@ -147,7 +147,9 @@ MEDICAL_LOGPROB_EVALS: list[EvalTaskConfig] = [
     EvalTaskConfig(name="mmlu_clinical_knowledge", num_fewshot=5, task_alias="mmlu_clinical_knowledge_logprob_5shot"),
     EvalTaskConfig(name="mmlu_college_medicine", num_fewshot=5, task_alias="mmlu_college_medicine_logprob_5shot"),
     EvalTaskConfig(name="mmlu_medical_genetics", num_fewshot=5, task_alias="mmlu_medical_genetics_logprob_5shot"),
-    EvalTaskConfig(name="mmlu_professional_medicine", num_fewshot=5, task_alias="mmlu_professional_medicine_logprob_5shot"),
+    EvalTaskConfig(
+        name="mmlu_professional_medicine", num_fewshot=5, task_alias="mmlu_professional_medicine_logprob_5shot"
+    ),
     EvalTaskConfig(name="mmlu_college_biology", num_fewshot=5, task_alias="mmlu_college_biology_logprob_5shot"),
     EvalTaskConfig(name="mmlu_high_school_biology", num_fewshot=5, task_alias="mmlu_high_school_biology_logprob_5shot"),
 ]

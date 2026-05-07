@@ -215,18 +215,18 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=int,
         default=30,
         help="Sleep this long between consecutive child submissions in a single poll. "
-             "Levanter's `HFCheckpointConverter.from_hf` pings HF for every registered "
-             "model class on each worker startup (~10-20 API calls per child). Firing 21 "
-             "children in a 3-sec window — combined with iris's max_retries_failure=10 "
-             "retry-bombing on transient errors — blew through HF's 1000/5min rate limit "
-             "and hard-failed the whole fan-out. 30s/submit is conservative but safe.",
+        "Levanter's `HFCheckpointConverter.from_hf` pings HF for every registered "
+        "model class on each worker startup (~10-20 API calls per child). Firing 21 "
+        "children in a 3-sec window — combined with iris's max_retries_failure=10 "
+        "retry-bombing on transient errors — blew through HF's 1000/5min rate limit "
+        "and hard-failed the whole fan-out. 30s/submit is conservative but safe.",
     )
     parser.add_argument(
         "--max-retries-failure",
         type=int,
         default=2,
         help="Pass-through to iris job submit; lower than the iris default of 10 to avoid "
-             "retry-bombing transient HF rate limits.",
+        "retry-bombing transient HF rate limits.",
     )
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--no-keep-alive", action="store_true")
@@ -279,8 +279,7 @@ def main(argv: list[str] | None = None) -> None:
                 eval_output_path = f"{output_path.rstrip('/')}/hf/eval/lm_eval_harness_levanter"
             else:
                 eval_output_path = (
-                    f"{output_path.rstrip('/')}/hf/step-{num_train_steps - 1}"
-                    f"/eval/lm_eval_harness_levanter"
+                    f"{output_path.rstrip('/')}/hf/step-{num_train_steps - 1}" f"/eval/lm_eval_harness_levanter"
                 )
             if args.skip_if_done and _eval_already_done(eval_output_path):
                 submitted_in_process.add(run_name)
@@ -306,7 +305,10 @@ def main(argv: list[str] | None = None) -> None:
 
         logger.info(
             "Poll #%d: discovered %d medical runs, dispatched %d new evals (total handled: %d).",
-            iteration, len(summaries), new_submitted, len(submitted_in_process),
+            iteration,
+            len(summaries),
+            new_submitted,
+            len(submitted_in_process),
         )
 
         if args.no_keep_alive:

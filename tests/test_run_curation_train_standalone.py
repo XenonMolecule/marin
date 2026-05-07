@@ -1109,19 +1109,22 @@ def test_main_non_rank_zero_skips_summary_and_done_marker(tmp_path, monkeypatch)
             ),
         ),
         patch.object(standalone, "_read_last_eval_metrics", return_value=None),
-        patch.object(standalone, "_write_summary",
-                     side_effect=lambda *a, **kw: write_summary_calls.append((a, kw))),
+        patch.object(standalone, "_write_summary", side_effect=lambda *a, **kw: write_summary_calls.append((a, kw))),
     ):
-        standalone.main(p.to_cli_args() + [
-            "--tracker-prefix", tracker_prefix,
-            "--tpu-type", "v4-16",
-            "--results-prefix", results_prefix,
-        ])
+        standalone.main(
+            p.to_cli_args()
+            + [
+                "--tracker-prefix",
+                tracker_prefix,
+                "--tpu-type",
+                "v4-16",
+                "--results-prefix",
+                results_prefix,
+            ]
+        )
 
     assert len(called) == 1, "training must still run on non-rank-0 VMs"
-    assert len(write_summary_calls) == 0, (
-        "non-rank-0 VM must NOT call _write_summary — racing on same GCS path"
-    )
+    assert len(write_summary_calls) == 0, "non-rank-0 VM must NOT call _write_summary — racing on same GCS path"
 
 
 def test_main_subsequent_run_in_same_region_succeeds(tmp_path, monkeypatch):

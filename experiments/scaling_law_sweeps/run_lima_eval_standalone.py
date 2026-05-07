@@ -55,10 +55,8 @@ import argparse
 import datetime as dt
 import json
 import logging
-import os
 import re
 import sys
-from dataclasses import field, replace
 from typing import Any
 
 import fsspec
@@ -162,9 +160,7 @@ def _build_eval_config(
     from experiments.scaling_law_sweeps.completed_adamh import completed_adamh_heuristic
 
     # Build the Llama model config exactly how training built it.
-    model_config = completed_adamh_heuristic._build_model_config(
-        meta["hidden"], seq_len=4096
-    )
+    model_config = completed_adamh_heuristic._build_model_config(meta["hidden"], seq_len=4096)
 
     lima_source = UrlDatasetSourceConfig(
         cache_dir=lima_cache,

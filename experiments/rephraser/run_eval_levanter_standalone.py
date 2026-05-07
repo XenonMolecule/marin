@@ -100,9 +100,7 @@ def _run_eval_harness_main_with_padded_tokenizer(config):
         # the padded one.
         unpadded_tokenizer = config.the_tokenizer
         converter = config.model.hf_checkpoint_converter()
-        converter = converter.replaced(
-            reference_checkpoint=config.checkpoint_path, tokenizer=unpadded_tokenizer
-        )
+        converter = converter.replaced(reference_checkpoint=config.checkpoint_path, tokenizer=unpadded_tokenizer)
         converter = converter.with_tokenizer_padded_to_match_model()
         # cached_property reads `__dict__[name]` first; if present it returns
         # that and never calls the descriptor. Overwriting the slot here is

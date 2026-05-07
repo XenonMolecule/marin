@@ -195,6 +195,7 @@ def main(argv: list[str] | None = None) -> None:
         plans = [p for p in plans if any(s in p.run_name_core for s in args.filter_name_contains_any)]
     if args.force_memory_gb is not None:
         import dataclasses
+
         plans = [dataclasses.replace(p, memory_gb=args.force_memory_gb) for p in plans]
     if args.max_count is not None:
         plans = plans[: args.max_count]

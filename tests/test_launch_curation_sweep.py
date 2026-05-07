@@ -227,13 +227,19 @@ def test_submit_one_drops_mismatched_vm_count_variants(mock_client):
     plans = curation_plan.enumerate_plans([METHODS["dclm"]], [None])
     base = [p for p in plans if p.v4_tpu == "v4-32"][0]
     import dataclasses
+
     plan = dataclasses.replace(base, v5p_tpu="v5p-16")  # force mismatch
 
     launcher.submit_one(
-        mock_client, plan,
-        child_priority_band=0, wandb_api_key="k", hf_token=None,
-        wandb_project="marin", wandb_entity="marin-community",
-        wandb_group="g", tracker_prefix="gs://t/",
+        mock_client,
+        plan,
+        child_priority_band=0,
+        wandb_api_key="k",
+        hf_token=None,
+        wandb_project="marin",
+        wandb_entity="marin-community",
+        wandb_group="g",
+        tracker_prefix="gs://t/",
     )
     constraints = mock_client.submit.call_args.kwargs["constraints"]
     variant_constraints = [c for c in constraints if "DEVICE_VARIANT" in repr(c.key)]
@@ -260,18 +266,19 @@ def test_submit_one_single_host_omits_replicas_and_coscheduling(mock_client, sam
     assert launcher._vm_count(sample_plan.v4_tpu) == 1
 
     launcher.submit_one(
-        mock_client, sample_plan,
-        child_priority_band=0, wandb_api_key="k", hf_token=None,
-        wandb_project="marin", wandb_entity="marin-community",
-        wandb_group="g", tracker_prefix="gs://t/",
+        mock_client,
+        sample_plan,
+        child_priority_band=0,
+        wandb_api_key="k",
+        hf_token=None,
+        wandb_project="marin",
+        wandb_entity="marin-community",
+        wandb_group="g",
+        tracker_prefix="gs://t/",
     )
     kwargs = mock_client.submit.call_args.kwargs
-    assert "replicas" not in kwargs, (
-        "single-host should NOT set replicas; iris defaults to 1 anyway"
-    )
-    assert "coscheduling" not in kwargs, (
-        "single-host should NOT set coscheduling; observed to bias iris's scheduler"
-    )
+    assert "replicas" not in kwargs, "single-host should NOT set replicas; iris defaults to 1 anyway"
+    assert "coscheduling" not in kwargs, "single-host should NOT set coscheduling; observed to bias iris's scheduler"
 
 
 def test_submit_one_multi_host_sets_replicas_and_tpu_coscheduling(mock_client):
@@ -286,10 +293,15 @@ def test_submit_one_multi_host_sets_replicas_and_tpu_coscheduling(mock_client):
     plan = multi_host[0]
 
     launcher.submit_one(
-        mock_client, plan,
-        child_priority_band=0, wandb_api_key="k", hf_token=None,
-        wandb_project="marin", wandb_entity="marin-community",
-        wandb_group="g", tracker_prefix="gs://t/",
+        mock_client,
+        plan,
+        child_priority_band=0,
+        wandb_api_key="k",
+        hf_token=None,
+        wandb_project="marin",
+        wandb_entity="marin-community",
+        wandb_group="g",
+        tracker_prefix="gs://t/",
     )
     kwargs = mock_client.submit.call_args.kwargs
     assert kwargs["replicas"] == 1
@@ -640,4 +652,3 @@ def test_submit_one_raises_when_pin_region_conflicts_with_allowed_regions(mock_c
             tracker_prefix="gs://t/",
             allowed_regions=["us-east1"],
         )
-

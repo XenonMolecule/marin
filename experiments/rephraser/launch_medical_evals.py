@@ -173,8 +173,7 @@ def submit_one(
     num_train_steps = summary.get("tokens", {}).get("num_train_steps")
     if num_train_steps is None:
         raise ValueError(
-            f"Training summary for {run_name} missing tokens.num_train_steps; "
-            f"cannot compute HF export path."
+            f"Training summary for {run_name} missing tokens.num_train_steps; " f"cannot compute HF export path."
         )
     # Levanter saves the HF export at step (N-1) where N=num_train_steps,
     # because training loops 0..N-1 and the export runs at the LAST completed
@@ -364,8 +363,7 @@ def main(argv: list[str] | None = None) -> None:
                 eval_output_path = f"{s.get('output_path', '').rstrip('/')}/hf/eval/lm_eval_harness"
             else:
                 eval_output_path = (
-                    f"{s.get('output_path', '').rstrip('/')}/hf/step-{num_train_steps - 1}"
-                    f"/eval/lm_eval_harness"
+                    f"{s.get('output_path', '').rstrip('/')}/hf/step-{num_train_steps - 1}" f"/eval/lm_eval_harness"
                 )
             if args.skip_if_done and _eval_already_done(eval_output_path):
                 submitted_in_process.add(run_name)  # treat as done; never resubmit
@@ -386,8 +384,7 @@ def main(argv: list[str] | None = None) -> None:
                 logger.exception("Failed to submit eval for %s: %s", run_name, e)
 
         logger.info(
-            "Poll #%d: discovered %d runs, dispatched %d new evals "
-            "(total handled this process: %d).",
+            "Poll #%d: discovered %d runs, dispatched %d new evals " "(total handled this process: %d).",
             iteration,
             len(summaries),
             new_submitted,

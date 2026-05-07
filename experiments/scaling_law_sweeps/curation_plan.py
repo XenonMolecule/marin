@@ -289,26 +289,14 @@ METHODS: dict[str, CurationMethod] = {
     # both so children can pick up us-east5 capacity (especially v6e-4) when
     # us-central1 v5p is contested. One-time expense (~$46) to unblock
     # resiliparse_1000/2000 (was 0/30 + 0/23 stuck on us-central1).
-    "resiliparse_100": _method(
-        "resiliparse_100", "baseline_resiliparse_100warcs", sampled_warcs=100
-    ),
-    "resiliparse_500": _method(
-        "resiliparse_500", "baseline_resiliparse_500warcs", sampled_warcs=500
-    ),
-    "resiliparse_1000": _method(
-        "resiliparse_1000", "baseline_resiliparse_1000warcs", sampled_warcs=1000
-    ),
-    "resiliparse_2000": _method(
-        "resiliparse_2000", "baseline_resiliparse_2000warcs", sampled_warcs=2000
-    ),
+    "resiliparse_100": _method("resiliparse_100", "baseline_resiliparse_100warcs", sampled_warcs=100),
+    "resiliparse_500": _method("resiliparse_500", "baseline_resiliparse_500warcs", sampled_warcs=500),
+    "resiliparse_1000": _method("resiliparse_1000", "baseline_resiliparse_1000warcs", sampled_warcs=1000),
+    "resiliparse_2000": _method("resiliparse_2000", "baseline_resiliparse_2000warcs", sampled_warcs=2000),
     # nemotron_full BOS-fixed: mirrored to all 4 regions (us-central1/2 +
     # us-east1/5) — float for v6e access.
-    "nemotron_full_100": _method(
-        "nemotron_full_100", "baseline_nemotron_full_bos_fixed_100warcs", sampled_warcs=100
-    ),
-    "nemotron_full_500": _method(
-        "nemotron_full_500", "baseline_nemotron_full_bos_fixed_500warcs", sampled_warcs=500
-    ),
+    "nemotron_full_100": _method("nemotron_full_100", "baseline_nemotron_full_bos_fixed_100warcs", sampled_warcs=100),
+    "nemotron_full_500": _method("nemotron_full_500", "baseline_nemotron_full_bos_fixed_500warcs", sampled_warcs=500),
     "nemotron_full_1000": _method(
         "nemotron_full_1000", "baseline_nemotron_full_bos_fixed_1000warcs", sampled_warcs=1000
     ),
@@ -318,18 +306,10 @@ METHODS: dict[str, CurationMethod] = {
     # llm_curated BOS-fixed: all 4 sizes mirrored to us-central1 + us-east5,
     # float across both. One-time mirror cost paid 2026-05-01 to unblock the
     # remaining sizes that were starving on us-central1 capacity.
-    "llm_curated_100": _method(
-        "llm_curated_100", "baseline_llm_curated_bos_fixed_100warcs", sampled_warcs=100
-    ),
-    "llm_curated_500": _method(
-        "llm_curated_500", "baseline_llm_curated_bos_fixed_500warcs", sampled_warcs=500
-    ),
-    "llm_curated_1000": _method(
-        "llm_curated_1000", "baseline_llm_curated_bos_fixed_1000warcs", sampled_warcs=1000
-    ),
-    "llm_curated_2000": _method(
-        "llm_curated_2000", "baseline_llm_curated_bos_fixed_2000warcs", sampled_warcs=2000
-    ),
+    "llm_curated_100": _method("llm_curated_100", "baseline_llm_curated_bos_fixed_100warcs", sampled_warcs=100),
+    "llm_curated_500": _method("llm_curated_500", "baseline_llm_curated_bos_fixed_500warcs", sampled_warcs=500),
+    "llm_curated_1000": _method("llm_curated_1000", "baseline_llm_curated_bos_fixed_1000warcs", sampled_warcs=1000),
+    "llm_curated_2000": _method("llm_curated_2000", "baseline_llm_curated_bos_fixed_2000warcs", sampled_warcs=2000),
 }
 
 

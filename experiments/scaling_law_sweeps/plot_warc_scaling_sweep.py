@@ -48,7 +48,6 @@ from experiments.scaling_law_sweeps.warc_scaling_plan import (
     WARC_METHOD_BASE_NAMES,
     hidden_sizes_for,
 )
-from experiments.scaling_law_sweeps.fixed_model_plan import TARGET_HIDDEN_SIZES as FM_HIDDEN_SIZES
 
 
 def _all_method_keys() -> list[str]:
@@ -119,6 +118,7 @@ def _merge_sidecar_into_summary(summary: dict, sidecars: dict[str, dict]) -> Non
         summary["eval"] = eval_d
     for k, v in sidecars[run_name].items():
         eval_d.setdefault(k, v)
+
 
 DEFAULT_RESULTS_PREFIX = "gs://marin-us-central1/metadata/data_curation_warc_scaling_results/"
 # Fixed-model sweep results = the 3000-WARC anchor experiment. Merging these
@@ -535,9 +535,11 @@ def plot_grid_overview(
         for ci in range(1, n_cols + 1):
             fig.update_xaxes(type="log", row=ri, col=ci)
 
-    suffix_tag = {"all_epochs": " (all-epoch markers)", "one_epoch": " (1-epoch markers)", "projections": " (projections)"}.get(
-        mode, ""
-    )
+    suffix_tag = {
+        "all_epochs": " (all-epoch markers)",
+        "one_epoch": " (1-epoch markers)",
+        "projections": " (projections)",
+    }.get(mode, "")
     fig.update_layout(
         template="plotly_white",
         title=f"WARC-scaling grid -- {metric_key} vs {x_axis}{suffix_tag}",
@@ -756,9 +758,11 @@ def plot_grid_compressed(
                 if log_y:
                     fig.update_yaxes(type="log", row=ri, col=ci)
 
-    suffix_tag = {"all_epochs": " (all-epoch markers)", "one_epoch": " (1-epoch markers)", "projections": " (projections)"}.get(
-        mode, ""
-    )
+    suffix_tag = {
+        "all_epochs": " (all-epoch markers)",
+        "one_epoch": " (1-epoch markers)",
+        "projections": " (projections)",
+    }.get(mode, "")
     log_y_tag = " [log y]" if log_y else ""
     fig.update_layout(
         template="plotly_white",
@@ -784,8 +788,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--fm-results-prefix",
         default=FM_RESULTS_PREFIX,
-        help="Fixed-model (3000-WARC) sweep results to merge in as the N=3000 row. "
-        "Pass empty string to disable.",
+        help="Fixed-model (3000-WARC) sweep results to merge in as the N=3000 row. " "Pass empty string to disable.",
     )
     parser.add_argument(
         "--fm-lima-sidecar-prefix",

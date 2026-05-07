@@ -1,3 +1,6 @@
+# Copyright The Marin Authors
+# SPDX-License-Identifier: Apache-2.0
+
 """Rescue: re-run dclm_filter for the single missing shard 00079.
 
 The main filter run completed 199/200 shards before the parent crashed with

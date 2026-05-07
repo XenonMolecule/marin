@@ -258,7 +258,6 @@ from experiments.scaling_law_sweeps.data_curation_math import (
     CurationMethod,
 )
 
-
 # Real cache D_obs values (3k WARCs); extrapolated to 10k under uniformity.
 _DCLM_3K = 2_663_454_015
 _NEMOTRON_3K = 1_919_401_016
@@ -353,7 +352,9 @@ def test_expc_ceiling_uniform_across_all_four_methods(
     ]
     seen_t_exps_by_method = []
     for m in methods:
-        t_exps = sorted(cand.tokens for _, cand, _ in _iter_valid_candidates(m, t_target=33e12, kind="C", uniform_t_exp_cap=cap))
+        t_exps = sorted(
+            cand.tokens for _, cand, _ in _iter_valid_candidates(m, t_target=33e12, kind="C", uniform_t_exp_cap=cap)
+        )
         seen_t_exps_by_method.append(t_exps)
         # Every emitted candidate respects the cap:
         assert all(t <= cap for t in t_exps), f"{m.name}: candidate exceeds cap"
@@ -381,8 +382,14 @@ def test_expc_ceiling_caps_sliced_methods_at_their_natural_ceiling(dclm_10k_synt
     So with-cap and no-cap should produce identical candidate sets (cap doesn't bite).
     """
     cap = expc_uniform_t_exp_cap(33e12)
-    with_cap = sorted(cand.tokens for _, cand, _ in _iter_valid_candidates(dclm_10k_synthetic, t_target=33e12, kind="C", uniform_t_exp_cap=cap))
-    no_cap = sorted(cand.tokens for _, cand, _ in _iter_valid_candidates(dclm_10k_synthetic, t_target=33e12, kind="C", uniform_t_exp_cap=None))
+    with_cap = sorted(
+        cand.tokens
+        for _, cand, _ in _iter_valid_candidates(dclm_10k_synthetic, t_target=33e12, kind="C", uniform_t_exp_cap=cap)
+    )
+    no_cap = sorted(
+        cand.tokens
+        for _, cand, _ in _iter_valid_candidates(dclm_10k_synthetic, t_target=33e12, kind="C", uniform_t_exp_cap=None)
+    )
     assert with_cap == no_cap
 
 
