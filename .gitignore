@@ -247,3 +247,7 @@ plots/
 
 # Local-only paper drafts
 paper_*_draft.txt
+
+.worktrees
+.obsidian
+.cw_env

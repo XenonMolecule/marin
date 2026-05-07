@@ -37,7 +37,7 @@ from dataclasses import dataclass
 
 import fsspec
 
-from fray.v2.types import ResourceConfig
+from fray import ResourceConfig
 from zephyr import Dataset, ZephyrContext, zephyr_worker_ctx
 
 logger = logging.getLogger(__name__)
