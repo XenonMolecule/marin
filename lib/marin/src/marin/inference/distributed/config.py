@@ -160,6 +160,12 @@ class InferenceConfig:
     max_shard_infra_failures: int = MAX_SHARD_INFRA_FAILURES
     chunk_size: int = 2000
     compile_cache_uri_template: str | None = None
+    # Extras installed on each TPU worker job (forwarded to Iris via Fray's
+    # ``EnvironmentConfig.extras``). ``marin:vllm`` brings in the inference
+    # engine; ``marin:tpu`` pins matching JAX / libtpu / torch versions.
+    # Override when a worker needs a different stack (different vLLM version,
+    # CPU-only mode for tests, etc.).
+    worker_extras: tuple[str, ...] = ("marin:vllm", "marin:tpu")
 
     def __post_init__(self) -> None:
         if not self.regions:

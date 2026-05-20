@@ -625,16 +625,25 @@ class FrayIrisClient:
         count: int,
         resources: ResourceConfig = ResourceConfig(),
         actor_config: ActorConfig = ActorConfig(),
+        environment: EnvironmentConfig | None = None,
         **kwargs: Any,
     ) -> IrisActorGroup:
         """Submit a single Iris job with N replicas, each hosting an instance of actor_class.
 
         Uses Iris's multi-replica job feature instead of creating N separate jobs,
         which improves networking and reduces job overhead.
+
+        Args:
+            environment: Optional `EnvironmentConfig` for the replica job. When
+                provided, its ``extras`` / ``env_vars`` / ``pip_packages`` are
+                applied; device-derived defaults are still merged in. When
+                ``None`` (default), only device env-vars are applied. Required
+                when workers need vLLM, TPU, or any other package installed via
+                extras (e.g. ``EnvironmentConfig(extras=["marin:vllm", "marin:tpu"])``).
         """
         iris_resources = convert_resources(resources)
         iris_constraints = convert_constraints(resources)
-        iris_environment = convert_environment(None, device=resources.device)
+        iris_environment = convert_environment(environment, device=resources.device)
 
         coscheduling = resolve_coscheduling(resources.device, count)
 

@@ -106,6 +106,7 @@ def _make_regional_spec(
         max_shard_infra_failures=config.max_shard_infra_failures,
         chunk_size=config.chunk_size,
         compile_cache_uri_template=config.compile_cache_uri_template,
+        worker_extras=tuple(config.worker_extras),
     )
 
 

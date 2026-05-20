@@ -11,7 +11,7 @@ from collections.abc import Sequence
 from typing import Any, Protocol
 
 from fray.actor import ActorGroup, ActorHandle, HostedActor
-from fray.types import ActorConfig, JobRequest, JobStatus, ResourceConfig
+from fray.types import ActorConfig, EnvironmentConfig, JobRequest, JobStatus, ResourceConfig
 
 logger = logging.getLogger(__name__)
 
@@ -76,9 +76,15 @@ class Client(Protocol):
         count: int,
         resources: ResourceConfig = ResourceConfig(),
         actor_config: ActorConfig = ActorConfig(),
+        environment: EnvironmentConfig | None = None,
         **kwargs: Any,
     ) -> ActorGroup:
-        """Create N instances of an actor, returning a group handle."""
+        """Create N instances of an actor, returning a group handle.
+
+        ``environment`` is honored by backends that submit jobs to an external
+        scheduler (Iris); the local backend instantiates actors in-process and
+        ignores it. Use it to install extras (e.g. vLLM) on remote replicas.
+        """
         ...
 
     def shutdown(self, wait: bool = True) -> None:

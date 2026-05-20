@@ -91,6 +91,123 @@ def test_inference_config_defaults_match_zephyr_upstream():
     assert cfg.max_shard_infra_failures == 20
 
 
+def test_inference_config_default_worker_extras_includes_vllm_and_tpu():
+    """Regression test: a 2026-05-20 real-cluster run failed with
+    ``ModuleNotFoundError: No module named 'vllm'`` because the library
+    submitted Zephyr worker jobs with no extras installed. The fix wires
+    ``InferenceConfig.worker_extras`` → Fray ``EnvironmentConfig.extras`` →
+    Iris ``EnvironmentSpec.extras`` so workers get vLLM installed at startup.
+    Defaults must include both ``marin:vllm`` (the engine) and ``marin:tpu``
+    (the JAX/libtpu stack); changing them silently would re-introduce the bug.
+    """
+    cfg = InferenceConfig(regions=["us-central1"])
+    assert "marin:vllm" in cfg.worker_extras
+    assert "marin:tpu" in cfg.worker_extras
+
+
+def test_regional_job_spec_propagates_worker_extras():
+    """The regional spec carries worker_extras forward so the in-process
+    builder in ``regional_job._build_context`` can construct a Fray
+    ``EnvironmentConfig`` for the Zephyr worker group.
+    """
+    from marin.inference.distributed.meta_coordinator import _make_regional_spec
+
+    cfg = InferenceConfig(
+        regions=["us-central1"],
+        results_region="us-central1",
+        worker_extras=("marin:vllm", "marin:tpu", "marin:custom"),
+    )
+    spec = _make_regional_spec(
+        config=cfg,
+        region="us-central1",
+        input_files=["/tmp/a.jsonl.gz"],
+        model_spec=ModelSpec(model="hf/test"),
+        results_uri="file:///tmp/results",
+        run_id="testrun",
+    )
+    assert spec.worker_extras == ("marin:vllm", "marin:tpu", "marin:custom")
+
+
+def test_build_context_threads_worker_environment():
+    """``regional_job._build_context`` must produce a ``ZephyrContext`` whose
+    ``worker_environment.extras`` exactly matches ``RegionalJobSpec.worker_extras``.
+    This is the boundary where the missing-vllm bug actually manifested.
+    """
+    from fray.local_backend import LocalClient
+    from marin.inference.distributed.regional_job import RegionalJobSpec, _build_context
+
+    spec = RegionalJobSpec(
+        region="us-central1",
+        results_uri="file:///tmp/results",
+        input_files=("/tmp/a.jsonl.gz",),
+        model_spec=ModelSpec(model="hf/test"),
+        sampling=SamplingParams(),
+        job_name="job",
+        run_id="testrun",
+        tpu_shapes=("v5p-8",),
+        max_workers=1,
+        worker_preemptible=True,
+        heartbeat_timeout=120.0,
+        max_shard_failures=3,
+        max_shard_infra_failures=20,
+        chunk_size=2000,
+        compile_cache_uri_template=None,
+        worker_extras=("marin:vllm", "marin:tpu"),
+    )
+
+    from fray import set_current_client
+
+    client = LocalClient()
+    try:
+        with set_current_client(client):
+            ctx = _build_context(spec)
+    finally:
+        client.shutdown(wait=True)
+
+    assert (
+        ctx.worker_environment is not None
+    ), "ZephyrContext.worker_environment must be set so Zephyr propagates extras to worker jobs."
+    assert list(ctx.worker_environment.extras) == ["marin:vllm", "marin:tpu"]
+
+
+def test_build_context_omits_worker_environment_when_extras_empty():
+    """Passing empty ``worker_extras`` should produce ``worker_environment=None``
+    so Zephyr falls back to the cluster-default environment.
+    """
+    from fray.local_backend import LocalClient
+    from marin.inference.distributed.regional_job import RegionalJobSpec, _build_context
+
+    spec = RegionalJobSpec(
+        region="us-central1",
+        results_uri="file:///tmp/results",
+        input_files=("/tmp/a.jsonl.gz",),
+        model_spec=ModelSpec(model="hf/test"),
+        sampling=SamplingParams(),
+        job_name="job",
+        run_id="testrun",
+        tpu_shapes=("v5p-8",),
+        max_workers=1,
+        worker_preemptible=True,
+        heartbeat_timeout=120.0,
+        max_shard_failures=3,
+        max_shard_infra_failures=20,
+        chunk_size=2000,
+        compile_cache_uri_template=None,
+        worker_extras=(),
+    )
+
+    from fray import set_current_client
+
+    client = LocalClient()
+    try:
+        with set_current_client(client):
+            ctx = _build_context(spec)
+    finally:
+        client.shutdown(wait=True)
+
+    assert ctx.worker_environment is None
+
+
 # ---------------------------------------------------------------------------
 # Input record validation
 # ---------------------------------------------------------------------------
@@ -172,13 +289,14 @@ def test_rotate_for_region_is_deterministic():
 
 
 def test_rotate_for_region_differs_across_regions():
-    items = [(i, f"shard-{i:02d}") for i in range(6)]
+    # 100-item list makes hash-collision-mod-N exceedingly unlikely between
+    # two distinct region names. (Python's PYTHONHASHSEED randomization can
+    # collide small modulos across regions in any given process.)
+    items = [(i, f"shard-{i:03d}") for i in range(100)]
     a = rotate_for_region(items, "us-central1")
     b = rotate_for_region(items, "europe-west4")
-    # Same content, different order (at least one of the two rotations is non-trivial).
-    assert sorted(a) == sorted(b)
-    # Realistically these two region names hash to different mod-6 offsets.
-    assert a != b
+    assert sorted(a) == sorted(b)  # same content
+    assert a != b  # different order
 
 
 def test_rotate_for_region_preserves_membership():

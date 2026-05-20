@@ -38,7 +38,7 @@ from fray import ActorConfig, ActorFuture, ActorHandle, Client, ResourceConfig, 
 from fray.client import JobHandle
 from fray.current_client import current_client, set_current_client
 from fray.local_backend import LocalClient
-from fray.types import Entrypoint, JobRequest
+from fray.types import Entrypoint, EnvironmentConfig, JobRequest
 from iris.client import get_iris_ctx
 from iris.cluster.client.job_info import get_job_info
 from rigging.filesystem import marin_temp_bucket, open_url, url_to_fs
@@ -1758,6 +1758,7 @@ class _CoordinatorJobConfig:
     heartbeat_timeout: float = 120.0
     max_shard_failures: int = MAX_SHARD_FAILURES
     max_shard_infra_failures: int = MAX_SHARD_INFRA_FAILURES
+    worker_environment: EnvironmentConfig | None = None
 
 
 def _run_coordinator_job(config_path: str, result_path: str) -> None:
@@ -1827,6 +1828,7 @@ def _run_coordinator_job(config_path: str, result_path: str) -> None:
                 count=actual_workers,
                 resources=config.worker_resources,
                 actor_config=ActorConfig(max_task_retries=10),
+                environment=config.worker_environment,
             )
             ready_wait_s = float(os.environ.get("ZEPHYR_WORKERS_READY_WAIT") or 12 * 60 * 60)
             worker_group.wait_ready(count=1, timeout=ready_wait_s)
@@ -1960,6 +1962,11 @@ class ZephyrContext:
     heartbeat_timeout: float = 120.0
     max_shard_failures: int = MAX_SHARD_FAILURES
     max_shard_infra_failures: int = MAX_SHARD_INFRA_FAILURES
+    # Environment applied to worker replica jobs (extras, env_vars, pip packages).
+    # None → no extras installed; workers run with the cluster's base image only.
+    # Set this when workers need optional packages (e.g. vLLM):
+    # ``worker_environment=EnvironmentConfig(extras=["marin:vllm", "marin:tpu"])``.
+    worker_environment: EnvironmentConfig | None = None
 
     # Shared data staged by put(), uploaded to disk at the start of execute()
     _shared_data: dict[str, Any] = field(default_factory=dict, repr=False)
@@ -2083,6 +2090,7 @@ class ZephyrContext:
                     heartbeat_timeout=self.heartbeat_timeout,
                     max_shard_failures=self.max_shard_failures,
                     max_shard_infra_failures=self.max_shard_infra_failures,
+                    worker_environment=self.worker_environment,
                 )
                 ensure_parent_dir(config_path)
                 with open_url(config_path, "wb") as f:

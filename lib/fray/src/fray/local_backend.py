@@ -26,6 +26,7 @@ from fray.types import (
     ActorConfig,
     BinaryEntrypoint,
     CallableEntrypoint,
+    EnvironmentConfig,
     JobRequest,
     JobStatus,
     ResourceConfig,
@@ -185,9 +186,15 @@ class LocalClient:
         count: int,
         resources: ResourceConfig = ResourceConfig(),
         actor_config: ActorConfig = ActorConfig(),
+        environment: EnvironmentConfig | None = None,
         **kwargs: Any,
     ) -> ActorGroup:
-        """Create N in-process actor instances, returning a group handle."""
+        """Create N in-process actor instances, returning a group handle.
+
+        ``environment`` is accepted for protocol parity with the iris backend
+        but ignored — the local backend instantiates actors in the calling
+        process, so there are no replica containers to install extras into.
+        """
         handles: list[LocalActorHandle] = []
         jobs: list[LocalJobHandle] = []
         for i in range(count):

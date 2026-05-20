@@ -21,6 +21,7 @@ import logging
 from dataclasses import dataclass
 
 from fray import ResourceConfig, current_client
+from fray.types import create_environment
 from rigging.filesystem import check_gcs_paths_same_region
 from zephyr.execution import ZephyrContext
 from zephyr.runners import InlineRunner
@@ -57,6 +58,7 @@ class RegionalJobSpec:
     max_shard_infra_failures: int
     chunk_size: int
     compile_cache_uri_template: str | None
+    worker_extras: tuple[str, ...]
 
 
 def main(spec: RegionalJobSpec) -> None:
@@ -111,6 +113,7 @@ def _build_context(spec: RegionalJobSpec) -> ZephyrContext:
         list(spec.tpu_shapes), preemptible=spec.worker_preemptible, regions=[spec.region]
     )
     coordinator_resources = ResourceConfig(cpu=0.5, ram="2g", preemptible=False, regions=[spec.region])
+    worker_environment = create_environment(extras=list(spec.worker_extras)) if spec.worker_extras else None
     return ZephyrContext(
         client=client,
         max_workers=spec.max_workers,
@@ -120,5 +123,6 @@ def _build_context(spec: RegionalJobSpec) -> ZephyrContext:
         heartbeat_timeout=spec.heartbeat_timeout,
         max_shard_failures=spec.max_shard_failures,
         max_shard_infra_failures=spec.max_shard_infra_failures,
+        worker_environment=worker_environment,
         name=f"{spec.job_name}-{spec.region}-{spec.run_id}",
     )
