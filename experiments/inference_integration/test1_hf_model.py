@@ -21,8 +21,8 @@ def main() -> None:
     expected_ids = {p["id"] for p in prompts}
 
     cfg = InferenceConfig(
-        regions=["us-central1"],
-        results_region="us-central1",
+        regions=["us-east5"],
+        results_region="us-east5",
         tpu_shapes=("v5p-8",),
         max_workers_per_region=1,
         shard_size=4,
