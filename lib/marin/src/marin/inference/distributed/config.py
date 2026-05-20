@@ -132,7 +132,6 @@ class InferenceConfig:
             preemption loses at most one shard's worth of work.
         sampling: Sampling parameters forwarded to vLLM.
         job_name: Prefix used in Fray job names and GCS output paths.
-        worker_priority: Iris priority band for worker jobs (e.g. ``"batch"``).
         worker_preemptible: Whether worker tasks are preemptible.
         heartbeat_timeout: Per-context Zephyr heartbeat timeout (seconds).
             Default matches upstream Zephyr; raise for long-running inference
@@ -155,7 +154,6 @@ class InferenceConfig:
     shard_size: int = 500
     sampling: SamplingParams = field(default_factory=SamplingParams)
     job_name: str = "marin-inference"
-    worker_priority: str = "batch"
     worker_preemptible: bool = True
     heartbeat_timeout: float = DEFAULT_HEARTBEAT_TIMEOUT
     max_shard_failures: int = MAX_SHARD_FAILURES
