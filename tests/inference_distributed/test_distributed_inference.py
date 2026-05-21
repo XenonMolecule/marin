@@ -170,9 +170,102 @@ def test_build_context_threads_worker_environment():
     assert list(ctx.worker_environment.extras) == ["marin:vllm", "marin:tpu"]
 
 
-def test_build_context_omits_worker_environment_when_extras_empty():
-    """Passing empty ``worker_extras`` should produce ``worker_environment=None``
-    so Zephyr falls back to the cluster-default environment.
+def test_build_context_omits_worker_environment_when_extras_empty_and_cache_disabled():
+    """Empty extras + explicitly disabled compile cache (template="") produces
+    ``worker_environment=None`` so Zephyr falls back to the cluster-default
+    environment. The compile-cache env vars no longer get injected when the
+    cache is opted out.
+    """
+    from fray.local_backend import LocalClient
+    from marin.inference.distributed.regional_job import RegionalJobSpec, _build_context
+
+    spec = RegionalJobSpec(
+        region="us-central1",
+        results_uri="file:///tmp/results",
+        input_files=("/tmp/a.jsonl.gz",),
+        model_spec=ModelSpec(model="hf/test"),
+        sampling=SamplingParams(),
+        job_name="job",
+        run_id="testrun",
+        tpu_shapes=("v5p-8",),
+        max_workers=1,
+        worker_preemptible=True,
+        heartbeat_timeout=120.0,
+        max_shard_failures=3,
+        max_shard_infra_failures=20,
+        chunk_size=2000,
+        compile_cache_uri_template="",  # explicit opt-out
+        worker_extras=(),
+    )
+
+    from fray import set_current_client
+
+    client = LocalClient()
+    try:
+        with set_current_client(client):
+            ctx = _build_context(spec)
+    finally:
+        client.shutdown(wait=True)
+
+    assert ctx.worker_environment is None
+
+
+def test_build_context_threads_compile_cache_env_vars_to_worker_environment():
+    """The XLA compile-cache env vars must land on ``worker_environment.env_vars``
+    so they reach the TPU worker process (which is where vLLM actually compiles).
+
+    Regression test for a 2026-05-21 real-cluster integration-test failure
+    (``infinttest-6``) where the cache directory remained empty after a full
+    run: the env vars were being set on the regional CPU coordinator's
+    ``os.environ`` rather than threaded through Fray's ``EnvironmentConfig``
+    to the worker. Without the worker_environment carrying these vars, JAX
+    and vLLM compile from scratch on every run.
+    """
+    from fray.local_backend import LocalClient
+    from marin.inference.distributed.regional_job import RegionalJobSpec, _build_context
+
+    spec = RegionalJobSpec(
+        region="us-central1",
+        results_uri="file:///tmp/results",
+        input_files=("/tmp/a.jsonl.gz",),
+        model_spec=ModelSpec(model="hf/test", engine_kwargs={"tensor_parallel_size": 4}),
+        sampling=SamplingParams(),
+        job_name="job",
+        run_id="testrun",
+        tpu_shapes=("v5p-8",),
+        max_workers=1,
+        worker_preemptible=True,
+        heartbeat_timeout=120.0,
+        max_shard_failures=3,
+        max_shard_infra_failures=20,
+        chunk_size=2000,
+        compile_cache_uri_template=None,  # default cache prefix
+        worker_extras=("marin:vllm",),
+    )
+
+    from fray import set_current_client
+
+    client = LocalClient()
+    try:
+        with set_current_client(client):
+            ctx = _build_context(spec)
+    finally:
+        client.shutdown(wait=True)
+
+    assert ctx.worker_environment is not None
+    env_vars = ctx.worker_environment.env_vars
+    assert "JAX_COMPILATION_CACHE_DIR" in env_vars
+    assert "VLLM_XLA_CACHE_PATH" in env_vars
+    assert env_vars["JAX_COMPILATION_CACHE_DIR"] == env_vars["VLLM_XLA_CACHE_PATH"]
+    assert env_vars["JAX_COMPILATION_CACHE_DIR"].startswith("gs://marin-us-central1/tmp/ttl=30d/vllm-cache/")
+    assert env_vars.get("JAX_ENABLE_COMPILATION_CACHE") == "1"
+    # Extras still threaded through alongside env vars.
+    assert list(ctx.worker_environment.extras) == ["marin:vllm"]
+
+
+def test_build_context_includes_compile_cache_env_vars_even_when_no_extras():
+    """When extras are empty but the compile cache is on (default), the worker
+    still needs ``worker_environment`` so the cache env vars reach it.
     """
     from fray.local_backend import LocalClient
     from marin.inference.distributed.regional_job import RegionalJobSpec, _build_context
@@ -205,7 +298,17 @@ def test_build_context_omits_worker_environment_when_extras_empty():
     finally:
         client.shutdown(wait=True)
 
-    assert ctx.worker_environment is None
+    assert ctx.worker_environment is not None
+    assert "JAX_COMPILATION_CACHE_DIR" in ctx.worker_environment.env_vars
+    assert list(ctx.worker_environment.extras) == []
+
+
+def test_resolve_cache_uri_empty_template_disables_cache():
+    """An empty-string template explicitly disables the compile cache."""
+    from marin.inference.distributed import compile_cache
+
+    spec = ModelSpec(model="hf/test")
+    assert compile_cache.resolve_cache_uri(spec, "us-central1", template="") is None
 
 
 # ---------------------------------------------------------------------------

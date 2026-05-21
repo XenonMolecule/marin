@@ -9,11 +9,12 @@ region. Inside, this module:
 1. Validates that the model and input paths live in the worker's region
    (the canonical results path is intentionally cross-region and is
    excluded from the check).
-2. Configures the JAX / vLLM XLA compile cache to point at the regional
-   30-day TTL bucket.
-3. Constructs a `ZephyrContext` with per-context heartbeat / failure caps
-   from the `InferenceConfig`.
-4. Builds the inference pipeline and calls `ctx.execute`.
+2. Constructs a `ZephyrContext` with per-context heartbeat / failure caps
+   from the `InferenceConfig`, and a worker ``EnvironmentConfig`` carrying
+   the uv extras and JAX / vLLM XLA-cache env vars for the TPU worker
+   process. The compile cache only takes effect when its env vars are set
+   on the worker, not on this CPU coordinator.
+3. Builds the inference pipeline and calls `ctx.execute`.
 """
 from __future__ import annotations
 
@@ -71,7 +72,6 @@ def main(spec: RegionalJobSpec) -> None:
     )
 
     _validate_region(spec)
-    _configure_compile_cache(spec)
 
     work_items = assign_shard_ids(spec.input_files)
     rotated = rotate_for_region(work_items, spec.region)
@@ -102,9 +102,17 @@ def _validate_region(spec: RegionalJobSpec) -> None:
     )
 
 
-def _configure_compile_cache(spec: RegionalJobSpec) -> None:
+def _build_worker_env_vars(spec: RegionalJobSpec) -> dict[str, str]:
+    """Compute env vars to set on the TPU worker process.
+
+    Currently just the JAX / vLLM XLA compile-cache vars. Empty dict when the
+    cache is disabled (template="") so the caller can skip building a
+    ``worker_environment`` if there's also nothing else to inject.
+    """
+    env_vars: dict[str, str] = {}
     cache_uri = resolve_cache_uri(spec.model_spec, spec.region, spec.compile_cache_uri_template)
-    configure_env(cache_uri)
+    configure_env(cache_uri, env=env_vars)
+    return env_vars
 
 
 def _build_context(spec: RegionalJobSpec) -> ZephyrContext:
@@ -113,7 +121,11 @@ def _build_context(spec: RegionalJobSpec) -> ZephyrContext:
         list(spec.tpu_shapes), preemptible=spec.worker_preemptible, regions=[spec.region]
     )
     coordinator_resources = ResourceConfig(cpu=0.5, ram="2g", preemptible=False, regions=[spec.region])
-    worker_environment = create_environment(extras=list(spec.worker_extras)) if spec.worker_extras else None
+    worker_env_vars = _build_worker_env_vars(spec)
+    if spec.worker_extras or worker_env_vars:
+        worker_environment = create_environment(extras=list(spec.worker_extras), env_vars=worker_env_vars)
+    else:
+        worker_environment = None
     return ZephyrContext(
         client=client,
         max_workers=spec.max_workers,

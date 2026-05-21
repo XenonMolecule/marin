@@ -9,17 +9,17 @@ when nothing is cached. The simplest way to share compiled artifacts across
 workers in the same region is to point those env vars at a region-local TTL
 GCS prefix. JAX handles the read/write paths without our help.
 
-This module configures the env vars exactly once per worker, before
-`vllm_worker.ensure_engine` is called. It is best-effort: any failure to
-resolve the cache path logs and skips, leaving the worker to compile from
-scratch.
+The env vars must be set on the **worker** process (where vLLM compiles),
+not on the regional CPU coordinator that submits the worker job. The
+regional coordinator threads them through Fray's ``EnvironmentConfig.env_vars``
+to the worker submission; see ``regional_job._build_context``.
 """
 from __future__ import annotations
 
 import hashlib
 import logging
 import os
-from collections.abc import Mapping
+from collections.abc import MutableMapping
 
 from marin.rl.placement import marin_prefix_for_region
 
@@ -51,15 +51,18 @@ def resolve_cache_uri(
     ``template`` supports two placeholders: ``{region_prefix}`` (the worker's
     ``gs://marin-{region}`` path) and ``{model_hash}``. When ``template`` is
     None, the function returns the canonical default location under the
-    region's 30-day TTL scratch prefix.
+    region's 30-day TTL scratch prefix. An empty string template explicitly
+    disables the compile cache and returns None.
     """
+    if template == "":
+        return None
     if template is None:
         template = _DEFAULT_TEMPLATE
     region_prefix = marin_prefix_for_region(region)
     return template.format(region_prefix=region_prefix, model_hash=model_cache_hash(model_spec, region))
 
 
-def configure_env(cache_uri: str | None, env: Mapping[str, str] | None = None) -> None:
+def configure_env(cache_uri: str | None, env: MutableMapping[str, str] | None = None) -> None:
     """Set ``JAX_COMPILATION_CACHE_DIR`` and ``VLLM_XLA_CACHE_PATH`` to ``cache_uri``.
 
     No-op when ``cache_uri`` is None. Uses ``setdefault`` semantics on the
