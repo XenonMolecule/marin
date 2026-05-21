@@ -238,6 +238,24 @@ def test_input_validate_text_missing_prompt():
         input_module.validate_record({"id": "1", "payload": {"kind": "text"}})
 
 
+def test_materialize_inline_input_records_per_file_controls_file_count(tmp_path):
+    """`records_per_file` must determine the number of materialized files.
+
+    Regression for the bug where the input module hard-coded the file chunk
+    size to 5000 records, making ``InferenceConfig.shard_size`` a no-op for
+    inline inputs. See also
+    ``test_inference_inline_input_shard_size_controls_output_shard_count``.
+    """
+    output_dir = f"file://{tmp_path}/inputs"
+    records = [{"id": f"r{i}", "payload": {"kind": "text", "prompt": str(i)}} for i in range(20)]
+    paths = input_module.materialize_inline_input(records, output_dir=output_dir, records_per_file=5)
+    assert len(paths) == 4, paths
+    paths_one = input_module.materialize_inline_input(
+        records, output_dir=f"file://{tmp_path}/inputs-one", records_per_file=1
+    )
+    assert len(paths_one) == 20
+
+
 # ---------------------------------------------------------------------------
 # Compile-cache resolution
 # ---------------------------------------------------------------------------
@@ -561,6 +579,64 @@ def test_inference_skip_existing_does_not_recompute(tmp_path, monkeypatch, stub_
     assert (
         not stub_engine.generate_calls
     ), "Second run should have hit skip_existing on every shard and made zero engine calls."
+
+
+def test_inference_inline_input_shard_size_controls_output_shard_count(
+    tmp_path, monkeypatch, stub_engine, local_fray_client
+):
+    """`cfg.shard_size` must drive the number of output shards for inline input.
+
+    Regression for the failing real-cluster multi-region integration test, where
+    32 prompts at ``shard_size=8`` produced only **one** output shard because
+    the input materializer chunked by a hard-coded internal constant (5000)
+    instead of honoring ``shard_size``. Per-region rotation and ``skip_existing``
+    arbitration only matter when there is real shard granularity to rotate over.
+    """
+    from fray import set_current_client
+
+    with set_current_client(local_fray_client):
+        _local_results_root(tmp_path, monkeypatch)
+        prompts = [{"id": f"p{i:03d}", "payload": {"kind": "text", "prompt": f"x-{i}"}} for i in range(32)]
+        cfg = InferenceConfig(
+            regions=["us-central1"],
+            results_region="us-central1",
+            max_workers_per_region=1,
+            shard_size=8,
+            job_name="shardsize-regression",
+            sampling=SamplingParams(max_tokens=4),
+        )
+        result = inference(model=ModelSpec(model="meta-llama/Llama-3-8B"), dataset=prompts, config=cfg)
+
+    assert result.is_complete, f"missing: {result.missing_shards}"
+    output_files = result.list_output_files()
+    assert len(output_files) == 4, (
+        f"expected 4 output shards for 32 prompts / shard_size=8, " f"got {len(output_files)}: {output_files}"
+    )
+    records = result.to_list()
+    assert len(records) == 32
+    shard_ids = {r.shard for r in records}
+    assert shard_ids == {0, 1, 2, 3}, shard_ids
+
+
+def test_inference_inline_input_uneven_shard_size_rounds_up(tmp_path, monkeypatch, stub_engine, local_fray_client):
+    """Non-divisible N: 10 prompts at shard_size=3 -> 4 shards (3,3,3,1)."""
+    from fray import set_current_client
+
+    with set_current_client(local_fray_client):
+        _local_results_root(tmp_path, monkeypatch)
+        prompts = [{"id": f"u{i}", "payload": {"kind": "text", "prompt": str(i)}} for i in range(10)]
+        cfg = InferenceConfig(
+            regions=["us-central1"],
+            results_region="us-central1",
+            max_workers_per_region=1,
+            shard_size=3,
+            job_name="shardsize-uneven",
+            sampling=SamplingParams(max_tokens=4),
+        )
+        result = inference(model=ModelSpec(model="meta-llama/Llama-3-8B"), dataset=prompts, config=cfg)
+
+    assert result.is_complete
+    assert len(result.list_output_files()) == 4
 
 
 class _StableUUID:

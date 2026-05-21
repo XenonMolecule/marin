@@ -67,7 +67,7 @@ def inference(
         results_uri,
     )
 
-    input_files = _prepare_input(dataset, inputs_uri)
+    input_files = _prepare_input(dataset, inputs_uri, config.shard_size)
     logger.info("Inference input: %d file(s) under %s", len(input_files), inputs_uri)
 
     return run_meta_coordinator(
@@ -85,8 +85,14 @@ def _run_prefix(config: InferenceConfig, run_id: str) -> str:
     return f"{bucket}/{config.job_name}/{run_id}"
 
 
-def _prepare_input(dataset: InferenceInput, inputs_uri: str) -> list[str]:
-    """Resolve the caller's input to a sorted list of JSONL file URIs."""
+def _prepare_input(dataset: InferenceInput, inputs_uri: str, shard_size: int) -> list[str]:
+    """Resolve the caller's input to a sorted list of JSONL file URIs.
+
+    Inline records are chunked into ``shard_size``-sized files so that the
+    downstream pipeline (one Zephyr shard per input file) honors the caller's
+    requested shard granularity. Path/glob inputs are returned as-is — the
+    pre-existing file layout determines sharding there.
+    """
     if isinstance(dataset, str):
         return list_input_files(dataset)
-    return materialize_inline_input(list(dataset), output_dir=inputs_uri)
+    return materialize_inline_input(list(dataset), output_dir=inputs_uri, records_per_file=shard_size)

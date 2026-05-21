@@ -31,10 +31,6 @@ import fsspec
 
 logger = logging.getLogger(__name__)
 
-# Records per materialized input shard file. Independent of inference shard
-# size; just keeps each input file a reasonable upload size.
-_INPUT_RECORDS_PER_FILE: int = 5000
-
 # Accepted payload kinds.
 PAYLOAD_KIND_TEXT = "text"
 PAYLOAD_KIND_MESSAGES = "messages"
@@ -82,16 +78,20 @@ def materialize_inline_input(
     records: Sequence[dict[str, Any]],
     *,
     output_dir: str,
-    records_per_file: int = _INPUT_RECORDS_PER_FILE,
+    records_per_file: int,
 ) -> list[str]:
     """Write an in-memory record list to JSONL.gz files under ``output_dir``.
 
     Returns the list of written file URIs. Each record is validated before
-    write. The split into multiple files lets Zephyr's `flat_map` parallelize
-    reads across worker actors.
+    write. ``records_per_file`` is the chunk size that determines the number
+    of output files; it also becomes the downstream Zephyr shard size, since
+    the pipeline maps one input file to one content shard. Callers should
+    pass ``InferenceConfig.shard_size`` here.
     """
     if not records:
         raise ValueError("Cannot materialize empty input.")
+    if records_per_file <= 0:
+        raise ValueError(f"records_per_file must be positive, got {records_per_file}.")
     for record in records:
         validate_record(record)
 

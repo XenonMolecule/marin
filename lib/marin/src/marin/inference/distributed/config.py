@@ -129,7 +129,11 @@ class InferenceConfig:
             and chips_per_vm (enforced by `ResourceConfig.with_tpu`).
         max_workers_per_region: Cap on concurrent worker actors per region.
         shard_size: Records per Zephyr shard. Controls failure granularity:
-            preemption loses at most one shard's worth of work.
+            preemption loses at most one shard's worth of work. For inline
+            (in-memory) input, this also chunks the materialized JSONL files
+            on the way out, since the pipeline maps one input file to one
+            content shard. For path/glob input, the pre-existing file layout
+            determines sharding and ``shard_size`` is unused.
         sampling: Sampling parameters forwarded to vLLM.
         job_name: Prefix used in Fray job names and GCS output paths.
         worker_preemptible: Whether worker tasks are preemptible.
