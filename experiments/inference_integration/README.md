@@ -49,6 +49,7 @@ upstream codebase, so the failure mode cannot silently return.
 | 8 | `test8_region_mismatch_crashes.py` | Negative test: pass a `gs://marin-us-central1/...` model URI to a worker scheduled in `us-east5`. The pre-flight `check_gcs_paths_same_region` must crash the regional job before vLLM loads (avoids a ~16 GB cross-region weight download). |
 | 9 | `test9_sampling_params.py` | Set non-default `SamplingParams` (`temperature=0.7`, `top_p=0.9`, `repetition_penalty=1.1`, `stop=["END"]`). Verify sampling actually fires (>=2 unique outputs from identical prompts) and `finish_reason` is captured in extras. |
 | 10 | `test10_marin_uri_model.py` | Load a model from a `marin://` URI (per-region resolution to `gs://marin-{region}/...`). The production loading pattern for Marin-trained checkpoints. Edit `MARIN_MODEL_URI` at the top of the script if the default path has moved. |
+| 11 | `test11_tpu_shape_alternatives.py` | `tpu_shapes` multi-shape fallback. Passes two topology-matched variants (`("v6e-4", "v5litepod-4")`); the scheduler may land on either. Fills the gap left by tests 1–10, which each pin a single TPU shape. |
 
 Tests 1-3 are the smallest and fastest — run them first. Tests 4-5 need
 ~10 minutes wall clock. Test 6 needs ~20 minutes (two full runs).

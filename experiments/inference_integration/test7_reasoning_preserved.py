@@ -40,9 +40,9 @@ def main() -> None:
     expected_ids = {p["id"] for p in prompts}
 
     cfg = InferenceConfig(
-        regions=["us-central1"],
-        results_region="us-central1",
-        tpu_shapes=("v5p-8",),
+        regions=["europe-west4"],
+        results_region="europe-west4",
+        tpu_shapes=("v6e-4",),
         max_workers_per_region=1,
         shard_size=4,
         job_name="inf-integ-7-reasoning",

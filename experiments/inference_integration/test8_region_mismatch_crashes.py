@@ -32,9 +32,9 @@ def main() -> None:
     prompts = [{"id": f"t8-{i:03d}", "payload": {"kind": "text", "prompt": "hello"}} for i in range(4)]
 
     cfg = InferenceConfig(
-        regions=["us-east5"],  # worker is in us-east5
+        regions=["europe-west4"],  # worker is in europe-west4
         results_region="us-central1",
-        tpu_shapes=("v5p-8",),
+        tpu_shapes=("v6e-4",),
         max_workers_per_region=1,
         shard_size=4,
         job_name="inf-integ-8-region-mismatch",

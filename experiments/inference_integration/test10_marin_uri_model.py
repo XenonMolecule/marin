@@ -38,9 +38,9 @@ def main() -> None:
     expected_ids = {p["id"] for p in prompts}
 
     cfg = InferenceConfig(
-        regions=["us-central1"],
-        results_region="us-central1",
-        tpu_shapes=("v5p-8",),
+        regions=["europe-west4"],
+        results_region="europe-west4",
+        tpu_shapes=("v6e-4",),
         max_workers_per_region=1,
         shard_size=4,
         job_name="inf-integ-10-marin-uri",
@@ -52,12 +52,12 @@ def main() -> None:
     )
 
     # Sanity-check the URI resolution before we submit (catches typos locally).
-    resolved = model.resolve_for_region("us-central1")
+    resolved = model.resolve_for_region("europe-west4")
     print(f"marin:// URI: {MARIN_MODEL_URI}")
     print(f"Resolves to:  {resolved}")
     assert resolved.startswith(
-        "gs://marin-us-central1/"
-    ), f"Expected resolved path under gs://marin-us-central1/, got {resolved}"
+        "gs://marin-eu-west4/"
+    ), f"Expected resolved path under gs://marin-eu-west4/, got {resolved}"
 
     print(f"\n{len(prompts)} prompts, tp={MARIN_MODEL_TP}")
     result = inference(model=model, dataset=prompts, config=cfg)
