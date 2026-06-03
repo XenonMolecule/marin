@@ -1,151 +1,127 @@
-# Baseline dedup pipeline
+# Dedup pipeline
 
-Document-level deduplication for the baseline extractions (`llm_curated`,
-`resiliparse`). Dedup runs on **extracted text**, not tokens — tokenization is
-a separate, downstream step (see [Tokenize the survivors](#4-tokenize-the-survivors)).
+The general document-level dedup pipeline for baseline extractions. One script,
+`experiments/baseline_collection/dedup_extracted.py`, deduplicates the first-N
+WARCs of **any** extraction spec — you pass the spec name with `--spec`, it runs
+the whole DAG in a single shot. Dedup operates on **extracted text**;
+tokenization is a separate downstream step.
 
-## TL;DR
+## Why fuzzy dedup
+
+LLM extraction is **stochastic** — two extractions of "the same page" come out as
+different strings, so exact-match dedup catches almost nothing. The MinHash-LSH
+fuzzy pass (~0.75 Jaccard over 5-char n-grams) is what actually collapses
+near-duplicate pages into one canonical record. The fuzzy pass is the point of
+this pipeline; don't skip it.
+
+Dedup is **N-dependent**: deduping the first-N WARCs only collapses duplicates
+*within* those N. The N=100 deduped tree is not a prefix of the N=500 tree —
+each (spec, N) is its own run and its own output dir.
+
+## Pipeline stages
+
+`build_steps()` wires six steps into a `StepRunner` DAG. Each writes to a fixed,
+predictable path under the output bucket (no content-hashed cache dir — rerunning
+only changes with `(spec, n)`, which already changes the bucket).
+
+| Step | What it does |
+|---|---|
+| **reshape** | Read the first-N WARC hashes from the manifest, pull those done batches from the consolidated archive, emit a flat 200-shard `data-XXXXX-of-00200.jsonl.gz` tree (text-only schema). |
+| **normalize** | `datakit normalize_to_parquet`: jsonl.gz → `NormalizedData` parquet with `xxh3_128` ids and `DedupMode.EXACT` (so exact-duplicate docs are collapsed here for free). Default 64 MB target partitions (vs marin's 256 MB) → ~4× more parquet shards, which gives the downstream MinHash + fuzzy stages ~4× more parallelism width. Pure parallelism knob (`--target-partition-bytes`); outputs are identical regardless. |
+| **minhash** | Per-shard MinHash bucket attrs: 286 perms, 26 bands, 5-char n-grams, seed 42. Co-partitioned 1:1 with normalize output. |
+| **fuzzy** | Global LSH + connected-components across all minhash shards → per-doc cluster markers `{id, attributes: {dup_cluster_id, is_cluster_canonical}}`. Exactly one row per cluster has `is_cluster_canonical=True`; singletons get no row. `cc_resume=True` resumes from the last complete CC iteration on disk (survives mid-run preemption). |
+| **deduped** | Apply step: join the normalize parquet with the fuzzy attrs, drop `is_cluster_canonical=False`, keep canonicals + singletons. Writes deduped `jsonl.gz` (the `text` field) — this is what the tokenizer reads. |
+| **stats** | `dedup_stats.json` with every step's output path + the fuzzy params. |
+
+## Parameters
+
+Fuzzy / MinHash (marin defaults): **286** perms, **26** bands, **5**-char
+n-grams, seed **42**, approx Jaccard threshold ≈ **0.75**, on the **`text`**
+field. There is **no paragraph dedup** — document level only.
+
+> These defaults are more aggressive than DCLM's BFF (word-13-gram, 0.8 overlap)
+> and Nemotron-CC's typical (260 perms / 20 bands), so dedup rates read slightly
+> higher than those published comparisons.
+
+## Output layout (permanent, regional)
 
 ```text
-raw extraction (jsonl with `text`)
-  └─ prep      add synthetic `id`, project to {id, text, url}
-      ├─ exact   xxh3-128 hash over `text`            ── emits sidecar of dup ids
-      └─ fuzzy   MinHash-LSH over `text`              ── emits sidecar of dup ids
-           └─ deduped (apply)  join prep ⨝ (exact ∪ fuzzy), drop dups → jsonl.gz
-                └─ stats        dedup_stats.json + cluster-size histogram
-                                   ▼  separate launch, in-region
-                          tokenize_deduped.py → Llama-3.1-8B cache
+gs://marin-{region}/documents/baseline_{spec}_deduped/{n}warcs/
+    reshape/data-XXXXX-of-00200.jsonl.gz
+    normalize/outputs/main/part-*.parquet
+    minhash/outputs/<basename>.parquet
+    fuzzy/outputs/source_000/<basename>.parquet
+    deduped/data-XXXXX-of-YYYYY.jsonl.gz   <-- tokenize reads here
+    stats/dedup_stats.json
 ```
 
-There is **no paragraph dedup** — only document-level exact + fuzzy.
-
-## Files
-
-| File | Role |
-|---|---|
-| `dedup_llm_curated.py` | Driver for `llm_curated` (us-central1). Builds the StepSpec DAG and runs it. |
-| `dedup_resiliparse.py` | Driver for `resiliparse` (us-central2). Same DAG, different region/source. |
-| `prep_with_id.py` | `prep` step — adds a synthetic `id` and projects to `{id, text, url}`. |
-| `apply_dedup.py` | `deduped` step — joins prepped shards with the dup-id sidecars and writes the deduped jsonl tree; also computes the cluster-size histogram. |
-| `tokenize_deduped.py` | Downstream tokenization of the deduped trees (run separately). |
-
-The actual exact/fuzzy logic lives in marin, not here:
-`marin.processing.classification.deduplication.{exact,fuzzy}`. The drivers just
-wire those into a DAG.
-
-## Dedup parameters (both sources)
-
-- **Exact:** `dedup_exact_document` — xxh3-128 hash over the `text` field.
-- **Fuzzy:** `dedup_fuzzy_document` — MinHash-LSH + connected components, marin
-  defaults: `286` perms, `26` bands, `5`-char n-grams, seed `42`,
-  approx Jaccard threshold ≈ `0.75`.
-
-> The fuzzy defaults are **more aggressive** than DCLM's BFF (word-13-gram,
-> 0.8 overlap) and Nemotron-CC's typical (260 perms / 20 bands), so dedup rates
-> will read slightly higher than those published comparisons.
-
-Dedup keys on the **`text`** column for both sources (the cleaned,
-post-processed output that gets tokenized in training — *not* `generated_text`,
-which `llm_curated` keeps only for debugging).
-
-## How the sidecar / apply pattern works
-
-`dedup_*_document` **never delete anything**. They emit a sidecar parquet of
-duplicate ids at `{dedup_output}/data/<shard>.parquet` with shape
-`{id, attributes: {dup_doc: True}}`. The `deduped` step (`apply_dedup`) joins
-each prepped input shard against the **union** of the exact and fuzzy sidecars
-and writes the surviving rows to a new `jsonl.gz` tree (the original `text`
-column is preserved, so the downstream tokenizer reads the right field).
-
-Cluster-size stats come from the fuzzy connected-components final iteration at
-`{fuzzy_output}/metadata/cc/it_<N>/*.parquet`.
+The bucket is derived from `--region`; outputs are permanent (no TTL).
 
 ## Running
 
-Each driver runs the whole DAG via `StepRunner().run(build_steps())`. They are
-**region-pinned** — `check_path_in_region` asserts the source bucket is local,
-so you must launch on the matching cluster (cross-region reads are blocked by
-design):
-
-| Source | Cluster / region | Source path |
-|---|---|---|
-| `llm_curated` | us-central1 | `gs://marin-us-central1/documents/baseline_llm_curated-050243` |
-| `resiliparse` | us-central2 | `gs://marin-us-central2/extracted/baseline_resiliparse-19bdaa` |
-
-> **Ray is retired** — launch with `iris job run`, not `ray_run.py`. (Some
-> in-tree docstrings still show the old `ray_run.py` command; ignore those.)
-
-### 1–3. Run dedup (prep → exact/fuzzy → apply → stats)
+`dedup_extracted.py` is region-portable: it reads raw input AND writes outputs
+in the same region (no cross-region reads). The raw extraction for the spec must
+already be present in that region. Supported regions: `us-central1` (default),
+`us-east5`, `us-west4`.
 
 ```bash
-# llm_curated (us-central1)
-uv run iris --cluster us-central1 job run \
+uv run iris --config lib/iris/examples/marin.yaml job run --no-wait \
+    --cpu 4 --memory 16GB --disk 20GB \
+    --priority interactive --extra cpu --enable-extra-resources \
     --region us-central1 \
-    --priority batch --no-wait \
-    -e WANDB_API_KEY <YOUR_WANDB_API_KEY> \
-    -e HF_TOKEN <YOUR_HF_TOKEN> \
-    -- python -m experiments.baseline_collection.dedup.dedup_llm_curated
-
-# resiliparse (us-central2)
-uv run iris --cluster us-central2 job run \
-    --region us-central2 \
-    --priority batch --no-wait \
-    -e WANDB_API_KEY <YOUR_WANDB_API_KEY> \
-    -e HF_TOKEN <YOUR_HF_TOKEN> \
-    -- python -m experiments.baseline_collection.dedup.dedup_resiliparse
+    --job-name dedup-<spec>-<N>warcs \
+    -e WANDB_API_KEY <YOUR_WANDB_API_KEY> -e HF_TOKEN <YOUR_HF_TOKEN> \
+    -- python experiments/baseline_collection/dedup_extracted.py \
+       --spec <spec> --n <N> [--region us-central1]
 ```
 
-Sizing knobs live inside each driver's `build_steps()` (`max_parallelism` and
-the fuzzy `worker_resources` ram). resiliparse uses higher parallelism and 64 GB
-fuzzy workers; llm_curated uses 32 GB. Bump these in the driver if you hit OOM
-or want more throughput — don't pass them on the command line.
+Flags:
 
-### Output location & the 14-day TTL
+- `--spec` *(required)* — the extraction spec name. The output bucket and
+  tokenizer entry are both keyed on it.
+- `--n` *(required)* — number of priority (first-N) WARCs.
+- `--manifest` — WARC manifest defining the first-N ordering
+  (default `experiments/distill/baseline_warcs_3000.txt`).
+- `--region` — region whose `marin-*` bucket holds raw input and receives the
+  deduped outputs (default `us-central1`).
+- `--target-partition-bytes` — normalize parquet partition size; controls
+  downstream parallelism width (default 64 MB).
 
-The deduped tree is written under a **temp bucket** with a 14-day TTL:
-`gs://marin-tmp-us-central{1,2}/ttl=14d/michaelryan/dedup_{llm_curated,resiliparse}/...`.
-**It auto-deletes after 14 days.** Either tokenize before then, or copy the
-`deduped/` tree to permanent storage first
-(`gs://marin-us-central1/documents/baseline_llm_curated_deduped`,
-`gs://marin-us-central2/documents/baseline_resiliparse_deduped`).
+Sizing for the heavy fuzzy stage lives in `build_steps()` (`max_parallelism`,
+64 GB preemptible workers, `cc_resume`); bump there if you hit OOM rather than on
+the command line.
 
-Check `dedup_stats.json` (written by the `stats` step) for the exact output
-paths, dedup rates, and the cluster-size histogram.
+## Tokenize the survivors
 
-### 4. Tokenize the survivors
-
-Separate launch, **in-region** (the temp/permanent deduped trees are regional —
-cross-region reads are expensive and blocked elsewhere in the pipeline):
+Separate launch, in-region (the deduped tree is regional):
 
 ```bash
-# llm_curated → cache on us-central1
-uv run iris --cluster us-central1 job run --region us-central1 \
-    --priority batch --no-wait \
+uv run iris --config lib/iris/examples/marin.yaml job run --no-wait \
+    --cpu 4 --memory 16GB --disk 20GB \
+    --priority interactive --extra cpu --enable-extra-resources \
+    --region us-central1 --job-name tokenize-<spec>-<N>warcs \
     -e WANDB_API_KEY <YOUR_WANDB_API_KEY> -e HF_TOKEN <YOUR_HF_TOKEN> \
-    -- python experiments/baseline_collection/dedup/tokenize_deduped.py --only llm_curated
-
-# resiliparse → cache on us-central2
-uv run iris --cluster us-central2 job run --region us-central2 \
-    --priority batch --no-wait \
-    -e WANDB_API_KEY <YOUR_WANDB_API_KEY> -e HF_TOKEN <YOUR_HF_TOKEN> \
-    -- python experiments/baseline_collection/dedup/tokenize_deduped.py --only resiliparse
+    -- python experiments/baseline_collection/tokenize_deduped_extracted.py \
+       --spec <spec> --n <N>
 ```
 
-`tokenize_deduped.py` points `default_tokenize` (Llama-3.1-8B, `text_key="text"`)
-at `baseline_{llm_curated,resiliparse}_deduped/data-*.jsonl.gz`. The resulting
-caches have the same shape as the pre-dedup `baseline_*` caches but with roughly
-**26% / 42% fewer tokens** for llm_curated / resiliparse respectively.
+This reads `…/baseline_{spec}_deduped/{n}warcs/deduped/data-*.jsonl.gz` and
+writes a Llama-3.1-8B cache to
+`gs://marin-{region}/tokenized/{spec}_{n}warcs-<cache_hash>/`. The canonical
+`{spec}_{n}warcs` name is the entry to paste into `_D_OBS_DEFAULTS`.
 
-## Why dedup before tokenize (and not after)
+## Why dedup before tokenize
 
-Fuzzy dedup operates on 5-char n-grams of the raw `text`, and exact dedup hashes
-that text. Running it first means near-duplicates collapse on real text rather
-than token streams, and the tokenizer never spends compute on documents that are
-about to be thrown away. Tokenizing first would be both wrong (wrong granularity
-for MinHash) and wasteful.
+Fuzzy dedup works on 5-char n-grams of raw `text`, and the normalize step's exact
+pass hashes that text. Running dedup first collapses near-duplicates on real text
+rather than token streams, and the tokenizer never spends compute on documents
+that are about to be dropped. Tokenizing first would be both wrong (wrong
+granularity for MinHash) and wasteful.
+
+> **Ray is retired** — launch everything with `iris job run`, not `ray_run.py`.
 
 ## Related runbooks
 
 - `.agents/projects/curation_playbook.md` — full `consolidate → dedup →
-  tokenize → mirror → register → train` for llm_curated / quality bands.
+  tokenize → mirror → register → train` walkthrough.
 - `.agents/projects/dedup_observations.md` — notes / observed dedup rates.
