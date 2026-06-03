@@ -148,5 +148,4 @@ for MinHash) and wasteful.
 
 - `.agents/projects/curation_playbook.md` — full `consolidate → dedup →
   tokenize → mirror → register → train` for llm_curated / quality bands.
-- `.agents/projects/resiliparse_dedup_handoff.md` — resiliparse per-N runbook.
 - `.agents/projects/dedup_observations.md` — notes / observed dedup rates.
