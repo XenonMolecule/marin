@@ -30,6 +30,10 @@ from typing import TypeVar
 
 import fsspec
 from fray.v2 import ResourceConfig
+from marin.execution.step_runner import StepRunner
+from marin.execution.step_spec import StepSpec
+from marin.processing.classification.deduplication.exact import dedup_exact_document
+from marin.processing.classification.deduplication.fuzzy import dedup_fuzzy_document
 from rigging.filesystem import (
     check_path_in_region,
     marin_temp_bucket,
@@ -43,10 +47,6 @@ from experiments.baseline_collection.dedup.apply_dedup import (
     cluster_size_histogram,
 )
 from experiments.baseline_collection.dedup.prep_with_id import PrepConfig, prep_with_id
-from marin.execution.step_runner import StepRunner
-from marin.execution.step_spec import StepSpec
-from marin.processing.classification.deduplication.exact import dedup_exact_document
-from marin.processing.classification.deduplication.fuzzy import dedup_fuzzy_document
 
 logger = logging.getLogger(__name__)
 T = TypeVar("T")

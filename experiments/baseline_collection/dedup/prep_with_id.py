@@ -20,11 +20,10 @@ import logging
 from collections.abc import Iterator
 from dataclasses import dataclass
 
-from fray.v2.types import ResourceConfig
+from fray import ResourceConfig
+from marin.utils import fsspec_glob
 from zephyr import Dataset, ZephyrContext
 from zephyr.readers import load_file as zephyr_load_file
-
-from marin.utils import fsspec_glob
 
 logger = logging.getLogger(__name__)
 
