@@ -19,8 +19,6 @@ Launch:
 import os
 
 from levanter.data.text import TextLmDatasetFormat
-
-from experiments.llama import llama3_tokenizer
 from marin.datakit.download.commoncrawl.download_warc import WarcDownloadConfig, download_and_extract_warcs
 from marin.execution.executor import (
     ExecutorStep,
@@ -30,6 +28,8 @@ from marin.execution.executor import (
     versioned,
 )
 from marin.processing.tokenize import TokenizeConfig, tokenize
+
+from experiments.llama import llama3_tokenizer
 
 # Reuse the same WARC manifest as rephraser_cooldown.py
 WARC_MANIFEST = os.path.join(os.path.dirname(__file__), "warc_paths.txt")

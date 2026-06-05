@@ -54,7 +54,7 @@ def load_prompts(dataset_path: str, n_prompts: int):
         return prompts
 
     # Fallback: download from HuggingFace (non-deterministic order!)
-    from datasets import load_dataset, get_dataset_config_names, concatenate_datasets
+    from datasets import concatenate_datasets, get_dataset_config_names, load_dataset
 
     print("WARNING: Loading from HuggingFace — order is NOT deterministic. Use --dataset-path for reproducibility.")
     test_ds = load_dataset("HuggingFaceH4/MATH-500", name="default", split="test")

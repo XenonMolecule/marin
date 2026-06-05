@@ -21,7 +21,6 @@ from pathlib import Path
 
 import fsspec
 import pyarrow.parquet as pq
-
 from zephyr import Dataset, ZephyrContext
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")

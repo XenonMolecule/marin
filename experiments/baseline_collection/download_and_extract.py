@@ -165,8 +165,11 @@ class DownloadAndExtractConfig:
     max_records_per_generate: int = 500
     """Max records per vLLM ``generate()`` call. Large WARCs are subdivided."""
 
-    # NOTE: tpu_type is specified at the Iris job level, not here.
-    # The worker discovers its TPU variant via IRIS_WORKER_DEVICE_VARIANT.
+    # TPU variant requested for Zephyr worker tasks. The orchestrator sets this
+    # per-fleet-entry so the entrypoint can run on CPU (the new Iris pattern:
+    # entrypoint = coordinator, accelerators on worker tasks). Falls back to
+    # IRIS_WORKER_DEVICE_VARIANT (parent TPU env, legacy) if unset.
+    tpu_variant: str = ""
 
     # --- Download ---
     http_timeout: int = 600
@@ -270,7 +273,14 @@ def _format_prompts(
     tokenizer: Any,
 ) -> list[Any]:
     """Format records into prompts with chat template applied."""
-    from vllm.inputs.data import TokensPrompt
+    # vLLM moved TokensPrompt's canonical location across versions; try a few.
+    try:
+        from vllm.inputs import TokensPrompt
+    except ImportError:
+        try:
+            from vllm.inputs.data import TokensPrompt
+        except ImportError:
+            from vllm import TokensPrompt
 
     prompts: list[Any] = []
     for record in records:
@@ -314,28 +324,23 @@ def _filter_by_token_length(
     prompt_column: str,
     tokenizer: Any,
 ) -> list[dict]:
-    """Filter records that exceed max_doc_tokens using a character fast path.
+    """Char-only length filter (matches ``run_extract_standalone._filter_by_length``).
 
-    Char heuristic from ``filter_by_token_length.py``:
-    - ``len <= max_doc_tokens``: definitely fits (1 char >= 1 token)
-    - ``len > max_doc_tokens * 6``: definitely too long
-    - Otherwise: tokenize to check
+    The previous implementation tokenized the borderline (28k-172k char) range
+    to reject overlong pages precisely, but tokenizer calls are single-threaded
+    Python and stall the worker for several minutes per WARC after engine init,
+    with no log progress. The downstream ``_format_prompts`` truncates anything
+    that does exceed ``max_doc_tokens`` anyway, so the precise filter wasn't
+    correctness-critical.
+
+    Threshold: ``max_doc_tokens * 6`` chars — the legacy heuristic; any page
+    bigger than that is overwhelmingly going to overshoot the token budget and
+    is dropped. Smaller pages may need truncation in ``_format_prompts``.
+
+    The ``tokenizer`` argument is retained for API stability.
     """
-    kept: list[dict] = []
-    for record in records:
-        text = record.get(prompt_column, "")
-        char_len = len(text)
-
-        if char_len <= max_doc_tokens:
-            kept.append(record)
-        elif char_len > max_doc_tokens * 6:
-            continue
-        else:
-            token_len = len(tokenizer.encode(text))
-            if token_len <= max_doc_tokens:
-                kept.append(record)
-
-    return kept
+    max_chars = max_doc_tokens * 6
+    return [r for r in records if len(r.get(prompt_column, "")) <= max_chars]
 
 
 # ---------------------------------------------------------------------------
@@ -458,7 +463,7 @@ def run_download_and_extract(config: DownloadAndExtractConfig) -> None:
     Output path is determined at runtime from the worker's GCP region.
     Shard-level checkpointing via ``skip_existing=True`` — safe to restart.
     """
-    from fray.v2 import ResourceConfig, TpuConfig
+    from fray import ResourceConfig, TpuConfig
     from zephyr import Dataset, ZephyrContext
 
     warc_paths = _load_manifest(config.warc_manifest_path)
@@ -478,19 +483,29 @@ def run_download_and_extract(config: DownloadAndExtractConfig) -> None:
         .write_jsonl(_output_path_fn, skip_existing=True)
     )
 
-    # Resolve TPU type from Iris environment
-    tpu_type = os.environ.get("IRIS_WORKER_DEVICE_VARIANT", "v5p-8")
-    logger.info("TPU type (from env): %s", tpu_type)
+    # Resolve TPU type for Zephyr workers. Prefer the config-supplied variant
+    # (set by the orchestrator per fleet entry). Falls back to the legacy env
+    # var that Iris exposes when the entrypoint itself runs on TPU.
+    tpu_type = config.tpu_variant or os.environ.get("IRIS_WORKER_DEVICE_VARIANT", "v5p-8")
+    logger.info("Worker TPU variant: %s (source=%s)", tpu_type, "config" if config.tpu_variant else "env")
 
     max_retries = 10
     for attempt in range(1, max_retries + 1):
         try:
+            # ``chunk_size`` was dropped from ZephyrContext.__init__ in the
+            # upstream/main merge (2026-05-06) and restored 2026-05-09. The
+            # default 100k means one chunk per WARC shard; on a preemptible
+            # TPU that loses ~5h of work per preemption. Setting it equal to
+            # the per-batch generation size means a preemption only loses
+            # the in-flight vLLM batch.
             ctx = ZephyrContext(
                 name="download-and-extract",
                 max_workers=config.num_workers,
                 resources=ResourceConfig(
                     cpu=8,
-                    ram="32g",
+                    # 64g: vLLM model load + WARC HTML buffers + tokenizer overhead
+                    # was OOMing at 32g on v6e-4 hosts (one worker per WARC).
+                    ram="64g",
                     device=TpuConfig(variant=tpu_type),
                 ),
                 chunk_size=config.max_records_per_generate,

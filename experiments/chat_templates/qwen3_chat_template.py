@@ -7,7 +7,7 @@
 Updated chat template for Qwen3 that has {% generation %} tags inserted (required by Levanter).
 """
 
-QWEN_3_CHAT_TEMPLATE = r"""{%- if tools %}
+QWEN_3_CHAT_TEMPLATE = r"""{%- if tools is defined and tools %}
     {{- '<|im_start|>system\n' }}
     {%- if messages[0].role == 'system' %}
         {{- messages[0].content + '\n\n' }}
@@ -58,7 +58,7 @@ QWEN_3_CHAT_TEMPLATE = r"""{%- if tools %}
         {%- else %}
             {{- '<|im_start|>' + message.role + '\n' }}{% generation %}{{- content }}{% endgeneration %}
         {%- endif %}
-        {%- if message.tool_calls %}
+        {%- if message.tool_calls is defined and message.tool_calls %}
             {%- for tool_call in message.tool_calls %}
                 {%- if (loop.first and content) or (not loop.first) %}
                     {% generation %}{{- '\n' }}{% endgeneration %}
@@ -90,7 +90,7 @@ QWEN_3_CHAT_TEMPLATE = r"""{%- if tools %}
         {%- endif %}
     {%- endif %}
 {%- endfor %}
-{%- if add_generation_prompt %}
+{%- if add_generation_prompt is defined and add_generation_prompt %}
     {{- '<|im_start|>assistant\n' }}
     {%- if enable_thinking is defined and enable_thinking is false %}
         {% generation %}{{- '<think>\n\n</think>\n\n' }}{% endgeneration %}

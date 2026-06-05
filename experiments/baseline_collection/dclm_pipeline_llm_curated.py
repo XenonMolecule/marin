@@ -29,8 +29,6 @@ Usage::
         -- python experiments/baseline_collection/dclm_pipeline_llm_curated.py
 """
 
-from experiments.defaults import default_tokenize
-from experiments.llama import llama3_tokenizer
 from marin.datakit.download.download_url import (
     DownloadUrlToGcsConfig,
     download_url_to_gcs,
@@ -43,6 +41,9 @@ from marin.execution.executor import (
 )
 from marin.transform.bff_dedup import BffDedupConfig, bff_dedup
 from marin.transform.dclm_filter import DclmFilterConfig, dclm_filter
+
+from experiments.defaults import default_tokenize
+from experiments.llama import llama3_tokenizer
 
 # ---------------------------------------------------------------------------
 # Source: existing llm_curated documents (200 shards, ~800MB compressed each)

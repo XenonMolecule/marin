@@ -1,0 +1,8 @@
+# med_quality 3000-WARC run: the 5 WARCs still missing from the completion
+# registry (gs://marin-us-central1/documents/baseline_llm_extraction/med_quality/_completed)
+# as of 2026-05-24. Run a single contention-free v6e-4 child against this list.
+s3://commoncrawl/crawl-data/CC-MAIN-2016-44/segments/1476988719416.57/warc/CC-MAIN-20161020183839-00390-ip-10-171-6-4.ec2.internal.warc.gz
+s3://commoncrawl/crawl-data/CC-MAIN-2016-44/segments/1476988720962.53/warc/CC-MAIN-20161020183840-00462-ip-10-171-6-4.ec2.internal.warc.gz
+s3://commoncrawl/crawl-data/CC-MAIN-2017-04/segments/1484560281746.82/warc/CC-MAIN-20170116095121-00114-ip-10-171-10-70.ec2.internal.warc.gz
+s3://commoncrawl/crawl-data/CC-MAIN-2017-22/segments/1495463607813.12/warc/CC-MAIN-20170524112717-20170524132717-00514.warc.gz
+s3://commoncrawl/crawl-data/CC-MAIN-2017-26/segments/1498128321025.86/warc/CC-MAIN-20170627064714-20170627084714-00116.warc.gz

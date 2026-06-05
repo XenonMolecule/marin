@@ -158,7 +158,14 @@
 </head>
 <body>
 
-<h1>WARC Extraction Dashboard</h1>
+<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:12px">
+  <h1 style="margin:0">WARC Extraction Dashboard</h1>
+  <div style="display:flex;align-items:center;gap:8px">
+    <label style="color:var(--text-dim);font-size:12px">Spec</label>
+    <select id="spec-selector" onchange="onSpecChange()" style="padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-family:inherit;font-size:13px;min-width:160px"></select>
+    <span class="timestamp" style="color:var(--text-dim);font-size:11px">filters Progress + Jobs (Cluster is spec-agnostic)</span>
+  </div>
+</div>
 
 <div class="tabs">
   <div class="tab active" onclick="switchTab('progress')">Progress</div>
@@ -213,6 +220,21 @@
 
   <h2>Launch New Adaptive Job</h2>
   <div id="launch-form">
+    <div class="form-row">
+      <label>Spec</label>
+      <select id="launch-spec" style="width:300px" onchange="syncManifestToSpec()"></select>
+      <span class="timestamp">populates from header (sets --spec; legacy = no --spec)</span>
+    </div>
+    <div class="form-row">
+      <label>Manifest</label>
+      <input type="text" id="launch-manifest" value="experiments/distill/baseline_warcs_3000.txt" style="width:420px">
+    </div>
+    <div class="form-row">
+      <label>Start / End</label>
+      <input type="number" id="launch-start" value="0" min="0" style="width:120px">
+      <input type="number" id="launch-end" placeholder="(all)" min="0" style="width:120px">
+      <span class="timestamp">slice into the manifest (--start/--end)</span>
+    </div>
     <div class="form-row">
       <label>TPU Type</label>
       <select id="launch-tpu-type" onchange="autoJobName()">
@@ -370,28 +392,150 @@ function badgeHtml(state) {
   return `<span class="badge ${state}">${state}</span>`;
 }
 
-// ======================== PROGRESS ========================
-async function refreshProgress(mode) {
-  const btnId = mode === 'deep' ? 'btn-deep-scan' : 'btn-quick-scan';
-  setLoading(btnId, true);
+// ======================== SPEC SELECTOR ========================
+// The spec selector is global (in the header). It filters Progress + Jobs.
+// Cluster is spec-agnostic and ignores the selection.
+let _selectedSpec = null;
+let _availableSpecs = [];
+
+// Per-spec loading state for refresh buttons. Lets a slow scan on one spec
+// run while the user works on another spec. Map: btnId -> {spec: boolean}.
+const _loadingBySpec = {};
+
+function getSelectedSpec() {
+  return _selectedSpec || (_availableSpecs[0] || 'low_quality');
+}
+
+function setLoadingForSpec(btnId, spec, loading) {
+  if (!_loadingBySpec[btnId]) _loadingBySpec[btnId] = {};
+  _loadingBySpec[btnId][spec] = !!loading;
+  // Reflect in the DOM only if the user is currently viewing this spec.
+  if (getSelectedSpec() === spec) {
+    setLoading(btnId, loading);
+  }
+}
+
+function syncButtonsForSpec(spec) {
+  for (const btnId of ['btn-quick-scan', 'btn-deep-scan', 'btn-jobs-refresh']) {
+    const isLoading = (_loadingBySpec[btnId] && _loadingBySpec[btnId][spec]) || false;
+    setLoading(btnId, isLoading);
+  }
+}
+
+async function loadSpecs() {
   try {
-    const resp = await fetch('/api/progress/refresh', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({mode}),
-    });
+    const resp = await fetch('/api/specs');
     const json = await resp.json();
-    if (json.ok) {
-      renderProgress(json.data, json.updated_at, mode);
+    _availableSpecs = json.specs || [];
+    _selectedSpec = json.default || _availableSpecs[0] || null;
+    const sel = document.getElementById('spec-selector');
+    sel.innerHTML = '';
+    for (const s of _availableSpecs) {
+      const opt = document.createElement('option');
+      opt.value = s;
+      opt.textContent = s;
+      if (s === _selectedSpec) opt.selected = true;
+      sel.appendChild(opt);
+    }
+    // Populate the launch-form spec dropdown too.
+    const launchSel = document.getElementById('launch-spec');
+    if (launchSel) {
+      launchSel.innerHTML = '';
+      const noneOpt = document.createElement('option');
+      noneOpt.value = '';
+      noneOpt.textContent = '(none — legacy hardcoded prompt)';
+      launchSel.appendChild(noneOpt);
+      for (const s of _availableSpecs) {
+        const opt = document.createElement('option');
+        opt.value = s;
+        opt.textContent = s;
+        if (s === _selectedSpec) opt.selected = true;
+        launchSel.appendChild(opt);
+      }
+      syncManifestToSpec();
+    }
+  } catch (e) {
+    console.warn('Failed to load specs', e);
+  }
+}
+
+async function onSpecChange() {
+  const sel = document.getElementById('spec-selector');
+  _selectedSpec = sel.value;
+  // Reflect this spec's loading state on the buttons (a slow scan of a
+  // different spec might still be in flight; let the user freely switch
+  // and trigger refreshes for the current spec without being blocked).
+  syncButtonsForSpec(_selectedSpec);
+  // Refresh both spec-dependent tabs from cache (no expensive re-scan).
+  await Promise.all([
+    _refreshProgressFromCache(),
+    _refreshJobsFromCache(),
+  ]);
+}
+
+async function _refreshProgressFromCache() {
+  try {
+    const resp = await fetch(`/api/progress?spec=${encodeURIComponent(_selectedSpec)}`);
+    const json = await resp.json();
+    if (json.data) {
+      renderProgress(json.data, json.updated_at, json.data.batch_counts ? 'deep' : 'quick');
+      if (json.deep_updated_at) setTimestamp('progress-deep-timestamp', json.deep_updated_at);
     } else {
       document.getElementById('progress-content').innerHTML =
-        `<div class="alert error">Error: ${json.error}</div>`;
+        `<div class="alert info">No cached scan for spec <b>${_selectedSpec}</b> yet — click Quick Scan.</div>`;
+      document.getElementById('progress-timestamp').textContent = 'Not yet scanned';
     }
   } catch (e) {
     document.getElementById('progress-content').innerHTML =
       `<div class="alert error">Failed: ${e.message}</div>`;
   }
-  setLoading(btnId, false);
+}
+
+async function _refreshJobsFromCache() {
+  try {
+    const resp = await fetch(`/api/jobs?spec=${encodeURIComponent(_selectedSpec)}`);
+    const json = await resp.json();
+    if (json.data) {
+      renderJobs(json.data, json.updated_at);
+    } else {
+      document.getElementById('jobs-content').innerHTML =
+        `<div class="alert info">No cached job list for spec <b>${_selectedSpec}</b> yet — click Refresh Jobs.</div>`;
+    }
+  } catch (e) {
+    // Silently ignore — cache may be empty
+  }
+}
+
+// ======================== PROGRESS ========================
+async function refreshProgress(mode) {
+  const btnId = mode === 'deep' ? 'btn-deep-scan' : 'btn-quick-scan';
+  // Capture the spec the user clicked WITH; the response only renders if
+  // it's still the active spec when it returns.
+  const requestSpec = getSelectedSpec();
+  setLoadingForSpec(btnId, requestSpec, true);
+  try {
+    const resp = await fetch('/api/progress/refresh', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({mode, spec: requestSpec}),
+    });
+    const json = await resp.json();
+    if (!json.ok) {
+      if (getSelectedSpec() === requestSpec) {
+        document.getElementById('progress-content').innerHTML =
+          `<div class="alert error">Error (spec=${requestSpec}): ${json.error}</div>`;
+      }
+    } else if (getSelectedSpec() === requestSpec) {
+      // Only render if we're still viewing the spec the request was for.
+      renderProgress(json.data, json.updated_at, mode);
+    }
+  } catch (e) {
+    if (getSelectedSpec() === requestSpec) {
+      document.getElementById('progress-content').innerHTML =
+        `<div class="alert error">Failed (spec=${requestSpec}): ${e.message}</div>`;
+    }
+  }
+  setLoadingForSpec(btnId, requestSpec, false);
 }
 
 function renderProgress(data, updatedAt, mode) {
@@ -409,19 +553,30 @@ function renderProgress(data, updatedAt, mode) {
   const donePct = (done / total * 100).toFixed(1);
   const claimedPct = (claimed / total * 100).toFixed(1);
 
-  // Batch-level progress: use real num_batches from _done stats, estimate for in-progress
+  // Batch-level progress.
+  // We have ground truth from the legacy (low_quality) run for every WARC's
+  // exact num_batches — the source records are deterministic and we use the
+  // same DEFAULT_BATCH_SIZE = 500 chunking. Use those exact counts whenever
+  // available; only fall back to an estimate for hashes the legacy data
+  // doesn't cover (e.g. running on a 10k-WARC manifest that wasn't in the
+  // 3k legacy run).
   let batchPct = null;
   let batchSummary = '';
-  // Estimate avg batches/WARC — empirically sampled ~93 mean, using 95 as slight overestimate.
-  // Still take max with completed WARC data in case it turns out higher.
-  const knownTotals = {}; // hash -> num_batches (from completed WARCs)
+  const knownTotals = {}; // hash -> num_batches (exact ground truth)
   let completedAvg = 0;
   let inProgressP75 = 0;
+  // Legacy ground truth wins for any hash it covers.
+  const legacy = data.legacy_num_batches || {};
+  for (const [h, nb] of Object.entries(legacy)) {
+    knownTotals[h] = nb;
+  }
+  // _done stats from THIS spec's run also count as ground truth — defer to
+  // them over legacy so the displayed status matches the live extraction.
   if (data.done_stats) {
     for (const s of data.done_stats) {
       if (s.num_batches) knownTotals[s.hash] = s.num_batches;
     }
-    const realCounts = Object.values(knownTotals);
+    const realCounts = (data.done_stats || []).map(s => s.num_batches).filter(n => n);
     if (realCounts.length > 0) completedAvg = Math.round(realCounts.reduce((a,b) => a+b, 0) / realCounts.length);
   }
   if (data.batch_counts) {
@@ -433,16 +588,37 @@ function renderProgress(data, updatedAt, mode) {
       inProgressP75 = inProgressCounts[Math.floor(inProgressCounts.length * 0.75)];
     }
   }
-  const avgBatchesPerWarc = Math.max(95, completedAvg, inProgressP75);
-  if (data.batch_counts) {
-    const totalBatchesDone = data.total_batches || 0;
-    const doneWarcBatches = Object.values(knownTotals).reduce((a,b) => a+b, 0);
-    const remainingWarcs = total - done;
-    const estimatedTotalBatches = doneWarcBatches + remainingWarcs * avgBatchesPerWarc;
-    batchPct = Math.min(100, totalBatchesDone / estimatedTotalBatches * 100);
-    const batchRate = data.batches_per_hour ? `${data.batches_per_hour.toLocaleString()} batches/hr` : '';
-    batchSummary = `${totalBatchesDone.toLocaleString()} / ~${estimatedTotalBatches.toLocaleString()} batches (~${avgBatchesPerWarc}/WARC est.) ${batchRate}`;
+  // Estimate fallback for hashes we have no ground truth on. Lifted from the
+  // empirical legacy mean (~93 batches/WARC); 95 nudge for headroom.
+  const avgBatchesPerWarcFallback = Math.max(95, completedAvg, inProgressP75);
+  // Total batches: ground truth from server (legacy ∩ manifest). Server has
+  // already intersected legacy with the actual manifest, so the count is
+  // exact when every manifest hash has a legacy entry.
+  let totalBatchesEstimate = 0;
+  let knownCoverage = data.legacy_num_batches_known_count || 0;
+  const knownBatchesSum = data.legacy_num_batches_total_known || 0;
+  let unknownCoverage = Math.max(total - knownCoverage, 0);
+  if (data.batch_counts !== undefined) {
+    totalBatchesEstimate = knownBatchesSum + unknownCoverage * avgBatchesPerWarcFallback;
   }
+  if (data.batch_counts && totalBatchesEstimate > 0) {
+    // batches_done = finished WARCs' batches (from ground truth) + in-progress
+    // partials. Finished WARCs aren't enumerated, so data.total_batches alone
+    // (in-progress only) would read ~0% — use batches_done for the bar.
+    const totalBatchesDone = data.batches_done || 0;
+    batchPct = Math.min(100, totalBatchesDone / totalBatchesEstimate * 100);
+    const batchRate = data.batches_per_hour ? `${data.batches_per_hour.toLocaleString()} batches/hr` : '';
+    const exact = unknownCoverage === 0;
+    const totalLabel = exact
+      ? totalBatchesEstimate.toLocaleString()
+      : `~${totalBatchesEstimate.toLocaleString()}`;
+    const coverage = exact
+      ? `(exact: ${knownCoverage} WARCs from legacy ground truth)`
+      : `(${knownCoverage} exact + ${unknownCoverage} est. @ ~${avgBatchesPerWarcFallback}/WARC)`;
+    batchSummary = `${totalBatchesDone.toLocaleString()} / ${totalLabel} batches ${coverage} ${batchRate}`;
+  }
+  // Backwards-compat alias used elsewhere in the file.
+  const avgBatchesPerWarc = avgBatchesPerWarcFallback;
 
   // Two ETAs:
   //   etaLifetime — uses all-time average rate. Pessimistic but stable; what you expect
@@ -451,11 +627,8 @@ function renderProgress(data, updatedAt, mode) {
   //                 jumps around as fleet size changes but is more current.
   let etaLifetime = null;
   let etaRecent = null;
-  if (data.batch_counts) {
-    const doneWarcBatches = Object.values(knownTotals).reduce((a,b) => a+b, 0);
-    const remainingWarcs = total - done;
-    const estimatedTotalBatches = doneWarcBatches + remainingWarcs * avgBatchesPerWarc;
-    const remainingBatches = estimatedTotalBatches - (data.total_batches || 0);
+  if (data.batch_counts && totalBatchesEstimate > 0) {
+    const remainingBatches = totalBatchesEstimate - (data.batches_done || 0);
     if (remainingBatches > 0) {
       if (data.batches_per_hour) etaLifetime = remainingBatches / data.batches_per_hour;
       if (data.batches_per_hour_recent) etaRecent = remainingBatches / data.batches_per_hour_recent;
@@ -480,11 +653,37 @@ function renderProgress(data, updatedAt, mode) {
       <div class="stat"><div class="stat-value">${unclaimed}</div><div class="stat-label">Unclaimed</div></div>
       <div class="stat"><div class="stat-value blue">${total}</div><div class="stat-label">Total</div></div>
       <div class="stat"><div class="stat-value red">${data.duplicates}</div><div class="stat-label">Duplicates</div></div>
-      ${data.total_batches ? `<div class="stat"><div class="stat-value green">${data.total_batches.toLocaleString()}</div><div class="stat-label">Batches Done</div></div>` : ''}
-      ${data.batches_per_hour ? `<div class="stat"><div class="stat-value blue">${data.batches_per_hour.toLocaleString()}</div><div class="stat-label">Batches/hr (lifetime)</div></div>` : ''}
-      ${data.batches_per_hour_recent !== null && data.batches_per_hour_recent !== undefined ? `<div class="stat"><div class="stat-value green">${data.batches_per_hour_recent.toLocaleString()}</div><div class="stat-label">Batches/hr (last ${data.recent_window_hours || 3}h)</div></div>` : ''}
-      <div class="stat"><div class="stat-value" title="${etaLifetime ? formatEtaDate(etaLifetime) : ''}">${etaLifetime ? formatEta(etaLifetime) : '...'}</div><div class="stat-label">ETA (lifetime)</div></div>
-      <div class="stat"><div class="stat-value green" title="${etaRecent ? formatEtaDate(etaRecent) : ''}">${etaRecent ? formatEta(etaRecent) : '...'}</div><div class="stat-label">ETA (current pace)</div></div>
+      ${data.batches_done ? `<div class="stat"><div class="stat-value green">${data.batches_done.toLocaleString()}</div><div class="stat-label">Batches Done</div></div>` : ''}
+      ${(() => {
+        // For a new spec we just started, the "lifetime" rate covers the
+        // same window as "recent" (the run is younger than the recent
+        // window), so showing both is redundant and the cold-start period
+        // drags lifetime down. Only surface lifetime once the spec has
+        // been running meaningfully longer than the recent window.
+        const recentWin = data.recent_window_hours || 3;
+        // Approximate the spec's run age from total_batches / lifetime_rate
+        // (since we don't ship earliest_batch_ts to the frontend). When
+        // run_age <= recentWin * 1.5, the lifetime metric is just early
+        // ramp noise — drop it.
+        let ageHours = null;
+        if (data.batches_per_hour && data.total_batches) {
+          ageHours = data.total_batches / data.batches_per_hour;
+        }
+        const showLifetime = ageHours !== null && ageHours > recentWin * 1.5;
+        let html = '';
+        if (data.batches_per_hour_recent !== null && data.batches_per_hour_recent !== undefined) {
+          html += `<div class="stat"><div class="stat-value green">${data.batches_per_hour_recent.toLocaleString()}</div><div class="stat-label">Batches/hr (last ${recentWin}h)</div></div>`;
+        }
+        if (showLifetime && data.batches_per_hour) {
+          html += `<div class="stat" title="Average batches/hr from first batch to latest (${ageHours.toFixed(1)}h of activity)"><div class="stat-value blue">${data.batches_per_hour.toLocaleString()}</div><div class="stat-label">Batches/hr (run avg)</div></div>`;
+        }
+        const etaLabel = showLifetime ? 'ETA (current pace)' : 'ETA';
+        html += `<div class="stat"><div class="stat-value green" title="${etaRecent ? formatEtaDate(etaRecent) : ''}">${etaRecent ? formatEta(etaRecent) : '...'}</div><div class="stat-label">${etaLabel}</div></div>`;
+        if (showLifetime) {
+          html += `<div class="stat"><div class="stat-value" title="${etaLifetime ? formatEtaDate(etaLifetime) : ''}">${etaLifetime ? formatEta(etaLifetime) : '...'}</div><div class="stat-label">ETA (run avg)</div></div>`;
+        }
+        return html;
+      })()}
     </div>
 
     <h2>Per-Region Breakdown</h2>
@@ -508,14 +707,16 @@ function renderProgress(data, updatedAt, mode) {
     const doneSet = new Set((data.done_stats || []).map(s => s.hash));
 
     html += `<h2>Batch Progress (${counts.length} WARCs with batches, ${(data.total_batches || 0).toLocaleString()} total batches)</h2>`;
-    html += `<table><tr><th>WARC Hash</th><th>Batches</th><th style="width:200px">Progress (~${avgBatchesPerWarc} est.)</th><th>Status</th><th>Latest Activity</th></tr>`;
+    html += `<table><tr><th>WARC Hash</th><th>Batches</th><th style="width:200px">Progress</th><th>Status</th><th>Latest Activity</th></tr>`;
     for (const [hash, count] of counts.slice(0, 100)) {
       const activity = data.latest_activity?.[hash] || '';
       const isDone = doneSet.has(hash);
-      const totalForWarc = knownTotals[hash] || avgBatchesPerWarc;
+      // Exact total from legacy ground truth (or this run's _done) when known.
+      const exactTotal = knownTotals[hash];
+      const totalForWarc = exactTotal != null ? exactTotal : avgBatchesPerWarc;
       const pct = isDone ? 100 : Math.min(99, count / totalForWarc * 100);
       const barColor = isDone ? 'var(--green)' : 'var(--yellow)';
-      const denomLabel = knownTotals[hash] ? totalForWarc : '~' + totalForWarc;
+      const denomLabel = exactTotal != null ? totalForWarc : '~' + totalForWarc;
       const statusBadge = isDone ? '<span class="badge succeeded">done</span>' : `<span class="badge running">${count}/${denomLabel}</span>`;
       // Format activity as relative time
       let activityAgo = '';
@@ -832,21 +1033,30 @@ function toggleJobFilter(btn) {
 }
 
 async function refreshJobs() {
-  setLoading('btn-jobs-refresh', true);
+  const requestSpec = getSelectedSpec();
+  setLoadingForSpec('btn-jobs-refresh', requestSpec, true);
   try {
-    const resp = await fetch('/api/jobs/refresh', {method: 'POST'});
+    const resp = await fetch('/api/jobs/refresh', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({spec: requestSpec}),
+    });
     const json = await resp.json();
-    if (json.ok) {
+    if (!json.ok) {
+      if (getSelectedSpec() === requestSpec) {
+        document.getElementById('jobs-content').innerHTML =
+          `<div class="alert error">Error (spec=${requestSpec}): ${json.error}</div>`;
+      }
+    } else if (getSelectedSpec() === requestSpec) {
       renderJobs(json.data, json.updated_at);
-    } else {
-      document.getElementById('jobs-content').innerHTML =
-        `<div class="alert error">Error: ${json.error}</div>`;
     }
   } catch (e) {
-    document.getElementById('jobs-content').innerHTML =
-      `<div class="alert error">Failed: ${e.message}</div>`;
+    if (getSelectedSpec() === requestSpec) {
+      document.getElementById('jobs-content').innerHTML =
+        `<div class="alert error">Failed (spec=${requestSpec}): ${e.message}</div>`;
+    }
   }
-  setLoading('btn-jobs-refresh', false);
+  setLoadingForSpec('btn-jobs-refresh', requestSpec, false);
 }
 
 function renderJobs(data, updatedAt) {
@@ -980,6 +1190,19 @@ async function doKill(jobId) {
 }
 
 // ======================== LAUNCH ========================
+// Per-spec manifest defaults. Mirror of dashboard.py SPEC_MANIFESTS: high_quality
+// extracts the full DCLM 400m-1x pool (10,364 WARCs); everything else the 3,000
+// baseline. Keep in sync with the server-side map.
+const SPEC_MANIFESTS = {
+  'high_quality': 'experiments/distill/dclm_400m_1x_warcs.txt',
+};
+const DEFAULT_MANIFEST = 'experiments/distill/baseline_warcs_3000.txt';
+
+function syncManifestToSpec() {
+  const spec = document.getElementById('launch-spec').value;
+  document.getElementById('launch-manifest').value = SPEC_MANIFESTS[spec] || DEFAULT_MANIFEST;
+}
+
 function autoJobName() {
   const tpu = document.getElementById('launch-tpu-type').value;
   const slug = tpu.replace(/-/g, '').replace('litepod', 'litepod');
@@ -996,9 +1219,17 @@ function confirmLaunch() {
   const patience = document.getElementById('launch-patience').value;
   const parentPriority = document.getElementById('launch-parent-priority').value;
   const childPriority = document.getElementById('launch-child-priority').value;
+  const spec = document.getElementById('launch-spec').value;
+  const manifest = document.getElementById('launch-manifest').value;
+  const startVal = document.getElementById('launch-start').value;
+  const endVal = document.getElementById('launch-end').value;
 
   const parentPriorityFlag = parentPriority ? ` --priority ${parentPriority}` : '';
-  const cmd = `iris job run --memory 2GB --cpu 2${parentPriorityFlag} --no-wait --job-name ${name} -- python launch_adaptive.py --tpu-type ${tpu} --max-count ${maxCount} --initial-batch ${initial} --chunk-size ${chunk} --check-interval ${interval} --patience ${patience} --child-priority ${childPriority}`;
+  const specFlag = spec ? ` --spec ${spec}` : '';
+  const manifestFlag = manifest ? ` --manifest ${manifest}` : '';
+  const startFlag = startVal ? ` --start ${startVal}` : '';
+  const endFlag = endVal ? ` --end ${endVal}` : '';
+  const cmd = `iris job run --memory 2GB --cpu 2${parentPriorityFlag} --no-wait --job-name ${name} -- python launch_adaptive.py --tpu-type ${tpu} --max-count ${maxCount} --initial-batch ${initial} --chunk-size ${chunk} --check-interval ${interval} --patience ${patience} --child-priority ${childPriority}${specFlag}${manifestFlag}${startFlag}${endFlag}`;
 
   document.getElementById('confirm-message').textContent = `Launch adaptive job "${name}"?`;
   document.getElementById('confirm-detail').textContent = cmd;
@@ -1020,6 +1251,12 @@ async function doLaunch() {
     patience: parseInt(document.getElementById('launch-patience').value),
     parent_priority: document.getElementById('launch-parent-priority').value,
     child_priority: document.getElementById('launch-child-priority').value,
+    spec: document.getElementById('launch-spec').value,
+    manifest: document.getElementById('launch-manifest').value,
+    start: document.getElementById('launch-start').value
+      ? parseInt(document.getElementById('launch-start').value) : null,
+    end: document.getElementById('launch-end').value
+      ? parseInt(document.getElementById('launch-end').value) : null,
   };
   const el = document.getElementById('launch-result');
   el.innerHTML = '<div class="alert info"><span class="spinner"></span>Launching...</div>';
@@ -1061,9 +1298,12 @@ autoJobName();
 
 // On page load, fetch cached data from server (no GCS/Iris calls — just reads in-memory cache)
 async function loadCached() {
+  // Always populate the spec dropdown first so subsequent fetches use the right spec.
+  await loadSpecs();
   try {
+    const spec = getSelectedSpec();
     const [progResp, clusterResp, jobsResp] = await Promise.all([
-      fetch('/api/progress'),
+      fetch(`/api/progress?spec=${encodeURIComponent(spec)}`),
       fetch('/api/cluster'),
       fetch('/api/jobs'),
     ]);

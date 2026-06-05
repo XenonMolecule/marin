@@ -12,13 +12,15 @@ Does NOT actually invoke training — `run_levanter_train_lm` is mocked.
 from __future__ import annotations
 
 import importlib
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from experiments.scaling_law_sweeps import (
     curation_plan,
     region_tracker,
+)
+from experiments.scaling_law_sweeps import (
     run_curation_train_standalone as standalone,
 )
 from experiments.scaling_law_sweeps.curation_plan import METHODS, PlannedRun

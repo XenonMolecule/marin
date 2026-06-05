@@ -24,10 +24,11 @@ Launch (Iris):
 
 import logging
 
-from experiments.rephraser.math_top3_hp_sweep import DOMAIN_MIX_EVALS
 from fray.cluster import ResourceConfig
 from marin.evaluation.evaluation_config import EvaluationConfig
 from marin.evaluation.run import evaluate
+
+from experiments.rephraser.math_top3_hp_sweep import DOMAIN_MIX_EVALS
 
 logging.basicConfig(level=logging.INFO)
 

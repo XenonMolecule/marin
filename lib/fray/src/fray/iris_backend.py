@@ -11,6 +11,7 @@ via submitted jobs, and deferred actor handle resolution.
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
 from concurrent.futures import Future
@@ -547,6 +548,30 @@ class FrayIrisClient:
         instance._iris = iris_client
         return instance
 
+    @staticmethod
+    def _env_priority_band() -> int:
+        """Read FRAY_WORKER_PRIORITY_BAND env var → iris PriorityBand enum.
+
+        Fray child jobs (submit() and create_actor_group()) default to iris
+        ``PRIORITY_BAND_UNSPECIFIED`` which iris treats as ``BATCH`` for
+        scheduling. That makes them trivially preemptible by any concurrent
+        ``interactive`` job on the cluster — even when the parent coord was
+        launched at ``--priority interactive``. JobInfo doesn't expose the
+        parent's priority, so we plumb it via an env var that propagates to
+        child containers: set ``FRAY_WORKER_PRIORITY_BAND=interactive`` on a
+        long-running job that needs its worker pool to survive cluster
+        contention.
+
+        Accepts ``production`` / ``interactive`` / ``batch`` (case-insensitive).
+        Unset or unrecognized → ``PRIORITY_BAND_UNSPECIFIED`` (iris default).
+        """
+        raw = os.environ.get("FRAY_WORKER_PRIORITY_BAND", "").strip().lower()
+        return {
+            "production": job_pb2.PRIORITY_BAND_PRODUCTION,
+            "interactive": job_pb2.PRIORITY_BAND_INTERACTIVE,
+            "batch": job_pb2.PRIORITY_BAND_BATCH,
+        }.get(raw, job_pb2.PRIORITY_BAND_UNSPECIFIED)
+
     def submit(self, request: JobRequest, adopt_existing: bool = True) -> IrisJobHandle:
         iris_resources = convert_resources(request.resources)
         iris_entrypoint = convert_entrypoint(request.entrypoint)
@@ -570,6 +595,7 @@ class FrayIrisClient:
                 max_retries_preemption=request.max_retries_preemption,
                 existing_job_policy=policy,
                 task_image=request.resources.image,
+                priority_band=self._env_priority_band(),
             )
         except IrisJobAlreadyExists as e:
             raise FrayJobAlreadyExists(request.name) from e
@@ -661,6 +687,7 @@ class FrayIrisClient:
             coscheduling=coscheduling,
             replicas=count,  # Create N replicas in a single job
             task_image=resources.image,
+            priority_band=self._env_priority_band(),
             **retry_kwargs,
         )
 

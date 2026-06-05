@@ -120,8 +120,9 @@ def _find_checkpoint_region(run_name: str) -> str | None:
     return the region whose max_step is largest. Tie-break doesn't matter
     (identical checkpoints).
     """
-    import fsspec
     import re
+
+    import fsspec
 
     from experiments.scaling_law_sweeps.region_tracker import REGION_TO_BUCKET
 

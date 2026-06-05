@@ -21,6 +21,17 @@ Dry run:
         experiments/rephraser/mathhelpforum_extraction_sft_v2_base.py --dry_run true
 """
 
+from marin.execution.executor import executor_main
+
+from experiments.rephraser.extraction_sft_recipe import (
+    BaselineDataset,
+    DomainSource,
+    EvalSpec,
+    ExtractionSpec,
+    SFTModelSpec,
+    build_extraction_sft_experiment,
+)
+from experiments.rephraser.gsm8k_sft_plaintext import plaintext_transform_step as gsm8k_plaintext_step
 from experiments.rephraser.mathhelpforum_extraction_sft_v2 import (
     CRAWL_INDICES,
     DOMAIN_SOURCES,
@@ -31,16 +42,6 @@ from experiments.rephraser.mathhelpforum_extraction_sft_v2 import (
     REPHRASER_TOKENIZER,
     qwen3_0_6b_hd128_with_rope,
 )
-from experiments.rephraser.extraction_sft_recipe import (
-    BaselineDataset,
-    DomainSource,
-    EvalSpec,
-    ExtractionSpec,
-    SFTModelSpec,
-    build_extraction_sft_experiment,
-)
-from experiments.rephraser.gsm8k_sft_plaintext import plaintext_transform_step as gsm8k_plaintext_step
-from marin.execution.executor import executor_main
 
 result = build_extraction_sft_experiment(
     domain="math_multi_v2",

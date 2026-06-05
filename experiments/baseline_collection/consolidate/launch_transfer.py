@@ -62,17 +62,20 @@ def submit_one(
     disk: str,
     max_workers: int,
     dry_run_child: bool,
+    spec: str,
 ) -> str:
-    cmd = ["python", SCRIPT, "--region", region, "--max-workers", str(max_workers)]
+    cmd = ["python", SCRIPT, "--region", region, "--spec", spec, "--max-workers", str(max_workers)]
     if dry_run_child:
         cmd.append("--dry-run")
+    # Constraint.create wraps raw strings; bare Constraint(values=(...)) regressed.
     constraints = [
         preemptible_constraint(True),
-        Constraint(key=WellKnownAttribute.REGION, op=ConstraintOp.IN, values=(region,)),
+        Constraint.create(key=WellKnownAttribute.REGION, op=ConstraintOp.IN, values=(region,)),
     ]
+    suffix = "" if spec == "low_quality" else f"-{spec}"
     job = client.submit(
         entrypoint=Entrypoint.from_command(*cmd),
-        name=f"extract-transfer-{region}",
+        name=f"extract-transfer-{region}{suffix}",
         resources=ResourceSpec(cpu=cpu, memory=memory, disk=disk),
         environment=EnvironmentSpec(extras=["cpu"], env_vars={"PYTHONUNBUFFERED": "1"}),
         constraints=constraints,
@@ -86,6 +89,7 @@ def submit_one(
 def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser()
     p.add_argument("--regions", nargs="+", default=list(REGIONS), choices=list(REGIONS))
+    p.add_argument("--spec", default="low_quality", help="Extraction spec to transfer.")
     p.add_argument("--priority", choices=sorted(PRIORITY_BAND_MAP), default="batch")
     p.add_argument("--cpu", type=float, default=2.0, help="Per-child CPU (GCS IO is the bottleneck).")
     p.add_argument("--memory", default="8GB")
@@ -111,7 +115,12 @@ def main() -> None:
 
     if args.dry_run:
         for r in args.regions:
-            logger.info("DRY: would submit transfer for region=%s (dry_run_child=%s)", r, args.dry_run_child)
+            logger.info(
+                "DRY: would submit transfer for region=%s spec=%s (dry_run_child=%s)",
+                r,
+                args.spec,
+                args.dry_run_child,
+            )
         return
 
     controller = os.environ.get("IRIS_CONTROLLER_ADDRESS")
@@ -132,6 +141,7 @@ def main() -> None:
                 disk=args.disk,
                 max_workers=args.max_workers,
                 dry_run_child=args.dry_run_child,
+                spec=args.spec,
             )
             submitted.append((region, jid))
             logger.info("submitted %s -> %s", region, jid)

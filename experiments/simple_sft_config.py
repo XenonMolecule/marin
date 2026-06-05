@@ -116,6 +116,10 @@ class SimpleSFTConfig:
     steps_per_eval: int = 1000
     """How often to run validation losses."""
 
+    max_eval_batches: int | None = None
+    """Cap eval cost: max validation batches per eval (None = full val set). Validation
+    is a wall-clock time sink, so bound it when the val set is large."""
+
     steps_per_checkpoint: int | None = None
     """How often to keep a permanent checkpoint. None (default) keeps only the final
     checkpoint; rolling temporary checkpoints are still written for resumption."""

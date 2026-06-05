@@ -20,8 +20,6 @@ Launch:
 import os
 
 from levanter.data.text import TextLmDatasetFormat
-
-from experiments.llama import llama3_tokenizer
 from marin.datakit.download.commoncrawl.download_warc import WarcDownloadConfig, download_and_extract_warcs
 from marin.execution.executor import (
     ExecutorStep,
@@ -32,6 +30,8 @@ from marin.execution.executor import (
 )
 from marin.processing.tokenize import TokenizeConfig, tokenize
 from marin.transform.extract_text_from_html import ExtractTextConfig, extract_text_from_html
+
+from experiments.llama import llama3_tokenizer
 
 WARC_MANIFEST = os.path.join(os.path.dirname(__file__), "warc_paths.txt")
 

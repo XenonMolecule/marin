@@ -36,7 +36,6 @@ import tempfile
 from dataclasses import dataclass
 
 import fsspec
-
 from fray import ResourceConfig
 from zephyr import Dataset, ZephyrContext, zephyr_worker_ctx
 
@@ -47,11 +46,17 @@ DEFAULT_DCLM_REPO_URL = "https://github.com/mlfoundations/dclm.git"
 
 @dataclass
 class BffDedupConfig:
-    input_path: str
-    """Glob pattern for input JSONL files (e.g. ``gs://.../*.jsonl.gz``)."""
-
     output_path: str
     """GCS directory to write deduplicated output JSONL files."""
+
+    input_path: str = ""
+    """Glob pattern for input JSONL files (e.g. ``gs://.../*.jsonl.gz``).
+    Mutually exclusive with ``input_files``."""
+
+    input_files: list[str] | None = None
+    """Explicit list of input file URIs. Takes priority over ``input_path``.
+    Use this when the inputs are scattered across paths that can't be captured
+    by a single glob (e.g. manifest-filtered subsets across multiple regions)."""
 
     shards_per_group: int = 10
     """How many input files to feed into a single bff invocation. Each group
@@ -270,7 +275,15 @@ def bff_dedup(config: BffDedupConfig) -> None:
 
     Idempotent: groups whose outputs already exist in ``output_path`` are skipped.
     """
-    all_inputs = _list_input_files(config.input_path)
+    if config.input_files is not None:
+        if not config.input_files:
+            raise ValueError("input_files is an empty list")
+        all_inputs = sorted(config.input_files)
+        logger.info("Using explicit input_files: %d entries", len(all_inputs))
+    else:
+        if not config.input_path:
+            raise ValueError("Must provide either input_path (glob) or input_files (list)")
+        all_inputs = _list_input_files(config.input_path)
     already_done = _list_existing_output_basenames(config.output_path)
     pending = [p for p in all_inputs if p.rsplit("/", 1)[-1] not in already_done]
     logger.info(

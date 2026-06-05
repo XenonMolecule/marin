@@ -23,10 +23,11 @@ Dry run:
         experiments/rephraser/gsm8k_baseline_eval.py --dry_run true
 """
 
-from experiments.evals.evals import default_eval
 from fray.cluster import ResourceConfig
 from marin.evaluation.evaluation_config import EvalTaskConfig
 from marin.execution.executor import executor_main
+
+from experiments.evals.evals import default_eval
 
 # HF export of the exp2166 final checkpoint (no post-training)
 BASELINE_HF_PATH = (

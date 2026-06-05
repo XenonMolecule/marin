@@ -19,10 +19,10 @@ Launch:
 """
 
 from fray.cluster import ResourceConfig
+from marin.execution.executor import executor_main
 
 from experiments.evals.evals import default_eval
 from experiments.models import llama_3_2_1b
-from marin.execution.executor import executor_main
 
 if __name__ == "__main__":
     eval_step = default_eval(

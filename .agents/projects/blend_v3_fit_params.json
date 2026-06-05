@@ -1,0 +1,81 @@
+{
+  "milestone": "V3 (2026-05-25)",
+  "fit_cache_key": "d2be9deaf4535c26",
+  "data_csv": "scratch/exports/warc_scaling_streamlined.csv",
+  "n_rows_total": 299,
+  "aggregate_rmse": 0.08499119420998262,
+  "tokens_per_warc": {
+    "high_quality": 3730293.1312203384,
+    "low_quality": 15173767.675764263,
+    "med_quality": 9463059.558699997
+  },
+  "shared_params": {
+    "E": 1.8104268118226357,
+    "C": 1156.8609692892348,
+    "beta": 0.34948409996824387,
+    "R_D": 1.46800761642772,
+    "R_decay": 67.96152445379619
+  },
+  "per_method": {
+    "low_quality": {
+      "params_named": {
+        "E": 1.8104268118226357,
+        "C": 1156.8609692892348,
+        "beta": 0.34948409996824387,
+        "B": 52.46533726411338,
+        "delta": 0.18547314276417404,
+        "alpha": 0.3782436121770624,
+        "R_D": 1.46800761642772,
+        "R_decay": 67.96152445379619
+      },
+      "n_rows": 111,
+      "R2": 0.993869601066983,
+      "RMSE": 0.06582400756232705
+    },
+    "med_quality": {
+      "params_named": {
+        "E": 1.8104268118226357,
+        "C": 1156.8609692892348,
+        "beta": 0.34948409996824387,
+        "B": 67.41874166766863,
+        "delta": 0.18687459089342087,
+        "alpha": 0.3976962569833791,
+        "R_D": 1.46800761642772,
+        "R_decay": 67.96152445379619
+      },
+      "n_rows": 70,
+      "R2": 0.9917891699348862,
+      "RMSE": 0.06925796869386527
+    },
+    "high_quality": {
+      "params_named": {
+        "E": 1.8104268118226357,
+        "C": 1156.8609692892348,
+        "beta": 0.34948409996824387,
+        "B": 82.7502107614253,
+        "delta": 0.19760886253749527,
+        "alpha": 0.4247618530738296,
+        "R_D": 1.46800761642772,
+        "R_decay": 67.96152445379619
+      },
+      "n_rows": 118,
+      "R2": 0.9830072245773178,
+      "RMSE": 0.10668820372669831
+    }
+  },
+  "data_snapshots": {
+    "central_fit_csv": {
+      "path": "scratch/plots/data_snapshots/v3_central_fit_data__299rows_2aabd6cd.csv",
+      "n_rows": 299,
+      "sha256_first8": "2aabd6cd",
+      "used_for": "Option B central fit (shared+per-method params + boundary lines)"
+    },
+    "bootstrap_csv": {
+      "path": "scratch/plots/data_snapshots/v3_bootstrap_data__298rows_3f38041e.csv",
+      "n_rows": 298,
+      "sha256_first8": "3f38041e",
+      "used_for": "B=100 local bootstrap (trust/blend regions)",
+      "note": "Earlier snapshot than central fit; differs by 1 row. V4 zephyr run eliminates this skew by embedding the central fit in the npz."
+    }
+  }
+}

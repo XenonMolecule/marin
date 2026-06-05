@@ -36,8 +36,8 @@ import re
 import string
 import tempfile
 from collections import Counter
-from dataclasses import dataclass
 from collections.abc import Callable
+from dataclasses import dataclass
 from urllib.parse import urlparse
 
 from zephyr import Dataset, ZephyrContext, load_file
@@ -248,9 +248,15 @@ def _make_language_enricher(lid_model_path: str) -> Callable[[dict], dict]:
             page["language_id_whole_page_fasttext"] = {}
         else:
             labels, probs = _fasttext_predict(model, text.replace("\n", ""))
-            lang = labels[0].replace("__label__", "")
-            prob = probs[0]
-            page["language_id_whole_page_fasttext"] = {lang: prob}
+            # fastText can return empty predictions on degenerate text (e.g.,
+            # all-control-characters once newlines are stripped) — treat as
+            # "unknown language"; language_filter will then drop the page.
+            if labels:
+                lang = labels[0].replace("__label__", "")
+                prob = probs[0]
+                page["language_id_whole_page_fasttext"] = {lang: prob}
+            else:
+                page["language_id_whole_page_fasttext"] = {}
         return page
 
     return enrich

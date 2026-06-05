@@ -17,16 +17,17 @@ Launch:
         -- python experiments/rephraser/resiliparse_sft_sweep.py
 """
 
-from experiments.evals.evals import evaluate_lm_evaluation_harness
-from experiments.rephraser.code_extraction_sft_v3_base import result as v3_result
-from experiments.rephraser.extraction_sft_recipe import (
-    _SFTRunConfig,
-    _run_single_epoch_sft,
-)
 from fray.cluster import ResourceConfig
 from marin.evaluation.evaluation_config import EvalTaskConfig
 from marin.execution.executor import ExecutorStep, executor_main, output_path_of, this_output_path
 from marin.processing.tokenize import lm_data_config
+
+from experiments.evals.evals import evaluate_lm_evaluation_harness
+from experiments.rephraser.code_extraction_sft_v3_base import result as v3_result
+from experiments.rephraser.extraction_sft_recipe import (
+    _run_single_epoch_sft,
+    _SFTRunConfig,
+)
 
 # ---------------------------------------------------------------------------
 # Sweep grid — focused on promising LR range from v3 findings
@@ -66,9 +67,9 @@ EVAL_RESOURCE = ResourceConfig.with_tpu("v5p-8")
 # ---------------------------------------------------------------------------
 # Reuse resiliparse tokenized data from v3 base experiment
 # ---------------------------------------------------------------------------
-from experiments.defaults import default_tokenize
 from levanter.data.text import TextLmDatasetFormat
 
+from experiments.defaults import default_tokenize
 from experiments.rephraser.code_extraction_sft_v3_base import qwen3_0_6b_hd128_with_rope
 
 # Recreate the tokenize step — will hash to the same thing and be skipped

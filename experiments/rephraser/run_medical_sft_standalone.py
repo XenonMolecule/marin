@@ -67,9 +67,6 @@ from datetime import timedelta
 
 import fsspec
 import jmp
-
-from experiments.qwen3 import qwen3_0_6b_hd128
-from experiments.scaling_law_sweeps import region_tracker
 from fray.cluster import ResourceConfig
 from levanter.checkpoint import CheckpointerConfig
 from levanter.data.text import (
@@ -84,6 +81,9 @@ from levanter.optim import AdamConfig
 from levanter.tracker.wandb import WandbConfig
 from levanter.trainer import TrainerConfig
 from marin.training.training import TrainLmOnPodConfig, _prepare_training_run
+
+from experiments.qwen3 import qwen3_0_6b_hd128
+from experiments.scaling_law_sweeps import region_tracker
 
 logger = logging.getLogger(__name__)
 

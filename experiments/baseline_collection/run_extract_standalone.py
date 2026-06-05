@@ -57,12 +57,22 @@ DEFAULT_BATCH_SIZE = 500
 # Completed WARC registry: a single GCS directory where each completed WARC
 # gets a tiny marker file. Workers list this directory on startup (1 API call)
 # to skip already-done WARCs without scanning 6 regional buckets per WARC.
-COMPLETED_REGISTRY_PREFIX = "gs://marin-us-central1/documents/baseline_llm_extraction/_completed"
+#
+# The default targets the legacy unprefixed namespace. When this script is
+# launched with --spec, the registry prefix becomes
+#   gs://marin-us-central1/documents/baseline_llm_extraction/{spec_id}/_completed
+# so each spec has its own registry and they don't cross-contaminate.
+DEFAULT_COMPLETED_REGISTRY_PREFIX = "gs://marin-us-central1/documents/baseline_llm_extraction/_completed"
 
 
-def _register_completed_warc(warc_hash: str) -> None:
+def _registry_prefix_for(output_subdir: str) -> str:
+    """Build the registry prefix for a given output_subdir, in marin-us-central1."""
+    return f"gs://marin-us-central1/{output_subdir}/_completed"
+
+
+def _register_completed_warc(warc_hash: str, registry_prefix: str) -> None:
     """Write a tiny marker to the central completed registry. Idempotent."""
-    path = f"{COMPLETED_REGISTRY_PREFIX}/data-{warc_hash}"
+    path = f"{registry_prefix}/data-{warc_hash}"
     try:
         with fsspec.open(path, "w") as f:
             f.write("")  # empty file, ~0 bytes
@@ -70,7 +80,7 @@ def _register_completed_warc(warc_hash: str) -> None:
         logger.warning("Failed to write completion registry for %s: %s", warc_hash, e)
 
 
-def _load_completed_registry() -> set[str]:
+def _load_completed_registry(registry_prefix: str) -> set[str]:
     """List the completed registry directory and return set of done hashes.
 
     Single list operation against one GCS bucket — much cheaper than scanning
@@ -78,7 +88,7 @@ def _load_completed_registry() -> set[str]:
     per-WARC checks).
     """
     fs = fsspec.filesystem("gcs")
-    prefix = COMPLETED_REGISTRY_PREFIX.replace("gs://", "")
+    prefix = registry_prefix.replace("gs://", "")
     try:
         paths = fs.ls(prefix)
         hashes = set()
@@ -86,10 +96,10 @@ def _load_completed_registry() -> set[str]:
             basename = p.rsplit("/", 1)[-1]
             if basename.startswith("data-"):
                 hashes.add(basename[5:])
-        logger.info("Loaded completed registry: %d WARCs", len(hashes))
+        logger.info("Loaded completed registry from %s: %d WARCs", registry_prefix, len(hashes))
         return hashes
     except Exception as e:
-        logger.warning("Failed to load completed registry: %s (falling back to per-WARC checks)", e)
+        logger.warning("Failed to load completed registry %s: %s (falling back to per-WARC checks)", registry_prefix, e)
         return set()
 
 
@@ -203,6 +213,7 @@ def _process_warc_steal(
     tokenizer: Any,
     template: str,
     system_message: str,
+    registry_prefix: str,
     batch_size: int = DEFAULT_BATCH_SIZE,
 ) -> dict:
     """Process uncompleted batches of a WARC in steal mode (reverse order).
@@ -251,7 +262,7 @@ def _process_warc_steal(
             import json as _json
 
             fsspec.filesystem("gcs").pipe_file(done_path.replace("gs://", ""), _json.dumps(stats).encode())
-            _register_completed_warc(h)
+            _register_completed_warc(h, registry_prefix)
             logger.info("Steal: wrote _done for %s (kept=%d, filtered=%d)", warc_path, final_kept, final_filtered)
             return {"warc": warc_path, "status": "steal_wrote_done"}
         logger.info("Steal: no stealable batches on %s, all done or claimed", warc_path)
@@ -327,7 +338,7 @@ def _process_warc_steal(
             "completed_by": "stealer",
         }
         _write_done_marker(warc_dir, stats)
-        _register_completed_warc(h)
+        _register_completed_warc(h, registry_prefix)
         logger.info("Steal: WARC complete! %s (kept=%d, filtered=%d)", warc_path, final_kept, final_filtered)
 
     return {
@@ -704,7 +715,14 @@ def _process_batch(
         token_stats is a list of per-record dicts with input/output token counts
         and status (kept/filtered/empty), for FLOP accounting.
     """
-    from vllm.inputs.data import TokensPrompt
+    # vLLM moved TokensPrompt's canonical location across versions; try a few.
+    try:
+        from vllm.inputs import TokensPrompt
+    except ImportError:
+        try:
+            from vllm.inputs.data import TokensPrompt
+        except ImportError:
+            from vllm import TokensPrompt
 
     # Format prompts and track input token counts
     prompts = []
@@ -858,6 +876,7 @@ def _process_warc(
     tokenizer: Any,
     template: str,
     system_message: str,
+    registry_prefix: str,
     batch_size: int = DEFAULT_BATCH_SIZE,
 ) -> dict:
     """Download one WARC, extract via LLM with per-batch checkpointing."""
@@ -894,7 +913,7 @@ def _process_warc(
     if not records:
         logger.warning("No HTML records from %s", warc_path)
         _write_done_marker(warc_dir, {"status": "empty", "records": 0})
-        _register_completed_warc(h)
+        _register_completed_warc(h, registry_prefix)
         return {"warc": warc_path, "status": "empty", "records": 0}
 
     logger.info("Downloaded %d records from %s", len(records), warc_path)
@@ -904,7 +923,7 @@ def _process_warc(
     logger.info("%d records after length filter", len(records))
     if not records:
         _write_done_marker(warc_dir, {"status": "all_filtered", "records": 0})
-        _register_completed_warc(h)
+        _register_completed_warc(h, registry_prefix)
         return {"warc": warc_path, "status": "all_filtered", "records": 0}
 
     # Check which batches are already done (scan ALL regions for cross-region resume)
@@ -1028,7 +1047,7 @@ def _process_warc(
         "batch_size": batch_size,
     }
     _write_done_marker(warc_dir, stats)
-    _register_completed_warc(h)
+    _register_completed_warc(h, registry_prefix)
     logger.info("WARC complete: %s (kept=%d, filtered=%d)", warc_path, final_kept, final_filtered)
     return {"warc": warc_path, "status": "done", **stats}
 
@@ -1038,7 +1057,20 @@ def main():
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--manifest", required=True, help="GCS path to WARC manifest")
-    parser.add_argument("--output-subdir", default="documents/baseline_llm_extraction_test")
+    parser.add_argument(
+        "--spec",
+        default=None,
+        help=(
+            "Extraction spec id (key in extraction_specs.SPECS). When set, overrides "
+            "--output-subdir to documents/baseline_llm_extraction/{spec_id} and uses "
+            "the spec's system_message + template instead of the legacy hardcoded prompt."
+        ),
+    )
+    parser.add_argument(
+        "--output-subdir",
+        default="documents/baseline_llm_extraction_test",
+        help="Legacy output subdir. Ignored when --spec is set.",
+    )
     parser.add_argument("--model", default=None, help="Model path (auto-resolves from region if not set)")
     parser.add_argument("--tp", type=int, default=None, help="Tensor parallel size (auto-detect from JAX)")
     parser.add_argument("--max-model-len", type=int, default=32768)
@@ -1055,10 +1087,31 @@ def main():
     parser.add_argument("--end", type=int, default=None, help="End index into manifest (exclusive). Default: all.")
     args = parser.parse_args()
 
+    # Resolve spec-driven config: output subdir, prompts, and registry prefix.
+    # Legacy mode (no --spec) keeps the hardcoded prompt below and writes to the
+    # bare --output-subdir, registering completions to the unprefixed registry.
+    spec_obj = None
+    if args.spec:
+        from experiments.baseline_collection.extraction_specs import LEGACY_SPEC_ID, get_spec
+
+        spec_obj = get_spec(args.spec)
+        # The legacy spec maps to the unprefixed GCS path so it shares the
+        # namespace with pre-registry data. All other specs nest under their id.
+        if spec_obj.spec_id == LEGACY_SPEC_ID:
+            output_subdir = "documents/baseline_llm_extraction"
+        else:
+            output_subdir = f"documents/baseline_llm_extraction/{spec_obj.spec_id}"
+        registry_prefix = _registry_prefix_for(output_subdir)
+        logger.info("Spec: %s — %s", spec_obj.spec_id, spec_obj.description or "(no description)")
+    else:
+        output_subdir = args.output_subdir
+        registry_prefix = DEFAULT_COMPLETED_REGISTRY_PREFIX
+    logger.info("Registry prefix: %s", registry_prefix)
+
     # Resolve output path from runtime region
     from rigging.filesystem import marin_prefix
 
-    output_dir = f"{marin_prefix()}/{args.output_subdir}"
+    output_dir = f"{marin_prefix()}/{output_subdir}"
     logger.info("Output dir: %s", output_dir)
 
     # Resolve model — use local region's bucket to avoid cross-region egress
@@ -1099,58 +1152,62 @@ def main():
     tokenizer = llm.get_tokenizer()
     logger.info("Engine loaded in %.1fs", time.monotonic() - t0)
 
-    # Extraction prompt
-    spec = (
-        "Extract the content from this HTML page as clean text. Follow all rules below.\n\n"
-        "1. Extract the full page content in reading order. Keep all explanatory text, "
-        "discussion, and comments that add substantive information. Begin your output "
-        "directly with the page content.\n"
-        "2. Remove boilerplate: navigation bars, footers, sidebars, ads, share buttons, "
-        "related links, breadcrumbs, cookie banners, and user interface elements. "
-        "Do not output framework markers or metadata tags.\n"
-        "3. Preserve all technical content exactly as written: code, math notation, "
-        "formulas, tables, and data. Preserve the original line breaks and structure "
-        "of code blocks.\n"
-        "4. Decode all HTML entities to their plain characters (e.g. &amp; to &, "
-        "&lt; to <, &gt; to >, &#8217; to ', &#8211; to \u2013). Remove any raw HTML tags.\n"
-        "5. Every sentence in your output must come from the source page. Do not add, "
-        "invent, or embellish content.\n"
-        "6. For pages with multiple authors or speakers (forums, reviews, comments), "
-        "preserve who said what. Include usernames or speaker labels so contributions "
-        "remain distinguishable.\n"
-        "7. If the text contains content spinner templates like {{word1|word2|word3}}, "
-        "pick the first option and output clean text. If the majority of the page is "
-        "spinner templates, output [NO_USEFUL_CONTENT] instead.\n"
-        "8. Output exactly [NO_USEFUL_CONTENT] if ANY of these apply:\n"
-        '   - Login, signup, paywall, registration wall, or "you must sign up to view" page\n'
-        "   - Error page, empty page, or cookie/captcha wall\n"
-        "   - Terms of use, privacy policy, or legal boilerplate page\n"
-        "   - User profile page with no substantive content\n"
-        "   - Page whose content has been removed, moved, or is no longer available\n"
-        "   - Image gallery, photo album listing, or media archive without articles\n"
-        "   - The text is incoherent gibberish or garbled encoding throughout\n"
-        "   - The page has under ~50 words of substantive content after removing boilerplate\n"
-        "   However, for index pages or directory listings, only filter if they contain "
-        "nothing but links and titles. If an index page includes real text like discussion "
-        "snippets or descriptions, extract it."
-    )
-    system_message = (
-        "Your input fields are:\n1. `html` (str): \n2. `extraction_spec` (str):\n"
-        "Your output fields are:\n1. `text` (str):\n"
-        "All interactions will be structured in the following way, "
-        "with the appropriate values filled in.\n\n"
-        "[[ ## html ## ]]\n{html}\n\n[[ ## extraction_spec ## ]]\n{extraction_spec}\n\n"
-        "[[ ## text ## ]]\n{text}\n\n[[ ## completed ## ]]\n"
-        "In adhering to this structure, your objective is: \n"
-        "        Extract the main content text from a given HTML document."
-    )
-    template = (
-        "[[ ## html ## ]]\n{example}\n\n"
-        "[[ ## extraction_spec ## ]]\n" + spec + "\n\n"
-        "Respond with the corresponding output fields, "
-        "starting with the field `[[ ## text ## ]]`, "
-        "and then ending with the marker for `[[ ## completed ## ]]`."
-    )
+    # Extraction prompt: from spec registry when --spec is set, else legacy hardcoded.
+    if spec_obj is not None:
+        system_message = spec_obj.system_message
+        template = spec_obj.extraction_template
+    else:
+        _legacy_spec_rules = (
+            "Extract the content from this HTML page as clean text. Follow all rules below.\n\n"
+            "1. Extract the full page content in reading order. Keep all explanatory text, "
+            "discussion, and comments that add substantive information. Begin your output "
+            "directly with the page content.\n"
+            "2. Remove boilerplate: navigation bars, footers, sidebars, ads, share buttons, "
+            "related links, breadcrumbs, cookie banners, and user interface elements. "
+            "Do not output framework markers or metadata tags.\n"
+            "3. Preserve all technical content exactly as written: code, math notation, "
+            "formulas, tables, and data. Preserve the original line breaks and structure "
+            "of code blocks.\n"
+            "4. Decode all HTML entities to their plain characters (e.g. &amp; to &, "
+            "&lt; to <, &gt; to >, &#8217; to ', &#8211; to \u2013). Remove any raw HTML tags.\n"
+            "5. Every sentence in your output must come from the source page. Do not add, "
+            "invent, or embellish content.\n"
+            "6. For pages with multiple authors or speakers (forums, reviews, comments), "
+            "preserve who said what. Include usernames or speaker labels so contributions "
+            "remain distinguishable.\n"
+            "7. If the text contains content spinner templates like {{word1|word2|word3}}, "
+            "pick the first option and output clean text. If the majority of the page is "
+            "spinner templates, output [NO_USEFUL_CONTENT] instead.\n"
+            "8. Output exactly [NO_USEFUL_CONTENT] if ANY of these apply:\n"
+            '   - Login, signup, paywall, registration wall, or "you must sign up to view" page\n'
+            "   - Error page, empty page, or cookie/captcha wall\n"
+            "   - Terms of use, privacy policy, or legal boilerplate page\n"
+            "   - User profile page with no substantive content\n"
+            "   - Page whose content has been removed, moved, or is no longer available\n"
+            "   - Image gallery, photo album listing, or media archive without articles\n"
+            "   - The text is incoherent gibberish or garbled encoding throughout\n"
+            "   - The page has under ~50 words of substantive content after removing boilerplate\n"
+            "   However, for index pages or directory listings, only filter if they contain "
+            "nothing but links and titles. If an index page includes real text like discussion "
+            "snippets or descriptions, extract it."
+        )
+        system_message = (
+            "Your input fields are:\n1. `html` (str): \n2. `extraction_spec` (str):\n"
+            "Your output fields are:\n1. `text` (str):\n"
+            "All interactions will be structured in the following way, "
+            "with the appropriate values filled in.\n\n"
+            "[[ ## html ## ]]\n{html}\n\n[[ ## extraction_spec ## ]]\n{extraction_spec}\n\n"
+            "[[ ## text ## ]]\n{text}\n\n[[ ## completed ## ]]\n"
+            "In adhering to this structure, your objective is: \n"
+            "        Extract the main content text from a given HTML document."
+        )
+        template = (
+            "[[ ## html ## ]]\n{example}\n\n"
+            "[[ ## extraction_spec ## ]]\n" + _legacy_spec_rules + "\n\n"
+            "Respond with the corresponding output fields, "
+            "starting with the field `[[ ## text ## ]]`, "
+            "and then ending with the marker for `[[ ## completed ## ]]`."
+        )
 
     # Load manifest, optionally slice and shuffle
     import random
@@ -1182,7 +1239,7 @@ def main():
         warcs = warcs[offset:] + warcs[:offset]
         logger.info("Rotated manifest by %d for IRIS_TASK_ID=%d", offset, task_id)
 
-    logger.info("batch_size=%d, output_subdir=%s", args.batch_size, args.output_subdir)
+    logger.info("batch_size=%d, output_subdir=%s", args.batch_size, output_subdir)
 
     # -----------------------------------------------------------------------
     # Main processing loop with steal mode
@@ -1202,7 +1259,7 @@ def main():
     import random as random_module
 
     stats: list[dict] = []
-    completed_registry = _load_completed_registry()
+    completed_registry = _load_completed_registry(registry_prefix)
     total_warcs = len(warcs)
     steal_mode = False
 
@@ -1225,7 +1282,7 @@ def main():
         # Refresh registry periodically
         warcs_since_refresh += 1
         if warcs_since_refresh >= REGISTRY_REFRESH_INTERVAL:
-            completed_registry = _load_completed_registry()
+            completed_registry = _load_completed_registry(registry_prefix)
             old_remaining = len(remaining)
             remaining = _get_remaining()
             pruned = old_remaining - len(remaining)
@@ -1268,12 +1325,13 @@ def main():
                 s = _process_warc_steal(
                     steal_target,
                     output_dir,
-                    args.output_subdir,
+                    output_subdir,
                     llm,
                     sampling_params,
                     tokenizer,
                     template,
                     system_message,
+                    registry_prefix,
                     batch_size=args.batch_size,
                 )
                 stats.append(s)
@@ -1288,7 +1346,7 @@ def main():
             # After a successful steal, reset and try forward claiming again
             steal_mode = False
             consecutive_failures = 0
-            completed_registry = _load_completed_registry()
+            completed_registry = _load_completed_registry(registry_prefix)
             remaining = _get_remaining()
             warc_idx = 0
             continue
@@ -1303,12 +1361,13 @@ def main():
         s = _process_warc(
             warc,
             output_dir,
-            args.output_subdir,
+            output_subdir,
             llm,
             sampling_params,
             tokenizer,
             template,
             system_message,
+            registry_prefix,
             batch_size=args.batch_size,
         )
         stats.append(s)

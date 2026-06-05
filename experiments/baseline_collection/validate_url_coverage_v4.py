@@ -37,8 +37,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import fsspec
 import requests
-from fray.v2.types import ResourceConfig
-
+from fray import ResourceConfig
 from zephyr import Dataset, ZephyrContext
 from zephyr.execution import zephyr_worker_ctx
 

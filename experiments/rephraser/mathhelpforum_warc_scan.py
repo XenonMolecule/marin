@@ -41,15 +41,13 @@ from dataclasses import dataclass
 import fsspec
 import requests
 import warcio
-
-from zephyr import Dataset, ZephyrContext
-
 from marin.execution.executor import (
     ExecutorStep,
     executor_main,
     this_output_path,
     versioned,
 )
+from zephyr import Dataset, ZephyrContext
 
 logger = logging.getLogger(__name__)
 

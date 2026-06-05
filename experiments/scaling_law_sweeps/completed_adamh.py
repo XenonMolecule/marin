@@ -241,6 +241,15 @@ class CompletedAdamHHeuristic:
             num_kv_heads=n_heads,
             max_seq_len=seq_len,
             rope=Llama3RotaryEmbeddingsConfig(),
+            # Match the training tokenizer (CurationMethod.tokenizer in
+            # data_curation_math.py:125). Without this, Qwen3Config.tokenizer is
+            # None → Qwen3Config.hf_checkpoint_converter() falls back to fetching
+            # the reference_checkpoint's tokenizer (Qwen/Qwen3-0.6B) from HF Hub.
+            # When many gang-scheduled children boot in parallel, that fetch hits
+            # HF's 1000-req/5-min rate limit and the coscheduled jobs bounce
+            # permanently. The Qwen tokenizer is also wasted work — train_lm.py
+            # immediately overwrites it with config.data.the_tokenizer.
+            tokenizer="meta-llama/Meta-Llama-3.1-8B",
         )
 
     def estimate_memory_bytes(

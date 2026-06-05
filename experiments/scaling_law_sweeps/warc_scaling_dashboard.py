@@ -1,7 +1,7 @@
 # Copyright The Marin Authors
 # SPDX-License-Identifier: Apache-2.0
 
-"""WARC-scaling sweep dashboard — localhost web UI.
+"""WARC-scaling sweep dashboard -- localhost web UI.
 
 Mirrors `experiments/baseline_collection/dashboard.py` but pivots to the
 warc_scaling sweep's data model: per-(method, N) cell progress against the
@@ -25,25 +25,28 @@ import logging
 import subprocess
 import time
 from collections import Counter, defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from flask import Flask, jsonify, request, send_file
 
+from experiments.scaling_law_sweeps.fixed_model_plan import (
+    enumerate_fixed_model_plans,
+)
+from experiments.scaling_law_sweeps.fixed_model_plan import (
+    resolve_methods as fm_resolve_methods,
+)
 from experiments.scaling_law_sweeps.warc_scaling_plan import (
     WARC_METHOD_BASE_NAMES,
     enumerate_warc_scaling_plans,
 )
-from experiments.scaling_law_sweeps.fixed_model_plan import (
-    enumerate_fixed_model_plans,
-    resolve_methods as fm_resolve_methods,
-)
 
 # Methods to include in the FM (N=3000, expFM_natural) progress slice. Today
-# this is just llm_curated_dedup — the other FM methods (dclm, *_bos_fixed,
+# this is just llm_curated_dedup -- the other FM methods (dclm, *_bos_fixed,
 # resiliparse) already get tracked via plot_warc_scaling_sweep's FM merge,
 # and adding their N=3000 plans here would clutter the warc-scaling Progress
 # tab with rows that aren't part of the per-N WARC sweep.
-FM_PROGRESS_METHODS: tuple[str, ...] = ("llm_curated_dedup",)
+FM_PROGRESS_METHODS: tuple[str, ...] = ("llm_curated_dedup", "llm_curated_dclm_filtered", "high_quality_3000")
 
 logger = logging.getLogger(__name__)
 app = Flask(__name__)
@@ -54,7 +57,7 @@ app = Flask(__name__)
 
 DASHBOARD_PORT = 8091
 RESULTS_PREFIX = "gs://marin-us-central1/metadata/data_curation_warc_scaling_results/"
-# Fixed-model (N=3000, expFM_natural) results — scanned in addition to the
+# Fixed-model (N=3000, expFM_natural) results -- scanned in addition to the
 # warc-scaling prefix so FM-only methods (currently llm_curated_dedup) get
 # counted on the Progress tab.
 FM_RESULTS_PREFIX = "gs://marin-us-central1/metadata/data_curation_fixed_model_results/"
@@ -62,7 +65,7 @@ TRACKER_PREFIX = "gs://marin-us-central1/metadata/region_locks/data_curation_war
 IRIS_CONFIG = "lib/iris/examples/marin.yaml"
 USER_PREFIX = "michaelryan"
 # Bare job-name prefixes (compared against `path.split("/")[2]`, which is the
-# `--job-name` value passed to `iris job run` — NOT user-prefixed). Add a new
+# `--job-name` value passed to `iris job run` -- NOT user-prefixed). Add a new
 # entry here when launching a coordinator under a new naming convention.
 COORD_NAME_PREFIXES = ("warc-", "dedup-")
 CACHE_FILE = Path(__file__).parent / ".warc_scaling_dashboard_cache.json"
@@ -166,8 +169,8 @@ def _decode_method_n(method_full: str) -> tuple[str, int] | None:
     """Decode a method_full string into (method_base, N).
 
     Two naming conventions coexist on the dashboard:
-      - WARC sweep:  ``llm_curated_500`` → ("llm_curated", 500)
-      - FM sweep:    ``llm_curated_dedup`` → ("llm_curated_dedup", 3000)
+      - WARC sweep:  ``llm_curated_500`` -> ("llm_curated", 500)
+      - FM sweep:    ``llm_curated_dedup`` -> ("llm_curated_dedup", 3000)
         (no trailing ``_<int>``; N is implicit 3000 for FM.)
 
     Returns None if the string can't be decoded under either convention.
@@ -219,7 +222,7 @@ def _planned_counts() -> dict[tuple[str, int], int]:
 
 
 def _planned_lookup() -> dict[str, dict]:
-    """Map run_name_core → plan info (train_steps, hidden_dim, budget, method, N).
+    """Map run_name_core -> plan info (train_steps, hidden_dim, budget, method, N).
 
     Includes the budget-extension plans for resiliparse + llm_curated so the
     deep scan can join with extension runs (otherwise they'd appear as
@@ -301,7 +304,7 @@ def _scan_progress() -> dict:
 
     `plan`: {(method, N): expected_count}
     `completed`: {(method, N): done_count}
-    `locks`: {region: count} — all-time locks (one per dispatched run)
+    `locks`: {region: count} -- all-time locks (one per dispatched run)
     `recent_completions`: list of {run_name, method, N, completed_at, region} sorted by time desc
     """
     plan = _planned_counts()
@@ -311,10 +314,8 @@ def _scan_progress() -> dict:
     # (expFM_natural at N=3000) so FM-progress methods like llm_curated_dedup
     # contribute to the (method, N=3000) counter.
     completed: Counter = Counter()
-    recent: list[dict] = []
     warc_basenames = _gcs_list_basenames(RESULTS_PREFIX)
     fm_basenames = _gcs_list_basenames(FM_RESULTS_PREFIX)
-    summary_basenames = warc_basenames  # canonical scan list for region/history below
     for source_name, basenames, expected_tag in (
         ("warc", warc_basenames, "expWARC"),
         ("fm", fm_basenames, "expFM"),
@@ -335,7 +336,7 @@ def _scan_progress() -> dict:
             if decoded is None:
                 continue
             # FM scan only counts methods we've explicitly opted into Progress
-            # tracking — other FM methods (dclm, *_bos_fixed, resiliparse) are
+            # tracking -- other FM methods (dclm, *_bos_fixed, resiliparse) are
             # tracked by the warc-scaling sweep's per-N plans.
             if source_name == "fm" and decoded[0] not in FM_PROGRESS_METHODS:
                 continue
@@ -368,8 +369,6 @@ def _scan_progress() -> dict:
 
     warc_bucket, warc_obj_prefix = _bucket_for(RESULTS_PREFIX)
     fm_bucket, fm_obj_prefix = _bucket_for(FM_RESULTS_PREFIX)
-    bucket = warc_bucket  # used by the history scan below
-    obj_prefix = warc_obj_prefix
 
     sample_warc = [(warc_bucket, warc_obj_prefix, fname) for fname in sorted(warc_basenames, reverse=True)[:60]]
     sample_fm = [(fm_bucket, fm_obj_prefix, fname) for fname in sorted(fm_basenames, reverse=True)[:60]]
@@ -472,7 +471,7 @@ def _scan_deep_progress() -> dict:
 
     # Source of truth: read every summary.json. It records the run's CANONICAL
     # region (the standalone runner writes its own region in summary.run.region)
-    # — this is more reliable than guessing from checkpoint dir locations,
+    # -- this is more reliable than guessing from checkpoint dir locations,
     # which can be polluted by stale pre-emption attempts in other regions.
     summary_region: dict[str, str] = {}
     summary_runs: set[str] = set()
@@ -505,12 +504,12 @@ def _scan_deep_progress() -> dict:
     except Exception as e:
         logger.warning("results-bucket scan failed: %s", e)
 
-    # run_name → {region: ?, current_step: int, last_update: epoch, has_done: bool}
+    # run_name -> {region: ?, current_step: int, last_update: epoch, has_done: bool}
     runs: dict[str, dict] = {}
 
     for region, bucket_name in REGION_TO_BUCKET.items():
         bucket = client.bucket(bucket_name)
-        # Recursive list — get every checkpoint/step blob and DONE markers.
+        # Recursive list -- get every checkpoint/step blob and DONE markers.
         try:
             blobs = list(bucket.list_blobs(prefix=CHECKPOINT_PREFIX))
         except Exception as e:
@@ -542,8 +541,8 @@ def _scan_deep_progress() -> dict:
                 },
             )
             # Take the FIRST region we see this run in as the canonical region
-            # (region locks force a run to live in exactly one region — the
-            # tracker enforces this — so we shouldn't see a run in two regions
+            # (region locks force a run to live in exactly one region -- the
+            # tracker enforces this -- so we shouldn't see a run in two regions
             # except for the rare race window, which we just first-write-wins).
             if entry["region"] != region:
                 continue  # ignore later sightings in other regions
@@ -554,7 +553,7 @@ def _scan_deep_progress() -> dict:
             if rel.endswith(".data_curation_DONE"):
                 entry["has_done"] = True
                 continue
-            # step-N parsing — the step appears in part[2] as "step-NNNN/..."
+            # step-N parsing -- the step appears in part[2] as "step-NNNN/..."
             if len(parts) >= 3 and parts[1] == "checkpoints":
                 step_chunk = parts[2].split("/", 1)[0]
                 if step_chunk.startswith("step-"):
@@ -605,7 +604,7 @@ def _scan_deep_progress() -> dict:
         is_done = run_name in summary_runs or entry["has_done"]
         pct = 100.0 if is_done else (100.0 * cur / total if total else 0.0)
 
-        # ETA: rate from (first_step → last_step) in steps/sec. Two-step minimum
+        # ETA: rate from (first_step -> last_step) in steps/sec. Two-step minimum
         # so the timeline isn't undefined. For DONE runs leave eta=None (already
         # finished). For runs with no two distinct step dirs, eta is None.
         eta_hours = None
@@ -668,12 +667,12 @@ def _scan_deep_progress() -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Cluster scan (iris autoscaler — what TPUs/regions have spare capacity?)
+# Cluster scan (iris autoscaler -- what TPUs/regions have spare capacity?)
 # ---------------------------------------------------------------------------
 
 
 def _scan_cluster() -> dict:
-    """Pull iris autoscaler status: which scale groups (region × TPU) have
+    """Pull iris autoscaler status: which scale groups (region x TPU) have
     capacity ready/idle vs which are saturated, plus my current usage on each.
 
     Mirrors `experiments/baseline_collection/dashboard.py:_fetch_cluster_status`
@@ -694,8 +693,8 @@ def _scan_cluster() -> dict:
         # Name pattern: `tpu_<variant>-<mode>_<size>-<zone>` where zone is the
         # last 3 dash-separated tokens (e.g. us-central1-a, europe-west4-a).
         # Examples:
-        #   tpu_v4-preemptible_8-us-central2-b → variant=v4, size=8, zone=us-central2-b
-        #   tpu_v6e-preemptible_4-us-east1-d   → variant=v6e, size=4, zone=us-east1-d
+        #   tpu_v4-preemptible_8-us-central2-b -> variant=v4, size=8, zone=us-central2-b
+        #   tpu_v6e-preemptible_4-us-east1-d   -> variant=v6e, size=4, zone=us-east1-d
         tpu_type = ""
         region = ""
         try:
@@ -754,25 +753,41 @@ def _scan_cluster() -> dict:
         agg["idle"] += g["idle"]
         agg["regions"].append(g["region"])
 
-    # My current usage by tpu_type (run job list ourselves to avoid double-RPC).
+    # My current TPU usage by tpu variant, sourced from the controller gRPC.
+    # Walks running jobs under ``/{USER_PREFIX}/warc-*`` and reads the variant
+    # straight off ``j.resources.device.tpu.variant`` -- no subprocess fork, no
+    # tabulate-text reparsing, and no implicit dependency on ``iris`` being on
+    # PATH inside ``.venv``.
     my_usage: Counter = Counter()
     try:
-        out = subprocess.check_output(
-            [".venv/bin/iris", "--cluster", "marin", "job", "list", "--state", "running"],
-            stderr=subprocess.DEVNULL,
-            text=True,
-            timeout=30,
-        )
-        for line in out.splitlines():
-            if "michaelryan-warc" not in line:
-                continue
-            for token in line.split():
-                # token like "v5p-8" or "v4-8" or "v6e-4"
-                if token.startswith(("v4-", "v5p-", "v5litepod-", "v6e-")) and token[-1].isdigit():
-                    my_usage[token] += 1
-                    break
+        from iris.rpc import controller_pb2 as ctrl_pb2
+
+        rpc_client = _get_iris_client()._cluster_client._client
+        offset = 0
+        while True:
+            req = ctrl_pb2.Controller.ListJobsRequest(
+                query=ctrl_pb2.Controller.JobQuery(
+                    state_filter="running",
+                    limit=500,
+                    offset=offset,
+                )
+            )
+            resp = rpc_client.list_jobs(req)
+            for j in resp.jobs:
+                if not j.job_id.startswith(f"/{USER_PREFIX}/warc-"):
+                    continue
+                if not (j.HasField("resources") and j.resources.HasField("device")):
+                    continue
+                if not j.resources.device.HasField("tpu"):
+                    continue
+                variant = j.resources.device.tpu.variant
+                if variant:
+                    my_usage[variant] += 1
+            if not resp.has_more or len(resp.jobs) == 0:
+                break
+            offset += len(resp.jobs)
     except Exception:
-        pass
+        logger.exception("my_usage gRPC list_jobs failed")
 
     return {
         "groups": groups,
@@ -795,6 +810,9 @@ PLOT_OUTPUT_DIR = Path(__file__).parent.parent.parent / "scratch" / "plots" / "w
 PLOT_SUMMARIES_DIR = Path(__file__).parent.parent.parent / "scratch" / "warc_summaries"
 PLOT_FM_DIR = Path(__file__).parent.parent.parent / "scratch" / "fm_summaries"
 PLOT_FM_LIMA_DIR = Path(__file__).parent.parent.parent / "scratch" / "fm_lima_sidecar"
+# 10k natural-epoch (launch_10k_natural.py) summaries -> the N=10364 grid row.
+PLOT_10K_DIR = Path(__file__).parent.parent.parent / "scratch" / "tenk_natural_summaries"
+TENK_RESULTS_PREFIX = "gs://marin-us-central1/metadata/data_curation_10k_natural_results/"
 
 
 def _regenerate_plots() -> dict:
@@ -802,7 +820,7 @@ def _regenerate_plots() -> dict:
 
     Steps:
       1. gcloud cp the warc_scaling + fixed_model + LIMA-sidecar summaries
-         locally (incremental — `gcloud storage cp -r` is idempotent).
+         locally (incremental -- `gcloud storage cp -r` is idempotent).
       2. Run plot_warc_scaling_sweep.main() in-process.
       3. Walk PLOT_OUTPUT_DIR and return categorized file paths so the
          frontend can render "Open in new tab" buttons.
@@ -810,12 +828,14 @@ def _regenerate_plots() -> dict:
     PLOT_SUMMARIES_DIR.mkdir(parents=True, exist_ok=True)
     PLOT_FM_DIR.mkdir(parents=True, exist_ok=True)
     PLOT_FM_LIMA_DIR.mkdir(parents=True, exist_ok=True)
+    PLOT_10K_DIR.mkdir(parents=True, exist_ok=True)
 
     # Pull summaries (cheap, gcloud cp is idempotent for unchanged files).
     for src, dst in [
         (RESULTS_PREFIX, PLOT_SUMMARIES_DIR),
         ("gs://marin-us-central1/metadata/data_curation_fixed_model_results/", PLOT_FM_DIR),
         ("gs://marin-us-central1/metadata/data_curation_fixed_model_lima_results/", PLOT_FM_LIMA_DIR),
+        (TENK_RESULTS_PREFIX, PLOT_10K_DIR),
     ]:
         try:
             subprocess.run(
@@ -839,12 +859,14 @@ def _regenerate_plots() -> dict:
             str(PLOT_FM_DIR),
             "--fm-lima-sidecar-prefix",
             str(PLOT_FM_LIMA_DIR),
+            "--tenk-results-prefix",
+            str(PLOT_10K_DIR),
             "--output-dir",
             str(PLOT_OUTPUT_DIR),
         ]
     )
 
-    # Walk output dir → categorize by metric and view type.
+    # Walk output dir -> categorize by metric and view type.
     plots: dict[str, dict] = {}
     if PLOT_OUTPUT_DIR.exists():
         for metric_dir in sorted(PLOT_OUTPUT_DIR.iterdir()):
@@ -870,33 +892,54 @@ def _regenerate_plots() -> dict:
 # ---------------------------------------------------------------------------
 
 
-def _iris_list_jobs(state: str) -> list[str]:
-    """Run the iris CLI to list jobs in a given state, filtering to warc coords."""
-    try:
-        out = subprocess.check_output(
-            [".venv/bin/iris", "--cluster", "marin", "job", "list", "--state", state],
-            stderr=subprocess.DEVNULL,
-            text=True,
-            timeout=60,
-        )
-    except Exception as e:
-        logger.warning("iris job list --state %s failed: %s", state, e)
-        return []
-    out_lines = []
-    for line in out.splitlines():
-        if not line.strip():
-            continue
-        # Path is the first whitespace-separated token; but lines start with "/<user>/...".
-        if not line.startswith(f"/{USER_PREFIX}/"):
-            continue
-        parts = line.split()
-        path = parts[0]
-        # Filter to warc-* parents and their children.
-        leaf = path.split("/")[2] if len(path.split("/")) > 2 else ""
-        if not any(leaf.startswith(p) for p in COORD_NAME_PREFIXES):
-            continue
-        out_lines.append(path)
-    return out_lines
+def _iris_list_jobs(state: str, rpc_client=None) -> list[str]:
+    """List warc/dedup-related jobs in *state* via the iris controller gRPC.
+
+    Returns wire-format job paths (``/<user>/<coord>`` and
+    ``/<user>/<coord>/<child>``) filtered to ``USER_PREFIX`` + any prefix in
+    ``COORD_NAME_PREFIXES``. Pagination walks ``has_more`` until exhausted --
+    the server clamps each page at ``MAX_LIST_JOBS_LIMIT`` (500).
+
+    When *rpc_client* is provided it's reused (so callers can share one client
+    across parallel state queries without redundant tunnel probes).
+    """
+    from iris.rpc import controller_pb2 as ctrl_pb2
+
+    if rpc_client is None:
+        try:
+            rpc_client = _get_iris_client()._cluster_client._client
+        except Exception as e:
+            logger.warning("iris client unavailable for state %s: %s", state, e)
+            return []
+
+    paths: list[str] = []
+    offset = 0
+    while True:
+        try:
+            req = ctrl_pb2.Controller.ListJobsRequest(
+                query=ctrl_pb2.Controller.JobQuery(
+                    state_filter=state,
+                    limit=500,
+                    offset=offset,
+                )
+            )
+            resp = rpc_client.list_jobs(req)
+        except Exception as e:
+            logger.warning("list_jobs RPC failed (state=%s offset=%d): %s", state, offset, e)
+            break
+        for j in resp.jobs:
+            path = j.job_id
+            if not path.startswith(f"/{USER_PREFIX}/"):
+                continue
+            parts = path.split("/")
+            leaf = parts[2] if len(parts) > 2 else ""
+            if not any(leaf.startswith(p) for p in COORD_NAME_PREFIXES):
+                continue
+            paths.append(path)
+        if not resp.has_more or len(resp.jobs) == 0:
+            break
+        offset += len(resp.jobs)
+    return paths
 
 
 def _parse_child(path: str) -> dict | None:
@@ -945,8 +988,21 @@ def _scan_jobs() -> dict:
     """Return {by_coord, running_by_method_n, region_running, totals}."""
     states = ("running", "pending", "failed")
     raw_paths: dict[str, list[str]] = {}
-    for s in states:
-        raw_paths[s] = _iris_list_jobs(s)
+
+    # Fan out the three state queries -- they're independent and dominated by
+    # controller RPC round-trip latency, not local work. gRPC channels are
+    # thread-safe, so we resolve the client once and share it.
+    try:
+        rpc_client = _get_iris_client()._cluster_client._client
+    except Exception as e:
+        logger.warning("iris client unavailable; _scan_jobs will return empty: %s", e)
+        rpc_client = None
+
+    with ThreadPoolExecutor(max_workers=len(states)) as ex:
+        future_to_state = {ex.submit(_iris_list_jobs, s, rpc_client): s for s in states}
+        for fut in as_completed(future_to_state):
+            s = future_to_state[fut]
+            raw_paths[s] = fut.result()
 
     parents: dict[str, dict] = {}  # coord_path -> info
     children: dict[str, list[dict]] = defaultdict(list)

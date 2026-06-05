@@ -17,10 +17,11 @@ Launch:
         -- python experiments/rephraser/code_extraction_passk_eval_baseline.py
 """
 
-from experiments.evals.evals import evaluate_lm_evaluation_harness
 from fray.cluster import ResourceConfig
 from marin.evaluation.evaluation_config import EvalTaskConfig
 from marin.execution.executor import executor_main
+
+from experiments.evals.evals import evaluate_lm_evaluation_harness
 
 PASSK_EVALS = [
     EvalTaskConfig(name="humaneval_64", num_fewshot=0, task_alias="humaneval_64_0shot"),

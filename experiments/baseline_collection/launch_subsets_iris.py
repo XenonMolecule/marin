@@ -51,7 +51,9 @@ METHOD_REGIONS: dict[str, str] = {
     "fineweb_edu": "us-central2",
     "resiliparse": "us-central2",
     "nemotron_full": "us-central1",
+    "nemotron_qhigh": "us-central1",
     "llm_curated": "us-central1",
+    "llm_curated_dclm_filtered": "us-central1",
 }
 
 PRIORITY_BAND_MAP = {
@@ -78,7 +80,7 @@ def _submit_one(
         cmd.append("--skip-filter")
     constraints = [
         preemptible_constraint(True),
-        Constraint(key=WellKnownAttribute.REGION, op=ConstraintOp.EQ, value=region),
+        Constraint.create(key=WellKnownAttribute.REGION, op=ConstraintOp.EQ, value=region),
     ]
     job = client.submit(
         entrypoint=Entrypoint.from_command(*cmd),

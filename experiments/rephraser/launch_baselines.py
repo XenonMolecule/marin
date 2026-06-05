@@ -108,7 +108,7 @@ def submit_one(
 
     constraints = [
         preemptible_constraint(True),
-        Constraint(key=WellKnownAttribute.REGION, op=ConstraintOp.IN, values=tuple(allowed_regions)),
+        Constraint.create(key=WellKnownAttribute.REGION, op=ConstraintOp.IN, values=tuple(allowed_regions)),
     ]
     all_variants = (tpu_variant, *tpu_alternatives)
     if len(set(all_variants)) > 1:

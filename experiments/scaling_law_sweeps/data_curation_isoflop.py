@@ -42,6 +42,7 @@ from dataclasses import replace
 from fray.cluster import ResourceConfig
 
 from experiments.defaults import simulated_epoching_train
+from experiments.scaling_law_sweeps import region_tracker
 from experiments.scaling_law_sweeps.completed_adamh import (
     SEQ_LEN,
     _compute_tensor_parallel_size,
@@ -55,7 +56,6 @@ from experiments.scaling_law_sweeps.data_curation_math import (
     slice_tokens_for,
     t_exp_ceiling,
 )
-from experiments.scaling_law_sweeps import region_tracker
 
 # Hardcoded D_obs values (from .stats.json at the time of registry definition).
 # We prefer to read these from GCS at plan-build time via `load_d_obs_from_stats`,
@@ -71,21 +71,23 @@ _D_OBS_DEFAULTS: dict[str, int] = {
 # Source bucket where baseline caches were originally materialized. Only used
 # to read `.stats.json` at plan-build time; training itself uses `mirror://`.
 _SOURCE_BUCKET: str = "gs://marin-us-central2"
-from experiments.simple_train_config import SimpleTrainConfig
-from marin.execution.executor import ExecutorStep, executor_main
-from marin.scaling_laws import CandidateConfig, pick_v4_type, pick_v5p_type
+import dataclasses as _dataclasses
 
 # Imports for the unique-job-name wrapper (works around the hardcoded "train_lm"
 # in marin.training.training._submit_training_job which collides when 127
 # concurrent ExecutorSteps all dispatch through the same name within one
 # coordinator scope).
 import importlib as _importlib
-import dataclasses as _dataclasses
+
+from marin.execution.executor import ExecutorStep, executor_main
+from marin.scaling_laws import CandidateConfig, pick_v4_type, pick_v5p_type
 from marin.training.training import (
-    _submit_training_job,
-    _prepare_training_run,
     TrainLmOnPodConfig,
+    _prepare_training_run,
+    _submit_training_job,
 )
+
+from experiments.simple_train_config import SimpleTrainConfig
 
 logger = logging.getLogger(__name__)
 

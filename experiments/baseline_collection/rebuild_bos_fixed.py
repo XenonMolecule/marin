@@ -39,9 +39,9 @@ currently down — to stay in-region). Launch when us-central1 Ray is up::
 
 from __future__ import annotations
 
+from marin.execution.executor import InputName, executor_main
 
 from experiments.defaults import default_tokenize
-from marin.execution.executor import InputName, executor_main
 
 # --- Source locations (existing filter / document outputs) ---
 # Both use us-central1 paths so the Iris us-central1 tokenization job is fully in-region.

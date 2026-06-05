@@ -17,10 +17,11 @@ Launch:
         -- python experiments/rephraser/reeval_gsm8k.py
 """
 
-from experiments.evals.evals import evaluate_lm_evaluation_harness
 from fray.cluster import ResourceConfig
 from marin.evaluation.evaluation_config import EvalTaskConfig
 from marin.execution.executor import executor_main
+
+from experiments.evals.evals import evaluate_lm_evaluation_harness
 
 GSM8K_EVAL = [
     EvalTaskConfig(name="gsm8k_cot", num_fewshot=8, task_alias="gsm8k_cot_8shot"),

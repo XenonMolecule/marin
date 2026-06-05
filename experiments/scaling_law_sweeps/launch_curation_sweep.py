@@ -31,8 +31,6 @@ import os
 import time
 
 import fsspec
-
-from experiments.scaling_law_sweeps import region_tracker
 from iris.client.client import IrisClient
 from iris.cluster.constraints import (
     Constraint,
@@ -52,7 +50,7 @@ from iris.cluster.types import (
 from iris.rpc import job_pb2
 from rigging.filesystem import REGION_TO_DATA_BUCKET
 
-from experiments.scaling_law_sweeps import curation_plan
+from experiments.scaling_law_sweeps import curation_plan, region_tracker
 
 logger = logging.getLogger(__name__)
 
@@ -200,22 +198,22 @@ def submit_one(
                 f"caller passed allowed_regions={allowed_regions} which excludes it. "
                 f"Drop --allowed-regions, or include {method_pin!r}."
             )
-        region_constraint = Constraint(
+        region_constraint = Constraint.create(
             key=WellKnownAttribute.REGION,
             op=ConstraintOp.IN,
-            values=(method_pin,),
+            values=[method_pin],
         )  # default mode = CONSTRAINT_MODE_REQUIRED (hard)
     elif allowed_regions:
-        region_constraint = Constraint(
+        region_constraint = Constraint.create(
             key=WellKnownAttribute.REGION,
             op=ConstraintOp.IN,
-            values=tuple(allowed_regions),
+            values=list(allowed_regions),
         )
     else:
-        region_constraint = Constraint(
+        region_constraint = Constraint.create(
             key=WellKnownAttribute.REGION,
             op=ConstraintOp.IN,
-            values=tuple(ALL_REGIONS),
+            values=list(ALL_REGIONS),
             mode=1,  # CONSTRAINT_MODE_PREFERRED (soft)
         )
 

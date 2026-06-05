@@ -1,0 +1,541 @@
+# Copyright The Marin Authors
+# SPDX-License-Identifier: Apache-2.0
+
+"""Quality-tier winner regions over (N, C), one panel per WARC subsample.
+
+Visualizes which quality tier (LQ / MQ / HQ) has the lowest predicted loss
+across the (parameters N, compute C) plane, with smooth decision boundaries
+between regions. One panel per fixed WARC subsample (e.g. 100 / 500 / 8M).
+
+Uses the V3 Sedova fit:
+
+    L(N, D, U) = E + C_m·N^(-β_m) + B_m·N^(δ_m) · D_eff_m^(-α_m)
+    D_eff_m   = U·R_D_m·(1 − exp(−ε/R_D_m))         ε = D/U
+
+Shared:    E
+Per-method: R_D, C, β, B, δ, α
+No damage; gold data filtered with drop_post_min.
+
+Per panel, U_m = TPW_m · sampled_warcs. At each (N, C) we evaluate L_m for
+each method (D = C/(6N), ε = D/U_m) and color the region by argmin_m L_m.
+Boundary curves are extracted as zero contours of the pairwise L differences.
+
+Usage:
+
+    # Refresh local CSV (one-time after new gold runs land), then plot:
+    uv run --with matplotlib --with numpy --with pandas python \\
+        experiments/scaling_law_sweeps/plot_quality_winner_regions.py --pull
+
+    # Fast re-plot from local data:
+    uv run --with matplotlib --with numpy --with pandas python \\
+        experiments/scaling_law_sweeps/plot_quality_winner_regions.py
+
+    # Custom WARC values:
+    uv run --with matplotlib --with numpy --with pandas python \\
+        experiments/scaling_law_sweeps/plot_quality_winner_regions.py \\
+        --warcs 100 1000 8000000
+
+Outputs `quality_winner_regions__W{w1}_W{w2}_W{w3}.{png,pdf}` in
+`scratch/plots/quality_winner_regions/`.
+"""
+
+from __future__ import annotations
+
+import argparse
+import logging
+import shutil
+import subprocess
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+from matplotlib.patches import Patch
+from matplotlib.ticker import FuncFormatter
+
+# Fit infra lives alongside the production dashboard in scratch/plots/.
+sys.path.insert(0, "scratch/plots")
+from fit_sedova_with_damage import fit_flex_sharing, predict_with_damage
+
+logger = logging.getLogger(__name__)
+
+DEFAULT_GOLD_CSV = Path("scratch/exports/warc_scaling_streamlined.csv")
+DEFAULT_OUTPUT_DIR = Path("scratch/plots/quality_winner_regions")
+DEFAULT_RESULTS_GS = "gs://marin-us-central1/metadata/data_curation_warc_scaling_results/"
+DEFAULT_AUDIT_DIR = Path("scratch/audit_summaries")
+
+METRIC = "eval_uncheatable_macro_loss"
+METHODS_ORDER: tuple[str, ...] = ("low_quality", "med_quality", "high_quality")
+
+DEFAULT_WARCS: tuple[int, ...] = (100, 500, 8_000_000)
+
+
+@dataclass(frozen=True)
+class MethodStyle:
+    label: str
+    line: str  # used for boundary curves and data markers
+    shade: str  # used for filled winner regions
+
+
+METHOD_STYLES: dict[str, MethodStyle] = {
+    "high_quality": MethodStyle("HQ (ours)", "#2ca02c", "#c8e6c9"),
+    "med_quality": MethodStyle("MQ (ours)", "#ff7f0e", "#fff59d"),
+    "low_quality": MethodStyle("LQ (ours)", "#e91e63", "#ffcdd2"),
+}
+
+
+PAPER_RCPARAMS = {
+    "font.family": "DejaVu Sans",
+    "font.size": 22,
+    "axes.titlesize": 30,
+    "axes.labelsize": 22,
+    "xtick.labelsize": 19,
+    "ytick.labelsize": 19,
+    "legend.fontsize": 18,
+    "axes.spines.top": False,
+    "axes.spines.right": False,
+    "axes.linewidth": 1.2,
+    "xtick.direction": "out",
+    "ytick.direction": "out",
+    "xtick.major.width": 1.2,
+    "ytick.major.width": 1.2,
+    "legend.frameon": False,
+    "figure.dpi": 120,
+}
+
+
+def fmt_params(x: float, _pos=None) -> str:
+    """log10-tick formatter for parameters (x is log10 N)."""
+    n = 10**x
+    if n >= 1e12:
+        return f"{n / 1e12:.0f}T"
+    if n >= 1e9:
+        return f"{n / 1e9:.0f}B"
+    if n >= 1e6:
+        return f"{n / 1e6:.0f}M"
+    return f"{n:.0f}"
+
+
+def fmt_warcs(w: int) -> str:
+    if w >= 1_000_000:
+        return f"{w / 1e6:.1f}M".replace(".0M", "M")
+    if w >= 1_000:
+        return f"{w / 1e3:.0f}K"
+    return str(w)
+
+
+def pull_warc_summaries(audit_dir: Path) -> None:
+    if shutil.which("gcloud") is None:
+        raise RuntimeError("`gcloud` not on PATH; cannot --pull.")
+    audit_dir.mkdir(parents=True, exist_ok=True)
+    src = DEFAULT_RESULTS_GS.rstrip("/") + "/*.json"
+    logger.info("pulling %s -> %s", src, audit_dir)
+    subprocess.run(["gcloud", "storage", "cp", src, str(audit_dir) + "/"], check=True)
+
+
+def regenerate_streamlined_csv() -> None:
+    """Re-run experiments.scaling_law_sweeps.export_csv to refresh the local
+    streamlined CSV from the already-pulled warc summaries.
+    """
+    sys.path.insert(0, "experiments/scaling_law_sweeps")
+    import export_csv as e
+
+    e.LOCAL_FM_DIR.mkdir(parents=True, exist_ok=True)
+    e.LOCAL_FM_LIMA_SIDECAR_DIR.mkdir(parents=True, exist_ok=True)
+    saved_argv = sys.argv
+    sys.argv = ["export_csv", "--out-dir", "scratch/exports"]
+    try:
+        e.main()
+    finally:
+        sys.argv = saved_argv
+
+
+def load_gold(csv_path: Path) -> pd.DataFrame:
+    df = pd.read_csv(csv_path)
+    for col in ("flops_target", "flops_actual", "tokens", "parameters", "epochs", "unique_tokens", METRIC):
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+    df = df.dropna(subset=[METRIC, "tokens", "parameters", "epochs", "unique_tokens"])
+    df = df[(df.epochs > 0) & (df.tokens > 0) & (df.parameters > 0)]
+    df = df[df["method"].isin(METHODS_ORDER)].copy().reset_index(drop=True)
+    df["U_eff"] = df["tokens"] / df["epochs"]
+    return df
+
+
+def drop_post_min(df: pd.DataFrame) -> pd.DataFrame:
+    """Per (method, parameters, warcs): keep only rows up to running min L."""
+    keep = []
+    for (_m, _p, _w), grp in df.groupby(["method", "parameters", "warcs"]):
+        grp = grp.sort_values("tokens")
+        i_min = grp[METRIC].idxmin()
+        tok_min = grp.loc[i_min, "tokens"]
+        keep.append(grp[grp["tokens"] <= tok_min])
+    return pd.concat(keep, ignore_index=True)
+
+
+def tokens_per_warc(df: pd.DataFrame) -> dict[str, float]:
+    return {m: float((g["unique_tokens"].astype(float) / g["warcs"]).mean()) for m, g in df.groupby("method")}
+
+
+def fit_w1(df_fit: pd.DataFrame, n_restarts: int = 100):
+    """W1 + sqrt-inverse-epoch weights: keep ALL data, downweight bend-up.
+
+    Pass df_fit WITHOUT drop_post_min — weighting handles the bend rows.
+    """
+    pmd = {}
+    for m in METHODS_ORDER:
+        sub = df_fit[df_fit["method"] == m]
+        pmd[m] = (
+            sub["parameters"].to_numpy(dtype=float),
+            sub["tokens"].to_numpy(dtype=float),
+            sub["U_eff"].to_numpy(dtype=float),
+            sub[METRIC].to_numpy(dtype=float),
+        )
+    weights = {}
+    for m, (N, D, U, L) in pmd.items():
+        epochs = D / U
+        w = 1.0 / np.sqrt(np.maximum(1.0, epochs))
+        w = w / w.mean()
+        weights[m] = w
+    return fit_flex_sharing(
+        pmd,
+        weights_by_method=weights,
+        share_E=True,
+        share_C=True,
+        share_beta=False,
+        share_R_D=True,
+        share_gamma=False,
+        no_damage=True,
+        fixed_tau=1.0,
+        damage_form="log_quad",
+        n_restarts=n_restarts,
+    )
+
+
+def evaluate_grid(fits, TPW, log_N, log_C, warcs):
+    """Returns (losses, winner_idx, in_data_region) where:
+    losses[i, c_idx, n_idx] = predicted L for method i
+    winner_idx[c_idx, n_idx] = argmin_i losses
+    in_data_region is a mask the same shape as winner_idx.
+    """
+    N = (10.0**log_N)[None, :]
+    C = (10.0**log_C)[:, None]
+    D = C / (6 * N)
+    losses = []
+    for m in METHODS_ORDER:
+        U = TPW[m] * warcs
+        params = fits[m]["params"]
+        L = predict_with_damage(
+            params,
+            np.broadcast_to(N, D.shape),
+            D,
+            np.full_like(D, U),
+            damage_form="log_quad",
+        )
+        losses.append(L)
+    losses = np.stack(losses, axis=0)
+    winner_idx = np.argmin(losses, axis=0)
+    return losses, winner_idx
+
+
+def render_panel(
+    ax,
+    fits,
+    TPW: dict[str, float],
+    warcs: int,
+    log_N_grid: np.ndarray,
+    log_C_grid: np.ndarray,
+    data_for_warc: pd.DataFrame | None,
+    min_tokens: float,
+) -> None:
+    """Render one (N, C) winner-region panel for a fixed warcs value.
+
+    Cells with D = C/(6N) < min_tokens are masked out (too few training
+    steps to trust the form's extrapolation).
+    """
+    losses, winner_idx = evaluate_grid(fits, TPW, log_N_grid, log_C_grid, warcs)
+
+    # Under-trained mask: D = C/(6N) >= min_tokens (no-op when min_tokens<=0)
+    if min_tokens > 0:
+        log_N_col = log_N_grid[None, :]
+        log_C_row = log_C_grid[:, None]
+        log_D = log_C_row - np.log10(6.0) - log_N_col
+        trained_enough = log_D >= np.log10(min_tokens)
+    else:
+        trained_enough = np.ones_like(winner_idx, dtype=bool)
+
+    winner_for_fill = winner_idx.astype(float)
+    winner_for_fill[~trained_enough] = np.nan
+
+    # Filled regions by winner
+    shade_colors = [METHOD_STYLES[m].shade for m in METHODS_ORDER]
+    ax.contourf(
+        log_N_grid,
+        log_C_grid,
+        winner_for_fill,
+        levels=[-0.5, 0.5, 1.5, 2.5],
+        colors=shade_colors,
+        zorder=1,
+    )
+
+    # Smooth boundary curves: for each pair, the zero contour of L_a - L_b,
+    # masked to where (a) the pair beats the third method, AND (b) we are in
+    # the trained-enough region.
+    third_method_for_pair = {
+        (0, 1): 2,  # LQ vs MQ → third is HQ
+        (0, 2): 1,  # LQ vs HQ → third is MQ
+        (1, 2): 0,  # MQ vs HQ → third is LQ
+    }
+    for (i, j), k in third_method_for_pair.items():
+        diff = losses[i] - losses[j]
+        pair_beats_third = (losses[i] <= losses[k]) | (losses[j] <= losses[k])
+        mask = trained_enough & pair_beats_third
+        diff_masked = np.where(mask, diff, np.nan)
+        ax.contour(
+            log_N_grid,
+            log_C_grid,
+            diff_masked,
+            levels=[0.0],
+            colors="#222222",
+            linewidths=2.2,
+            zorder=4,
+        )
+
+    # Diagonal line marking the min-tokens floor (only when floor is active).
+    if min_tokens > 0:
+        floor_logC = np.log10(6.0 * min_tokens) + log_N_grid
+        in_view = (floor_logC >= log_C_grid[0]) & (floor_logC <= log_C_grid[-1])
+        if in_view.any():
+            ax.plot(
+                log_N_grid[in_view],
+                floor_logC[in_view],
+                color="#555555",
+                linewidth=1.4,
+                linestyle=(0, (3, 3)),
+                alpha=0.7,
+                zorder=3,
+            )
+
+    # Gold empirical-winner dots: one dot per (parameters, flops_target) cell
+    # where ≥2 methods coexist, colored by the method with the lowest loss
+    # at that cell. Matches the dashboard's semantics — a color mismatch
+    # between dot and background fill reveals where the fit disagrees with
+    # the empirical winner.
+    if data_for_warc is not None and len(data_for_warc):
+        cell_keys = ["parameters", "flops_target"]
+        counts = data_for_warc.groupby(cell_keys)["method"].nunique()
+        contested = counts[counts >= 2].index
+        df_contested = data_for_warc[data_for_warc.set_index(cell_keys).index.isin(contested)]
+        if len(df_contested):
+            winners = df_contested.loc[df_contested.groupby(cell_keys)[METRIC].idxmin()]
+            for m in METHODS_ORDER:
+                style = METHOD_STYLES[m]
+                sub = winners[winners["method"] == m]
+                if not len(sub):
+                    continue
+                ax.scatter(
+                    np.log10(sub["parameters"].astype(float)),
+                    np.log10(sub["flops_actual"].astype(float)),
+                    s=70,
+                    color=style.line,
+                    edgecolors="white",
+                    linewidths=1.2,
+                    zorder=6,
+                    alpha=0.95,
+                )
+
+    ax.set_xlim(log_N_grid[0], log_N_grid[-1])
+    ax.set_ylim(log_C_grid[0], log_C_grid[-1])
+    ax.set_title(f"WARCs = {fmt_warcs(warcs)}", pad=10, fontweight="semibold")
+    ax.grid(True, which="major", linestyle=":", linewidth=0.7, alpha=0.55, zorder=0)
+    ax.xaxis.set_major_formatter(FuncFormatter(fmt_params))
+    ax.set_xlabel("parameters (N)")
+
+
+def render_figure(
+    fits,
+    TPW: dict[str, float],
+    df_full: pd.DataFrame,
+    warcs_values: list[int],
+    log_N_range: tuple[float, float],
+    log_C_range: tuple[float, float],
+    n_grid: int,
+    min_tokens: float,
+    out_dir: Path,
+    suffix: str,
+) -> tuple[Path, Path]:
+    plt.rcParams.update(PAPER_RCPARAMS)
+
+    n_panels = len(warcs_values)
+    fig, axes = plt.subplots(
+        1,
+        n_panels,
+        figsize=(6.5 * n_panels, 8.5),
+        sharex=True,
+        sharey=True,
+    )
+    if n_panels == 1:
+        axes = [axes]
+
+    log_N_grid = np.linspace(*log_N_range, n_grid)
+    log_C_grid = np.linspace(*log_C_range, n_grid)
+
+    avail = sorted(df_full["warcs"].unique())
+    for ax, warcs in zip(axes, warcs_values, strict=True):
+        # Only overlay data dots if the requested warcs is exactly in the data
+        # (otherwise we'd be confusing the reader by showing data at a
+        # different warcs than the panel is computing for).
+        data_for_warc = df_full[df_full["warcs"] == warcs] if warcs in avail else None
+        render_panel(
+            ax,
+            fits,
+            TPW,
+            warcs,
+            log_N_grid,
+            log_C_grid,
+            data_for_warc,
+            min_tokens,
+        )
+
+    axes[0].set_ylabel("log₁₀ compute (FLOPs)")
+
+    # Shared bottom legend with method squares + boundary line
+    legend_handles = [
+        Patch(
+            facecolor=METHOD_STYLES[m].shade,
+            edgecolor=METHOD_STYLES[m].line,
+            linewidth=1.2,
+            label=METHOD_STYLES[m].label,
+        )
+        for m in METHODS_ORDER
+    ]
+    from matplotlib.lines import Line2D
+
+    legend_handles.append(
+        Line2D([0], [0], color="#222222", linewidth=2.2, label="winner boundary"),
+    )
+    if min_tokens > 0:
+        legend_handles.append(
+            Line2D([0], [0], color="#555555", linewidth=1.4, linestyle=(0, (3, 3)), label="min-tokens floor"),
+        )
+    fig.legend(
+        handles=legend_handles,
+        loc="lower center",
+        ncol=len(legend_handles),
+        bbox_to_anchor=(0.5, 0.02),
+        handlelength=2.4,
+        columnspacing=1.6,
+    )
+    fig.tight_layout(rect=(0.02, 0.10, 0.99, 0.97))
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    stem = "quality_winner_regions__SQRT_WEIGHTED__" + "_".join(f"W{w}" for w in warcs_values)
+    if suffix:
+        stem += f"__{suffix}"
+    png = out_dir / f"{stem}.png"
+    pdf = out_dir / f"{stem}.pdf"
+    fig.savefig(png, dpi=200, bbox_inches="tight", pad_inches=0.3)
+    fig.savefig(pdf, bbox_inches="tight", pad_inches=0.3)
+    plt.close(fig)
+    return png, pdf
+
+
+def main(argv: list[str] | None = None) -> None:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    parser.add_argument(
+        "--warcs", nargs="+", type=int, default=list(DEFAULT_WARCS), help="WARC subsample sizes to render as panels."
+    )
+    parser.add_argument("--gold-csv", type=Path, default=DEFAULT_GOLD_CSV)
+    parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
+    parser.add_argument("--n-grid", type=int, default=600, help="Resolution of the (log N, log C) grid per panel.")
+    parser.add_argument(
+        "--log-n-range", nargs=2, type=float, default=[7.8, 12.0], help="log10 N range (min max). Default 7.8 .. 12."
+    )
+    parser.add_argument(
+        "--log-c-range", nargs=2, type=float, default=[17.0, 30.0], help="log10 C range (min max). Default 17 .. 30."
+    )
+    parser.add_argument(
+        "--min-tokens",
+        type=float,
+        default=0.0,
+        help="Minimum D = C/(6N) for predictions to be drawn. "
+        "Default 0 (no floor). Set e.g. 1e6 or 1e9 to "
+        "mask the under-trained corner with a dashed "
+        "diagonal.",
+    )
+    parser.add_argument("--n-restarts", type=int, default=100, help="basinhopping restarts for the V3 fit.")
+    parser.add_argument("--suffix", default="", help="Optional filename suffix.")
+    parser.add_argument(
+        "--pull",
+        action="store_true",
+        help="Refresh warc-scaling summaries from gs:// and " "regenerate the streamlined CSV before plotting.",
+    )
+    parser.add_argument("--pull-only", action="store_true", help="Refresh data and exit without plotting.")
+    args = parser.parse_args(argv)
+
+    if args.pull or args.pull_only:
+        pull_warc_summaries(DEFAULT_AUDIT_DIR)
+        regenerate_streamlined_csv()
+        if args.pull_only:
+            logger.info("--pull-only: exiting before plot.")
+            return
+
+    logger.info("Loading gold from %s", args.gold_csv)
+    df_full = load_gold(args.gold_csv)
+    logger.info("  %d rows across %s", len(df_full), METHODS_ORDER)
+
+    # Sidecar: NO dpm — sqrt-inverse weights handle the bend-up rows instead.
+    df_fit = df_full
+    logger.info("  Using all %d rows (no dpm; sqrt-inverse weights instead)", len(df_fit))
+
+    logger.info("Fitting W1 (shared E, R_D, C; per-method β, B, δ, α; no damage)…")
+    res = fit_w1(df_fit, n_restarts=args.n_restarts)
+    fits = res["fits"]
+    logger.info("  shared: E=%.4f  R_D=%.2f  C=%.3g", res["E"], res["R_D"], res["C_shared"])
+    # Per-method R² + agg RMSE
+    rss_total, n_total = 0.0, 0
+    for m in METHODS_ORDER:
+        sub = df_fit[df_fit["method"] == m]
+        L = sub[METRIC].to_numpy(dtype=float)
+        pred = fits[m]["pred"]
+        ss = float(np.sum((L - pred) ** 2))
+        tss = float(np.sum((L - L.mean()) ** 2))
+        r2 = 1 - ss / tss
+        rss_total += ss
+        n_total += len(L)
+        p = fits[m]["params"]
+        logger.info(
+            "  %-14s β=%.3f  B=%.3g  δ=%.3f  α=%.3f  R²=%.4f",
+            m,
+            p[2],
+            p[3],
+            p[4],
+            p[5],
+            r2,
+        )
+    logger.info("  aggregate RMSE = %.4f", (rss_total / n_total) ** 0.5)
+
+    TPW = tokens_per_warc(df_full)
+    logger.info("Tokens-per-WARC: %s", {m: f"{v:.3e}" for m, v in TPW.items()})
+
+    png, pdf = render_figure(
+        fits=fits,
+        TPW=TPW,
+        df_full=df_full,
+        warcs_values=list(args.warcs),
+        log_N_range=tuple(args.log_n_range),
+        log_C_range=tuple(args.log_c_range),
+        n_grid=args.n_grid,
+        min_tokens=float(args.min_tokens),
+        out_dir=args.output_dir,
+        suffix=args.suffix,
+    )
+    logger.info("wrote %s", png)
+    logger.info("wrote %s", pdf)
+
+
+if __name__ == "__main__":
+    main()

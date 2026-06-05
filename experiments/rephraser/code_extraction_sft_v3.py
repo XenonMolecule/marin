@@ -28,6 +28,10 @@ Dry run:
 
 import dataclasses
 
+from levanter.layers.rotary import DefaultRotaryEmbeddingsConfig
+from marin.evaluation.evaluation_config import EvalTaskConfig
+from marin.execution.executor import executor_main
+
 from experiments.qwen3 import qwen3_0_6b_hd128
 from experiments.rephraser.extraction_sft_recipe import (
     DomainSource,
@@ -37,9 +41,6 @@ from experiments.rephraser.extraction_sft_recipe import (
     UrlPattern,
     build_extraction_sft_experiment,
 )
-from levanter.layers.rotary import DefaultRotaryEmbeddingsConfig
-from marin.evaluation.evaluation_config import EvalTaskConfig
-from marin.execution.executor import executor_main
 
 # ---------------------------------------------------------------------------
 # 8B extractor model

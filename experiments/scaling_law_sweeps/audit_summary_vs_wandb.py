@@ -35,9 +35,8 @@ import argparse
 import json
 import logging
 import math
-from pathlib import Path
-
 import subprocess
+from pathlib import Path
 
 import wandb
 

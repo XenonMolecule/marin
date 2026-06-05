@@ -53,13 +53,13 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import fsspec
-from fray.v2.types import ResourceConfig
+from fray import ResourceConfig
+from marin.execution.executor import ExecutorStep, executor_main, this_output_path
+from marin.execution.remote import remote
 from zephyr import Dataset, ZephyrContext
 from zephyr.execution import zephyr_worker_ctx
 
 from experiments.defaults import default_tokenize
-from marin.execution.executor import ExecutorStep, executor_main, this_output_path
-from marin.execution.remote import remote
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +67,7 @@ logger = logging.getLogger(__name__)
 # --- Source paths (existing filtered/extracted outputs as of 2026-04-28) ---
 DCLM_FILTERED = "gs://marin-us-central2/filtered/baseline_dclm-23e9be"
 NEMOTRON_FULL_FILTERED = "gs://marin-us-central1/filtered/baseline_nemotron_full-347dfe"
+NEMOTRON_QHIGH_FILTERED = "gs://marin-us-central1/filtered/baseline_nemotron_qhigh-v1"
 FINEWEB_EDU_FILTERED = "gs://marin-us-central2/filtered/baseline_fineweb_edu-7a3bc5"
 RESILIPARSE_EXTRACTED = "gs://marin-us-central2/extracted/baseline_resiliparse-19bdaa"
 LLM_CURATED_DOCUMENTS = "gs://marin-us-central1/documents/baseline_llm_curated-050243"
@@ -85,7 +86,7 @@ TOKENIZER = "meta-llama/Meta-Llama-3.1-8B"
 # region means every read is in-region (free).
 METHODS_BY_REGION: dict[str, tuple[str, ...]] = {
     "us-central2": ("dclm", "fineweb_edu"),
-    "us-central1": ("nemotron_full", "llm_curated"),
+    "us-central1": ("nemotron_full", "nemotron_qhigh", "llm_curated"),
 }
 ALL_METHODS = tuple(m for ms in METHODS_BY_REGION.values() for m in ms)
 
@@ -269,6 +270,9 @@ def make_steps(method: str, n: int) -> ExecutorStep:
             "nemotron_full_bos_fixed", n, f"{NEMOTRON_FULL_FILTERED}/*.jsonl.gz", "metadata_url", WARC_METADATA
         )
         tok_name = f"baseline_nemotron_full_bos_fixed_{n}warcs"
+    elif method == "nemotron_qhigh":
+        f = _filter_step("nemotron_qhigh", n, f"{NEMOTRON_QHIGH_FILTERED}/*.jsonl.gz", "metadata_url", WARC_METADATA)
+        tok_name = f"baseline_nemotron_qhigh_{n}warcs"
     elif method == "fineweb_edu":
         f = _filter_step("fineweb_edu", n, f"{FINEWEB_EDU_FILTERED}/data-*.jsonl.gz", "manifest_file_path")
         tok_name = f"baseline_fineweb_edu_{n}warcs"

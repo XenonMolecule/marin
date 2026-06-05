@@ -97,11 +97,7 @@ def submit_one(
         env_vars["HF_TOKEN"] = hf_token
     constraints = [
         preemptible_constraint(True),
-        Constraint(
-            key=WellKnownAttribute.REGION,
-            op=ConstraintOp.IN,
-            values=(region,),
-        ),
+        Constraint.create(key=WellKnownAttribute.REGION, op=ConstraintOp.EQ, value=region),
     ]
     job = client.submit(
         entrypoint=Entrypoint.from_command(*cmd),

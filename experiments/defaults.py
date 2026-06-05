@@ -451,6 +451,10 @@ def default_train(
             checkpointer=CheckpointerConfig(
                 save_interval=timedelta(minutes=10),
                 keep=_checkpoint_keep(steps_per_export),
+                # Preserve the rolling temp checkpoint across Iris child retries so a
+                # preempted run resumes from its last checkpoint instead of step 0
+                # (critical on preemptible TPUs).
+                delete_old_temp_checkpoints=False,
             ),
             model_averaging=model_averaging,
             mesh=MeshConfig(
@@ -554,6 +558,7 @@ def default_sft(
     model_config: LlamaConfig,
     sft_config: SimpleSFTConfig,
     tags: Sequence[str] = (),
+    wandb_group: str | None = None,
 ) -> ExecutorStep:
     """
     Creates an ExecutorStep for supervised fine-tuning of a language model.
@@ -593,6 +598,7 @@ def default_sft(
         max_grad_norm=sft_config.max_grad_norm,
         warmup=sft_config.warmup,
         steps_per_eval=sft_config.steps_per_eval,
+        max_eval_batches=sft_config.max_eval_batches,
         steps_per_export=sft_config.steps_per_checkpoint,
         int8=sft_config.int8,
         steps_per_hf_export=sft_config.steps_per_hf_export,
@@ -621,6 +627,7 @@ def default_sft(
         model_config=model_config,
         train_config=normal_train_config,
         tags=tags,
+        wandb_group=wandb_group,
         eval_harness_tasks=[],
         use_default_validation=False,
     )

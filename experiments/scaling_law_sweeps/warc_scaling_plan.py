@@ -41,22 +41,35 @@ from experiments.scaling_law_sweeps.data_curation_math import (
 )
 from experiments.scaling_law_sweeps.fixed_model_plan import _candidate_for_fixed_model
 
-
 # Override the PlannedRun.memory_gb default (256, set for fixed-model d4096+L40
-# multi-host plans). Initial 16-GB tier was too tight: h=512 plans with
-# batch_size >= 32 OOM-killed on host RAM (exit 137) under 16 GB. Bumping to
-# 32 GB minimum for any model >= h=384, 48 GB for h >= 1024.
-#   - h <= 256 (~70M params, batch ≤ 8): 24 GB
-#   - h ∈ {384, 512, 768} (≤300M, mid batches): 32 GB
-#   - h >= 1024 (≥450M, large batches): 48 GB
-# Peak host RAM use during training is well below TPU HBM since most state
-# lives in HBM; host stages checkpoints, tokenizer, JAX overhead, wandb cache.
+# multi-host plans). Host RAM has a ~constant floor INDEPENDENT of model size:
+# the in-training eval harness datasets (paloma / uncheatable), the data-loader
+# prefetch, the tokenizer, and JAX/wandb overhead together need tens of GB no
+# matter how small the model is. The old size-scaled tiers (24 GB for h<=256,
+# 32 GB for h<=768) sized only on params+activations and so UNDER-provisioned
+# tiny models: d256 cells OOM-killed (exit 137) at 24 GB even at batch 16
+# (resiliparse_dedup_100 1e18/B16, 3e18/B64, 2026-05-30). The param/activation
+# term only dominates for big models, so we floor EVERY cell at 48 GB (which
+# cleared the OOMs in practice); v5p/v4 hosts have ample RAM so this does not
+# hurt scheduling. Large-batch corners are bumped further in _memory_gb_for_plan.
+_MEMORY_FLOOR_GB: int = 48
+
+
 def _memory_gb_for_hidden(hidden_dim: int) -> int:
-    if hidden_dim <= 256:
-        return 24
-    if hidden_dim <= 768:
-        return 32
-    return 48
+    return _MEMORY_FLOOR_GB
+
+
+# Big batch sizes balloon host RAM (gradient bookkeeping, JAX layout caches,
+# loader prefetch) even when TPU HBM is comfortable. The per-hidden tier is
+# correct at canonical batches but undershoots when AdamH HP produces large B
+# at small d (large-budget x small-model corner of the IsoFLOP grid).
+# Calibrated against observed exit-137 OOMs:
+#   - h=256, B=256 (1e19 budget) OOM'd at 24 GB -> 64 GB needed
+def _memory_gb_for_plan(hidden_dim: int, batch_size: int) -> int:
+    base = _memory_gb_for_hidden(hidden_dim)
+    if hidden_dim <= 256 and batch_size >= 128:
+        return max(base, 64)
+    return base
 
 
 # All WARC subsample sizes this sweep covers.
@@ -70,8 +83,29 @@ ANCHOR_HIDDEN_SIZE: int = 512  # 156.5M params under AdamH heuristic
 # fit; collapse to h=256.
 HIDDEN_SIZE_FLOOR: int = 256
 
-# 4 methods (fineweb_edu dropped per user direction 2026-04-29).
-WARC_METHOD_BASE_NAMES: tuple[str, ...] = ("dclm", "nemotron_full", "llm_curated", "resiliparse")
+# 5 methods (fineweb_edu dropped per user direction 2026-04-29).
+WARC_METHOD_BASE_NAMES: tuple[str, ...] = (
+    "dclm",
+    "nemotron_full",
+    # Nemotron-CC-HQ (quality=high only -- Nvidia's "HQ" subset definition,
+    # ~37% of full Nemotron-CC tokens). Subsamples built via subset_baselines.py
+    # from the existing baseline_nemotron_qhigh-v1 3k filtered output.
+    "nemotron_qhigh",
+    "llm_curated",
+    "resiliparse",
+    # resiliparse with per-N fuzzy dedup. N=100 only so far; the larger
+    # N's are pending a viable compute strategy (us-central2 v4 was
+    # exhausted; eu-west4 was used as one-off smoke).
+    "resiliparse_dedup",
+    "llm_curated_dclm_filtered",
+    # LLM-extracted quality-band sweeps. Registered via dedup_extracted.py +
+    # tokenize_deduped_extracted.py at N=100 (others to follow as extraction
+    # for those N's lands). Method names match the curation_plan.METHODS keys.
+    "low_quality",
+    "med_low_quality",
+    "med_quality",
+    "high_quality",
+)
 
 # Per-N model size lineup. Each entry is a list of hidden_sizes under the
 # AdamH heuristic. Derivation:
@@ -82,14 +116,17 @@ WARC_METHOD_BASE_NAMES: tuple[str, ...] = ("dclm", "nemotron_full", "llm_curated
 #     delphi's enumerator (which only steps from h=512 upward) but the
 #     formula is continuous, so off-grid h is well-defined; HP recipe is
 #     extrapolating for very small h (accepted trade-off).
-#   - 2× snap-to-anchor band: any slot within [78.5M, 314M] params (i.e. 0.5x-2x
+#   - 2x snap-to-anchor band: any slot within [78.5M, 314M] params (i.e. 0.5x-2x
 #     of 157M) snaps to h=512. Otherwise, if no slot is in band, h=512 is
 #     added as an EXTRA slot for the cross-N anchor.
 #   - At N=100, scaled small (5.2M) and mid (33M) targets both round up to
 #     h=256 (69M) given the floor; the small slot is dropped (redundant).
 _HIDDEN_SIZES_PER_N: dict[int, tuple[int, ...]] = {
     # N=100: small/mid collapse to h=256 (drop small); large 100M snaps to anchor.
-    100: (256, 512),
+    # 768 and 1536 added 2026-05-24 for the dense 100-WARC quality-tier grid
+    # (low/med/high_quality). Existing N=100 methods unaffected unless launched
+    # with the new hidden sizes via --only-hidden-sizes.
+    100: (256, 512, 768, 1536),
     # N=500: mid 167M snaps to anchor; small 26M floors to h=256; large 500M -> h=1024.
     500: (256, 512, 1024),
     # N=1000: scaled trio + anchor extra (none of the trio in the snap band).
@@ -103,13 +140,14 @@ _HIDDEN_SIZES_PER_N: dict[int, tuple[int, ...]] = {
 # with ~1 decade of padding either side. DCLM is the data-constrained anchor
 # whose cliff drives the crossover position.
 _BUDGETS_PER_N: dict[int, tuple[float, ...]] = {
-    100: (3e15, 1e16, 3e16, 1e17, 3e17, 1e18, 3e18),
+    # 1e19 and 1e20 added 2026-05-24 for the dense 100-WARC quality-tier grid.
+    100: (3e15, 1e16, 3e16, 1e17, 3e17, 1e18, 3e18, 1e19, 1e20),
     500: (1e16, 3e16, 1e17, 3e17, 1e18, 3e18, 1e19),
     1000: (3e16, 1e17, 3e17, 1e18, 3e18, 1e19, 3e19, 1e20),
     2000: (1e17, 3e17, 1e18, 3e18, 1e19, 3e19, 1e20, 3e20),
 }
 
-# Two-point high-end extension per N — used for resiliparse + llm_curated only,
+# Two-point high-end extension per N -- used for resiliparse + llm_curated only,
 # to give the data-rich methods a fair shot in the high-compute regime where
 # DCLM/Nemotron have already hit their data cliff. Follows the canonical
 # 3-9-1.8 progression from each grid's top.
@@ -118,13 +156,16 @@ _BUDGETS_PER_N: dict[int, tuple[float, ...]] = {
 # v4-512 / v5p-512 gang-scheduled across 64 VMs, which doesn't realistically
 # land at interactive priority within paper-deadline timescales.
 _BUDGET_EXTENSIONS_PER_N: dict[int, tuple[float, ...]] = {
-    100: (9e18, 1.8e19),
-    500: (3e19, 9e19),
+    # 1.8e20 added 2026-05-19 to push one tier above canonical for
+    # low_quality/med_quality at N=100 d=512 and low_quality/high_quality at
+    # N=500 d=1024, per user request to extend the curve.
+    100: (9e18, 1.8e19, 3e19, 9e19, 1.8e20),
+    500: (3e19, 9e19, 1.8e20),
     1000: (3e20, 9e20),
     2000: (9e20,),
 }
 
-# Tag the same way as fixed_model: "expWARC_<region>" → since we run natural
+# Tag the same way as fixed_model: "expWARC_<region>" -> since we run natural
 # epoching only (no slicing), use the natural suffix. Distinct prefix
 # ("expWARC") so:
 #   - run_name_core differs from fixed-model runs (no GCS path collision)
@@ -146,7 +187,7 @@ def budgets_for(n_warcs: int, include_extensions: bool = False) -> tuple[float, 
     `include_extensions=True` appends the 2-point high-end extension to give
     data-rich methods (resiliparse, llm_curated) a fair shot beyond the cliff.
     Should NOT be used for dclm/nemotron_full (they're past their data cliff
-    at the existing top budgets — extra runs would be uninformative).
+    at the existing top budgets -- extra runs would be uninformative).
     """
     if n_warcs not in _BUDGETS_PER_N:
         raise ValueError(f"Unknown n_warcs={n_warcs}; expected one of {WARC_COUNTS}.")
@@ -222,7 +263,7 @@ def enumerate_warc_scaling_plans(
             hidden_sizes = tuple(h for h in hidden_sizes if h in only_hidden_set)
         for base_name in base_names:
             if extension_only:
-                # Restrict to the extension budgets only — used by the
+                # Restrict to the extension budgets only -- used by the
                 # priority-bump coord. Skips base budgets entirely.
                 if base_name not in extension_set:
                     continue
@@ -257,7 +298,7 @@ def enumerate_warc_scaling_plans(
                     )
                     # Override memory_gb so children schedule alongside other
                     # tenants on shared workers (which report ~16 GB free).
-                    plan = dataclasses.replace(plan, memory_gb=_memory_gb_for_hidden(plan.hidden_dim))
+                    plan = dataclasses.replace(plan, memory_gb=_memory_gb_for_plan(plan.hidden_dim, plan.batch_size))
                     # If batch was shrunk, override the TPU shape selection.
                     # The default `_planned_run_from_candidate` bumps v5p UP to
                     # match v4's vm_count, which defeats the purpose of the
@@ -271,7 +312,7 @@ def enumerate_warc_scaling_plans(
                         vm_count_v5p = get_tpu_topology(v5p_raw).vm_count
                         # Pair with a v4 of the same vm_count (cores = vm_count*8).
                         # The v4 alt may not actually fit the model, but iris
-                        # won't dispatch it in our regions anyway — v5p in us-east5
+                        # won't dispatch it in our regions anyway -- v5p in us-east5
                         # is the real target. The match is only needed so the
                         # device_variant_constraint filter (line 148 of
                         # launch_curation_sweep) doesn't drop v5p as a "wrong
@@ -283,7 +324,7 @@ def enumerate_warc_scaling_plans(
 
 
 def _shrink_candidate_batch(candidate, divisor: int, *, seq_len: int = SEQ_LEN):
-    """Return a CandidateConfig with batch_size÷divisor and steps×divisor.
+    """Return a CandidateConfig with batch_size÷divisor and stepsxdivisor.
 
     Re-runs the AdamH HP formulas (`_compute_learning_rate`, `_compute_adam_lr`,
     `_compute_beta2`) for the smaller batch, then rebuilds the optimizer config
@@ -291,12 +332,13 @@ def _shrink_candidate_batch(candidate, divisor: int, *, seq_len: int = SEQ_LEN):
     match what the heuristic would have produced if it had naturally chosen
     the smaller batch.
 
-    Used to shrink the TPU footprint of high-budget plans (e.g. v5p-256 →
+    Used to shrink the TPU footprint of high-budget plans (e.g. v5p-256 ->
     v5p-32) without changing the FLOP budget. Returns None if shrunk batch
     falls below the heuristic's `min_batch_size`.
     """
-    from experiments.scaling_law_sweeps.completed_adamh import completed_adamh_heuristic
     from marin.scaling_laws import CandidateConfig
+
+    from experiments.scaling_law_sweeps.completed_adamh import completed_adamh_heuristic
 
     h = completed_adamh_heuristic
     new_batch = candidate.batch_size // divisor

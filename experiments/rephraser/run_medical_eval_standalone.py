@@ -47,11 +47,11 @@ import json
 import logging
 
 import fsspec
-
-from experiments.scaling_law_sweeps import region_tracker
 from marin.evaluation.evaluation_config import EvalTaskConfig
 from marin.evaluation.evaluators.evaluator import ModelConfig
 from marin.evaluation.evaluators.lm_evaluation_harness_evaluator import LMEvaluationHarnessEvaluator
+
+from experiments.scaling_law_sweeps import region_tracker
 
 logger = logging.getLogger(__name__)
 

@@ -27,9 +27,8 @@ import logging
 from dataclasses import dataclass
 
 import fsspec
-
-from marin.execution.remote import remote
 from marin.execution.executor import ExecutorStep, executor_main, this_output_path
+from marin.execution.remote import remote
 from marin.generation.inference_v2 import InferenceV2Config, run_inference_v2
 
 logger = logging.getLogger(__name__)

@@ -16,10 +16,11 @@ Launch (us-east5-a):
         -- python experiments/rephraser/baseline_0shot_eval.py
 """
 
-from experiments.evals.evals import evaluate_lm_evaluation_harness
 from fray.cluster import ResourceConfig
 from marin.evaluation.evaluation_config import EvalTaskConfig
 from marin.execution.executor import executor_main
+
+from experiments.evals.evals import evaluate_lm_evaluation_harness
 
 MATH_EVALS_0SHOT = [
     EvalTaskConfig(name="gsm8k_cot", num_fewshot=0, task_alias="gsm8k_cot_0shot"),

@@ -30,6 +30,7 @@ from experiments.scaling_law_sweeps.plot_curation_isoflop import (
     COMPARE_COLORS,
     DEFAULT_METRIC,
     _compute_paloma_macro_loss,
+    _compute_uncheatable_macro_loss,
     _fit_loss_vs_x,
     load_summaries,
 )
@@ -131,6 +132,17 @@ FM_EXPERIMENT_TAG = "expFM_natural"
 # so cross-N grid plots show LIMA at N=3000 too.
 FM_LIMA_SIDECAR_PREFIX = "gs://marin-us-central1/metadata/data_curation_fixed_model_lima_results/"
 
+# 10k natural-epoch sweep (launch_10k_natural.py). These runs share the
+# expFM_natural tag and write to their own results prefix; their methods carry
+# sampled_warcs=10364 (curation_plan.EXPC_SAMPLED_WARCS — the definitive count;
+# the manifest has 10363 lines but 10364 records due to a missing trailing
+# newline). They route through `fm_summary_to_record` (same as the N=3000 FM
+# anchor) into an N=10364 grid row once their summaries are loaded.
+TENK_RESULTS_PREFIX = "gs://marin-us-central1/metadata/data_curation_10k_natural_results/"
+TENK_N = 10364
+TENK_WIDTHS = (512, 1024, 1536, 2432, 3584)  # = launch_10k_natural.WIDTHS
+TENK_METHOD_KEYS = ("dclm_10k", "nemotron_10k")
+
 # Map fixed-model method_name → warc-scaling base name. BOS-fixed versions are
 # preferred since the WARC subsamples use the BOS-fixed caches; the older
 # non-BOS-fixed runs are dropped from the grid.
@@ -138,11 +150,38 @@ _FM_METHOD_MAP: dict[str, str] = {
     "dclm": "dclm",
     "resiliparse": "resiliparse",
     "nemotron_full_bos_fixed": "nemotron_full",
+    # Nemotron-CC-HQ canonical 3k. Same name in FM and WARC sweeps.
+    "nemotron_qhigh": "nemotron_qhigh",
     "llm_curated_bos_fixed": "llm_curated",
-    # Fuzzy doc-deduped llm_curated. Kept as its own base name (not collapsed
-    # into "llm_curated") so plots can A/B compare bos_fixed vs deduped on the
-    # same axes.
-    "llm_curated_dedup": "llm_curated_dedup",
+    # Fuzzy doc-deduped llm_curated. This is the SAME corpus as low_quality
+    # at N=3000 (low_quality is the legacy llm_curated extraction spec), so we
+    # alias it onto the "low_quality" base name to serve as the N=3000 anchor
+    # in the WARC-scaling cross-N plot. The existing llm_curated_dedup FM runs
+    # plot at N=3000 on the low_quality curve alongside the per-N WARC
+    # subsamples (low_quality_500/1000/2000).
+    "llm_curated_dedup": "low_quality",
+    # Fuzzy doc-deduped resiliparse N=3000 anchor — anchors the
+    # resiliparse_dedup curve in the WARC-scaling cross-N plot. Same base
+    # name as the per-N entries (resiliparse_dedup_500/1000/2000).
+    "resiliparse_dedup": "resiliparse_dedup",
+    # DCLM-faithful curation pipeline on llm_curated extraction (full corpus).
+    "llm_curated_dclm_filtered": "llm_curated_dclm_filtered",
+    # high_quality at N=3000 (full corpus). Method name carries the _3000 suffix
+    # in the FM sweep registration but maps to the same base as the per-N WARC
+    # subsamples (high_quality_500/1000/2000) so cross-N plots show one curve.
+    "high_quality_3000": "high_quality",
+    # WARC-scaling methods launched via the FM sweep (when we need a custom
+    # budget below the per-N _BUDGETS_PER_N floor, e.g. 3e16 at N=2000 for
+    # an extended low-token comparison). sampled_warcs is read from the
+    # method entry in curation_plan.METHODS, so these still route to the
+    # correct (base, N) cell on the warc-scaling grid.
+    "dclm_2000": "dclm",
+    "high_quality_2000": "high_quality",
+    # 10k natural-epoch methods (launch_10k_natural.py). sampled_warcs=10364 in
+    # their summaries routes them to the N=10364 row via fm_summary_to_record.
+    # nemotron_10k is the full Nemotron-CC corpus -> the "nemotron_full" base.
+    "dclm_10k": "dclm",
+    "nemotron_10k": "nemotron_full",
     # Intentionally excluded: "fineweb_edu" (dropped from sweep),
     # "nemotron_full" / "llm_curated" (non-BOS-fixed, superseded).
 }
@@ -165,6 +204,8 @@ class WarcScalingRecord:
 def _extract_metric(eval_metrics: dict, metric_key: str) -> float | None:
     if metric_key == "paloma_macro_loss":
         return _compute_paloma_macro_loss(eval_metrics)
+    if metric_key == "uncheatable_macro_loss":
+        return _compute_uncheatable_macro_loss(eval_metrics)
     val = eval_metrics.get(metric_key)
     return float(val) if val is not None else None
 
@@ -224,7 +265,6 @@ def summary_to_record(summary: dict, metric_key: str) -> WarcScalingRecord | Non
         sampled_warcs = int(n_str)
     except ValueError:
         return None
-    method_info = summary.get("method", {})
     model_info = summary.get("model", {})
     tokens_info = summary.get("tokens", {})
     return WarcScalingRecord(
@@ -559,6 +599,11 @@ def _per_n_size_lineup(n_warcs: int) -> list[int]:
     if n_warcs == 3000:
         # Fixed-model sweep used 512/1536/2432 (subset of TARGET_HIDDEN_SIZES).
         return [512, 1536, 2432]
+    if n_warcs == TENK_N:
+        # 10k natural-epoch sweep widths (launch_10k_natural.WIDTHS). Explicit
+        # branch: hidden_sizes_for() only knows the WARC_COUNTS subsamples and
+        # would raise for 10364.
+        return list(TENK_WIDTHS)
     return sorted(hidden_sizes_for(n_warcs))
 
 
@@ -601,62 +646,22 @@ def plot_grid_compressed(
         per_row_planned[n] = sizes
         all_sizes.update(sizes)
 
-    # Greedy column assignment (compact): each size goes to the smallest column
-    # >= all participating rows' "next free" col. Singletons can share a column.
-    # Same hidden_dim → single column across rows.
+    # Greedy compact assignment: each unique hidden_dim placed at the smallest
+    # column index >= every participating row's next-free col. Same hidden_dim
+    # always shares one column across rows (so 1B-class d=1536 aligns across
+    # N=100, N=1000, N=3000). No bubble pass — earlier versions had one but it
+    # cascaded and pushed d=1536 out of alignment, so we keep just the greedy
+    # output, which happens to align same-size cells by construction.
     next_col_per_row: dict[int, int] = {n: 0 for n in rows}
-    cell_size: dict[tuple[int, int], int] = {}  # (row_n, col_idx) -> hidden_dim
-    row_pos: dict[int, dict[int, int]] = {n: {} for n in rows}  # row -> {hidden_dim: col_idx}
-
-    def _try_place(h: int, target: int) -> int:
-        """Place h at target col for all rows that have h, return chosen col."""
+    cell_size: dict[tuple[int, int], int] = {}
+    row_pos: dict[int, dict[int, int]] = {n: {} for n in rows}
+    for h in sorted(all_sizes):
         rows_with_h = [n for n in rows if h in per_row_planned[n]]
-        chosen = max(target, max(next_col_per_row[n] for n in rows_with_h))
+        chosen = max(next_col_per_row[n] for n in rows_with_h)
         for n in rows_with_h:
             cell_size[(n, chosen)] = h
             row_pos[n][h] = chosen
             next_col_per_row[n] = chosen + 1
-        return chosen
-
-    for h in sorted(all_sizes):
-        _try_place(h, 0)
-
-    # Bubble pass: enforce that within any column, going top-to-bottom
-    # (increasing N), sizes are non-decreasing. When a smaller size in a later
-    # row shares a column with a larger size in an earlier row, push the
-    # earlier (larger) size right by one column. Repeat until stable.
-    def _violations() -> list[tuple[int, int, int, int]]:
-        cols_used = sorted({c for (_, c) in cell_size})
-        out = []
-        for c in cols_used:
-            entries = [(rows.index(n), n, h) for (n, cc), h in cell_size.items() if cc == c]
-            entries.sort()
-            for i in range(1, len(entries)):
-                _, n_a, h_a = entries[i - 1]
-                _, n_b, h_b = entries[i]
-                if h_a > h_b:
-                    out.append((c, n_a, h_a, h_b))
-        return out
-
-    iterations = 0
-    while True:
-        v = _violations()
-        if not v:
-            break
-        iterations += 1
-        if iterations > 100:
-            break
-        # For each violation, shift the offending earlier-row's size from col c+
-        c_v, n_off, h_off, _ = v[0]
-        # Shift everything in row n_off at col >= c_v one to the right.
-        old_cells = [(cc, hh) for (n, cc), hh in cell_size.items() if n == n_off and cc >= c_v]
-        for cc, hh in old_cells:
-            del cell_size[(n_off, cc)]
-            del row_pos[n_off][hh]
-        for cc, hh in sorted(old_cells):
-            new_cc = cc + 1
-            cell_size[(n_off, new_cc)] = hh
-            row_pos[n_off][hh] = new_cc
 
     n_cols = (max(c for (_, c) in cell_size) + 1) if cell_size else 1
     n_rows = len(rows)
@@ -766,7 +771,10 @@ def plot_grid_compressed(
     log_y_tag = " [log y]" if log_y else ""
     fig.update_layout(
         template="plotly_white",
-        title=f"WARC-scaling COMPRESSED grid (planned cells, hidden_dims aligned) -- {metric_key} vs {x_axis}{suffix_tag}{log_y_tag}",
+        title=(
+            f"WARC-scaling COMPRESSED grid (planned cells, hidden_dims aligned) "
+            f"-- {metric_key} vs {x_axis}{suffix_tag}{log_y_tag}"
+        ),
         width=220 * n_cols + 140,
         # 50% compressed + 15% breathing room added back
         height=125 * n_rows + 90,
@@ -796,11 +804,18 @@ def main(argv: list[str] | None = None) -> None:
         help="LIMA sidecar for older FM runs missing eval/lima/* in the main summary. "
         "Merged in by run_name. Pass empty string to disable.",
     )
+    parser.add_argument(
+        "--tenk-results-prefix",
+        default=TENK_RESULTS_PREFIX,
+        help="10k natural-epoch (launch_10k_natural.py) results to merge in as the "
+        f"N={TENK_N} row. Routed through the FM path (shared expFM_natural tag). "
+        "Pass empty string to disable.",
+    )
     parser.add_argument("--output-dir", default="scratch/plots/warc_scaling")
     parser.add_argument(
         "--metrics",
         nargs="+",
-        default=[DEFAULT_METRIC, "eval/lima/loss", "eval/macro_bpb"],
+        default=[DEFAULT_METRIC, "eval/lima/loss", "eval/macro_bpb", "uncheatable_macro_loss"],
         help="Eval metrics to plot. One subdir per metric.",
     )
     parser.add_argument(
@@ -825,6 +840,13 @@ def main(argv: list[str] | None = None) -> None:
         sidecar_metrics = _load_fm_lima_sidecar(args.fm_lima_sidecar_prefix)
         for s in fm_summaries:
             _merge_sidecar_into_summary(s, sidecar_metrics)
+    if args.tenk_results_prefix:
+        # 10k natural-epoch summaries: same expFM_natural tag + _FM_METHOD_MAP
+        # entries (dclm_10k / nemotron_10k), so they go through fm_summary_to_record
+        # into the N=10364 row. New runs -> eval/lima is inline, no sidecar needed.
+        tenk_summaries = load_summaries(args.tenk_results_prefix, list(TENK_METHOD_KEYS), suffix="")
+        logger.info("Loaded %d 10k natural-epoch summaries (N=%d)", len(tenk_summaries), TENK_N)
+        fm_summaries.extend(tenk_summaries)
     output_root = Path(args.output_dir)
 
     for metric_key in args.metrics:

@@ -23,9 +23,9 @@ import tempfile
 sys.path.insert(0, "lib/marin/src")
 
 from marin.datakit.download.commoncrawl.cdx_query import (
+    _progress_key,
     filter_cdx_records,
     query_single_index,
-    _progress_key,
 )
 
 PROGRESS_BASE = "gs://marin-us-central1/cdx/code_host-283157/.progress"

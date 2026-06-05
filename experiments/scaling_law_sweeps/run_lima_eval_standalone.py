@@ -300,19 +300,19 @@ def main(argv: list[str] | None = None) -> None:
     # Rather than redo everything, defer to eval_lm's main but also capture
     # its tracker output by using an in-memory tracker.
 
-    import jax
+    import equinox as eqx
     import haliax as hax
+    import jax
+    import jax.numpy as jnp
+    import jmp
+    import levanter
     from haliax import Axis
     from haliax.partitioning import round_axis_for_partitioning
     from levanter.checkpoint import load_checkpoint
     from levanter.eval import LossFnOutput, TaggedEvaluator, eval_model
-    from levanter.models.lm_model import LmHeadModel, LmExample
+    from levanter.models.lm_model import LmExample, LmHeadModel
     from levanter.utils.jax_utils import use_cpu_device
     from levanter.utils.tree_utils import inference_mode
-    import equinox as eqx
-    import jmp
-    import jax.numpy as jnp
-    import levanter
 
     levanter.initialize(config)
     tokenizer = config.data.the_tokenizer

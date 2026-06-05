@@ -41,6 +41,7 @@ SCRIPT = "experiments/baseline_collection/consolidate/resolve_duplicates.py"
 def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser()
     p.add_argument("--region", default="us-central1", help="Hard region constraint (resolver data lives here).")
+    p.add_argument("--spec", default="low_quality", help="Extraction spec to resolve.")
     p.add_argument("--priority", choices=["production", "interactive", "batch"], default="batch")
     p.add_argument("--cpu", type=float, default=2.0)
     p.add_argument("--memory", default="8GB")
@@ -62,13 +63,15 @@ def main() -> None:
         "interactive": job_pb2.PRIORITY_BAND_INTERACTIVE,
         "batch": job_pb2.PRIORITY_BAND_BATCH,
     }[args.priority]
+    # Constraint.create wraps raw strings; bare Constraint(values=(...)) regressed.
     constraints = [
         preemptible_constraint(True),
-        Constraint(key=WellKnownAttribute.REGION, op=ConstraintOp.IN, values=(args.region,)),
+        Constraint.create(key=WellKnownAttribute.REGION, op=ConstraintOp.IN, values=(args.region,)),
     ]
+    suffix = "" if args.spec == "low_quality" else f"-{args.spec}"
     job = client.submit(
-        entrypoint=Entrypoint.from_command("python", SCRIPT),
-        name=f"extract-resolve-{args.region}",
+        entrypoint=Entrypoint.from_command("python", SCRIPT, "--spec", args.spec),
+        name=f"extract-resolve-{args.region}{suffix}",
         resources=ResourceSpec(cpu=args.cpu, memory=args.memory, disk=args.disk),
         environment=EnvironmentSpec(extras=["cpu"], env_vars={"PYTHONUNBUFFERED": "1"}),
         constraints=constraints,

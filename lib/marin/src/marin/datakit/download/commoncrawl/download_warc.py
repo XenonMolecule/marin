@@ -22,7 +22,6 @@ from dataclasses import dataclass
 
 import requests
 import warcio
-
 from zephyr import Dataset, ZephyrContext
 
 logger = logging.getLogger(__name__)

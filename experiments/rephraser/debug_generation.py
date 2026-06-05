@@ -471,8 +471,9 @@ def run_eval_with_full_logging(args):
 
     model_config = HFCheckpointConverter.from_hf(ckpt_path).LevConfigClass()
 
-    from experiments.evals.task_configs import convert_to_levanter_task_config
     from marin.evaluation.evaluation_config import EvalTaskConfig
+
+    from experiments.evals.task_configs import convert_to_levanter_task_config
 
     tasks = convert_to_levanter_task_config(
         [

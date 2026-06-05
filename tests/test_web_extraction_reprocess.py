@@ -14,13 +14,13 @@ import tempfile
 
 import pytest
 
+from experiments.distill.merge_reprocess_shards import merge_shards
 from experiments.distill.web_extraction_reprocess import (
     SYSTEM_MESSAGE,
     PrepareConfig,
     _write_jsonl_gz,
     prepare_prompts,
 )
-from experiments.distill.merge_reprocess_shards import merge_shards
 
 # ---------------------------------------------------------------------------
 # Fixtures
