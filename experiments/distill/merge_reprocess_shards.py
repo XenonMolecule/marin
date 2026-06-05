@@ -25,7 +25,6 @@ import logging
 import os
 
 import fsspec
-
 from marin.utils import fsspec_glob
 
 logger = logging.getLogger(__name__)

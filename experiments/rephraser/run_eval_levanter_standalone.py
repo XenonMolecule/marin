@@ -151,16 +151,17 @@ def _patched_from_hf(model_name_or_path, trust_remote_code: bool = False):
 
 _lev_hfc.HFCheckpointConverter.from_hf = staticmethod(_patched_from_hf)
 
+from marin.evaluation.evaluators.evaluator import ModelConfig  # noqa: E402
+from marin.evaluation.evaluators.levanter_lm_eval_evaluator import LevanterLmEvalEvaluator  # noqa: E402
+
 from experiments.rephraser.run_eval_standalone import (  # noqa: E402  — patch must precede this
     DOMAIN_EVALS,
     DOMAIN_SUMMARY_PREFIX,
+    _assert_model_local,
     _is_hf_reference,
     _resolve_local_model_path,
-    _assert_model_local,
 )
 from experiments.scaling_law_sweeps import region_tracker  # noqa: E402
-from marin.evaluation.evaluators.evaluator import ModelConfig  # noqa: E402
-from marin.evaluation.evaluators.levanter_lm_eval_evaluator import LevanterLmEvalEvaluator  # noqa: E402
 
 logger = logging.getLogger(__name__)
 

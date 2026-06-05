@@ -35,7 +35,7 @@ PRIORITY_BAND_MAP = {
 
 logger = logging.getLogger(__name__)
 
-MANIFEST = "experiments/distill/baseline_warcs_3000.txt"
+DEFAULT_MANIFEST = "experiments/distill/baseline_warcs_3000.txt"
 SCRIPT = "experiments/baseline_collection/run_extract_standalone.py"
 ALL_REGIONS = sorted(REGION_TO_DATA_BUCKET.keys())
 
@@ -74,29 +74,46 @@ def submit_chunk(
     end: int | None,
     chunk_start_seed: int,
     chunk_size: int,
+    manifest: str,
+    spec: str | None = None,
     child_priority_band: int = job_pb2.PRIORITY_BAND_UNSPECIFIED,
 ) -> list[str]:
-    """Submit a chunk of jobs. Returns list of submitted job names."""
+    """Submit a chunk of jobs. Returns list of submitted job names.
+
+    If ``spec`` is set, child jobs run with ``--spec {spec}`` and
+    ``run_extract_standalone.py`` derives ``output_subdir`` and the prompt
+    from the spec registry — ``output_subdir`` here is ignored. The two
+    code paths (``--spec`` set vs unset) are mutually exclusive on the
+    child side; there is no silent fallback.
+    """
     is_multihost = tpu_type in MULTIHOST_TYPES
     env_vars = dict(MULTIHOST_ENV) if is_multihost else {}
     tp_args = ["--tp", "4"] if is_multihost else []
 
+    name_prefix = f"extract-{spec}-" if spec else "extract-"
+
     submitted = []
     for i in range(chunk_size):
         seed = chunk_start_seed + i
-        name = f"{tpu_type}-{seed}"
+        name = f"{name_prefix}{tpu_type}-{seed}"
 
         cmd_args = [
             "python",
             SCRIPT,
             "--manifest",
-            MANIFEST,
-            "--output-subdir",
-            output_subdir,
+            manifest,
             "--shuffle-seed",
             str(seed),
             *tp_args,
         ]
+        if spec:
+            # When --spec is set, run_extract_standalone.py overrides
+            # output_subdir + prompt from the registry. Don't pass
+            # --output-subdir — would be ignored anyway, but cleaner to
+            # eliminate any chance of confusion.
+            cmd_args.extend(["--spec", spec])
+        else:
+            cmd_args.extend(["--output-subdir", output_subdir])
         if start > 0:
             cmd_args.extend(["--start", str(start)])
         if end is not None:
@@ -120,12 +137,17 @@ def submit_chunk(
                 # parent region inheritance (line 645 of client.py) without restricting
                 # the autoscaler to a single region. Soft routing constraints influence
                 # group ordering but never exclude groups.
+                #
+                # Use ``Constraint.create`` — it auto-wraps raw strings into
+                # ``AttributeValue``. Direct ``Constraint(values=...)`` requires
+                # already-wrapped values and silently fails with ``'str' object has
+                # no attribute 'to_proto'`` if you pass raw strings.
                 constraints=[
                     preemptible_constraint(True),
-                    Constraint(
+                    Constraint.create(
                         key=WellKnownAttribute.REGION,
                         op=ConstraintOp.IN,
-                        values=tuple(ALL_REGIONS),
+                        values=ALL_REGIONS,
                         mode=1,  # CONSTRAINT_MODE_PREFERRED (soft)
                     ),
                 ],
@@ -177,12 +199,16 @@ def run_adaptive(
     patience: int,
     start: int,
     end: int | None,
+    manifest: str,
+    spec: str | None = None,
     child_priority_band: int = job_pb2.PRIORITY_BAND_UNSPECIFIED,
 ):
     """Adaptive scaling loop. Only submits more when ALL previous jobs are running."""
     logger.info(
-        "Adaptive launcher: %s, max=%d, initial=%d, chunk=%d, child_priority=%s",
+        "Adaptive launcher: %s, manifest=%s, spec=%s, max=%d, initial=%d, chunk=%d, child_priority=%s",
         tpu_type,
+        manifest,
+        spec or "(legacy / hardcoded prompt)",
         max_count,
         initial_batch,
         chunk_size,
@@ -194,12 +220,24 @@ def run_adaptive(
     stall_count = 0
     all_job_ids: list[str] = []
 
+    def _submit(seed_offset: int, count: int) -> list[str]:
+        return submit_chunk(
+            client,
+            tpu_type,
+            output_subdir,
+            start,
+            end,
+            seed_offset,
+            count,
+            manifest=manifest,
+            spec=spec,
+            child_priority_band=child_priority_band,
+        )
+
     # Initial batch
     initial = min(initial_batch, max_count)
     logger.info("=== Initial batch: %d jobs ===", initial)
-    names = submit_chunk(
-        client, tpu_type, output_subdir, start, end, seed_counter, initial, child_priority_band=child_priority_band
-    )
+    names = _submit(seed_counter, initial)
     total_submitted += len(names)
     seed_counter += initial
     all_job_ids.extend(names)
@@ -273,16 +311,7 @@ def run_adaptive(
                         total_submitted + probe_size,
                         max_count,
                     )
-                    names = submit_chunk(
-                        client,
-                        tpu_type,
-                        output_subdir,
-                        start,
-                        end,
-                        seed_counter,
-                        probe_size,
-                        child_priority_band=child_priority_band,
-                    )
+                    names = _submit(seed_counter, probe_size)
                     total_submitted += len(names)
                     seed_counter += probe_size
                     all_job_ids.extend(names)
@@ -300,16 +329,7 @@ def run_adaptive(
             total_submitted + next_chunk,
             max_count,
         )
-        names = submit_chunk(
-            client,
-            tpu_type,
-            output_subdir,
-            start,
-            end,
-            seed_counter,
-            next_chunk,
-            child_priority_band=child_priority_band,
-        )
+        names = _submit(seed_counter, next_chunk)
         total_submitted += len(names)
         seed_counter += next_chunk
         all_job_ids.extend(names)
@@ -327,7 +347,30 @@ def main():
     parser.add_argument("--chunk-size", type=int, default=5, help="Jobs per subsequent chunk")
     parser.add_argument("--check-interval", type=int, default=300, help="Seconds between chunks (default 5 min)")
     parser.add_argument("--patience", type=int, default=3, help="Stall cycles before stopping")
-    parser.add_argument("--output-subdir", default="documents/baseline_llm_extraction")
+    parser.add_argument(
+        "--output-subdir",
+        default="documents/baseline_llm_extraction",
+        help=(
+            "Legacy output subdir, used only when --spec is NOT supplied. "
+            "When --spec is set, ``run_extract_standalone.py`` derives the "
+            "output subdir from the spec registry and ignores this flag."
+        ),
+    )
+    parser.add_argument(
+        "--manifest",
+        default=DEFAULT_MANIFEST,
+        help=f"Path to the WARC manifest. Default: {DEFAULT_MANIFEST}",
+    )
+    parser.add_argument(
+        "--spec",
+        default=None,
+        help=(
+            "Extraction spec id (key in extraction_specs.SPECS). If set, child "
+            "jobs run with ``--spec`` and use that spec's prompt + namespace "
+            "(no fallback to the legacy hardcoded prompt). If unset, children "
+            "use the legacy prompt and write to --output-subdir."
+        ),
+    )
     parser.add_argument("--start", type=int, default=0)
     parser.add_argument("--end", type=int, default=None)
     parser.add_argument(
@@ -342,6 +385,14 @@ def main():
         ),
     )
     args = parser.parse_args()
+
+    # Validate the spec at parent startup so a typo fails before any children
+    # are submitted (would otherwise surface only in child stderr).
+    if args.spec is not None:
+        from experiments.baseline_collection.extraction_specs import get_spec
+
+        spec_obj = get_spec(args.spec)  # raises ValueError on miss
+        logger.info("Using spec=%s — %s", args.spec, spec_obj.description or "(no description)")
 
     child_priority_band = PRIORITY_BAND_MAP[args.child_priority]
 
@@ -362,6 +413,8 @@ def main():
         patience=args.patience,
         start=args.start,
         end=args.end,
+        manifest=args.manifest,
+        spec=args.spec,
         child_priority_band=child_priority_band,
     )
 

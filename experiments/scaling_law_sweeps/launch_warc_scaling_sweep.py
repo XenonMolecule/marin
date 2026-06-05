@@ -34,12 +34,13 @@ import logging
 import os
 import time
 
+from iris.client.client import IrisClient
+
 from experiments.scaling_law_sweeps import curation_plan, warc_scaling_plan
 from experiments.scaling_law_sweeps.launch_curation_sweep import (
     PRIORITY_BAND_MAP,
     submit_all,
 )
-from iris.client.client import IrisClient
 
 logger = logging.getLogger(__name__)
 

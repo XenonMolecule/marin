@@ -29,7 +29,6 @@ import fsspec
 import ray
 import zstandard
 from google.cloud import storage
-
 from marin.execution.executor import ExecutorStep, executor_main, this_output_path
 
 logger = logging.getLogger("ray")

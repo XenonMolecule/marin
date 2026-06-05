@@ -49,13 +49,13 @@ import numpy as np
 
 # tpu_inference imports (available inside vllm-tpu Docker image)
 sys.path.insert(0, "/workspace/tpu_inference")
-from tpu_inference.layers.common.quantization import dequantize_tensor
 from tpu_inference.layers.common.process_weights.moe_weights import (
     FusedMoEWeights,
     MoEBackend,
     process_moe_weights,
     quantize_moe_weights,
 )
+from tpu_inference.layers.common.quantization import dequantize_tensor
 from tpu_inference.layers.common.quantization.fp8 import (
     process_blockwise_fp8_linear_weights,
 )
@@ -102,8 +102,8 @@ def load_expert_weights(shard_files, layer_idx, num_experts=NUM_EXPERTS):
         down_weight: [E, 7168, 2048] float8_e4m3fn
         down_scale:  [E, 56, 16] float32
     """
-    from safetensors import safe_open
     import torch
+    from safetensors import safe_open
 
     prefix = f"model.layers.{layer_idx}.mlp.experts."
 
@@ -236,8 +236,8 @@ def process_moe_layer(expert_weights, tp_size):
 
 def load_dense_weight(shard_files, weight_name, weight_map=None):
     """Load a single dense weight + scale from safetensors shards."""
-    from safetensors import safe_open
     import torch
+    from safetensors import safe_open
 
     weight = None
     scale = None
@@ -351,9 +351,8 @@ def process_kv_b_proj(weight, weight_scale):
 
 def load_passthrough_weights(shard_files, key_names):
     """Load weights that don't need processing (norms, embeddings, router gates)."""
-    from safetensors import safe_open
-
     import torch as _torch
+    from safetensors import safe_open
 
     result = {}
     for sf_path in shard_files:

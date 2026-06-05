@@ -223,9 +223,10 @@ def plan_b_tpu(weight_fp8_np, weight_scale_np, block_size):
 
 def load_expert_weights(safetensors_path, num_experts=8):
     """Load a few expert weights from the first safetensors shard."""
-    from safetensors import safe_open
     import glob
     import os
+
+    from safetensors import safe_open
 
     shard_files = sorted(glob.glob(os.path.join(safetensors_path, "*.safetensors")))
     if not shard_files:

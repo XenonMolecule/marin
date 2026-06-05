@@ -1,0 +1,26 @@
+\begin{table}[]
+\centering
+\setlength\tabcolsep{4pt}
+\footnotesize
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{l ((( 'c' * n_columns )))}
+\toprule
+\rowcolor[gray]{0.9} \textbf{Method} $\downarrow$ ~/~ \textbf{Params} $\rightarrow$((* for col in columns *)) & ((( col.header )))((* endfor *)) \\
+\midrule
+((* for group in groups *))
+((* if group.name *))
+\rowcolor[gray]{0.85} \multicolumn{((( n_columns + 1 )))}{l}{\textbf{((( group.name )))}}\\
+((* endif *))
+((* for row in group.rows *))
+((( row.label )))((* for cell in row.cells *)) & ((( cell )))((* endfor *)) \\
+((* endfor *))
+((* if not loop.last *))
+\midrule
+((* endif *))
+((* endfor *))
+\bottomrule
+\end{tabular}%
+}
+\caption{(((caption)))}
+\label{(((label)))}
+\end{table}

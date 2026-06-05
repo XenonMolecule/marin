@@ -32,7 +32,6 @@ from dataclasses import dataclass, replace
 from datetime import timedelta
 
 import jmp
-
 from fray.cluster import ResourceConfig
 from haliax.partitioning import ResourceAxis
 from levanter.checkpoint import CheckpointerConfig
@@ -41,8 +40,6 @@ from levanter.main.train_lm import TrainLmConfig
 from levanter.tracker.wandb import WandbConfig
 from levanter.trainer import TrainerConfig
 from levanter.utils.mesh import MeshConfig
-
-from experiments.llama import llama3_tokenizer
 from marin.datakit.download.download_url import (
     DownloadUrlToGcsConfig,
     download_url_to_gcs,
@@ -60,10 +57,11 @@ from marin.training.training import TrainLmOnPodConfig, run_levanter_train_lm
 from marin.transform.dclm_filter import DclmFilterConfig, dclm_filter
 from marin.transform.extract_text_from_html import ExtractTextConfig, extract_text_from_html
 
+from experiments.llama import llama3_tokenizer
+
 # Import shared constants and steps from the rephraser cooldown experiment
 from experiments.rephraser.rephraser_cooldown import (
     BATCH_SIZE,
-    CHECKPOINT_PATH as _CHECKPOINT_PATH_CENTRAL1,
     COOLDOWN_STEPS,
     LEARNING_RATE,
     SEQ_LEN,
@@ -74,6 +72,9 @@ from experiments.rephraser.rephraser_cooldown import (
     extract_cooldown_step,
     scaling_1e20_qwen3,
     validation_component_configs,
+)
+from experiments.rephraser.rephraser_cooldown import (
+    CHECKPOINT_PATH as _CHECKPOINT_PATH_CENTRAL1,
 )
 
 # The original checkpoint lives on us-central1. We copy it to whichever cluster

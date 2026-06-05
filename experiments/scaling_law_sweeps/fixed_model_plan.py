@@ -3,11 +3,11 @@
 
 """Plan enumeration for the fixed-model data-curation sweep.
 
-Scientific question: for each of three fixed model sizes (157M / 998M / 8.11B),
+Scientific question: for each of three fixed model sizes (157M / 998M / 2.9B),
 how does final loss scale with compute budget across curation methods?
 
 Differences from the older `curation_plan.enumerate_plans`:
-  - Fixed model grid: hidden_dim in {512, 1536, 3584} (no per-budget
+  - Fixed model grid: hidden_dim in {512, 1536, 2432} (no per-budget
     Chinchilla-optimal model search).
   - Bypasses `CompletedAdamHHeuristic._max_params_for_budget` so forced corners
     like 8.11B@3e18 (undertrained) and 157M@3e20 (overtrained) are included.
@@ -24,6 +24,10 @@ Differences from the older `curation_plan.enumerate_plans`:
 
 from __future__ import annotations
 
+import dataclasses
+
+from marin.scaling_laws import CandidateConfig
+
 from experiments.scaling_law_sweeps.completed_adamh import (
     SEQ_LEN,
     completed_adamh_heuristic,
@@ -38,12 +42,17 @@ from experiments.scaling_law_sweeps.data_curation_math import (
     CurationMethod,
     implicit_target_exp_a,
 )
-from marin.scaling_laws import CandidateConfig
 
-# Hidden dims for the fixed model sizes: 157M / 998M / 2.9B / 6.7B / 8.11B Qwen3.
+# Hidden dims for the fixed model sizes: 157M / 998M / 2.9B Qwen3.
 # Derived via `completed_adamh_heuristic._build_model_config(hidden_size)`
 # which sets L, heads, and d_ff from hidden_size alone.
-TARGET_HIDDEN_SIZES: tuple[int, ...] = (512, 1536, 2432, 3328, 3584)
+# 2026-05-31: dropped 3328 (6.7B) and 3584 (8.11B). The canon-3k anchor never
+# trained those widths, so fixed-model / random-3k runs there have no point of
+# comparison -- pure wasted compute. To restore, re-add them to the tuple:
+#     TARGET_HIDDEN_SIZES = (512, 1536, 2432, 3328, 3584)
+# (The 10k natural-epoch sweep still trains 3584 via launch_10k_natural.WIDTHS,
+# which passes hidden_sizes explicitly and does not use this default -- unaffected.)
+TARGET_HIDDEN_SIZES: tuple[int, ...] = (512, 1536, 2432)
 
 # Tag distinguishes this sweep's runs from the older ExpA/ExpB sweep in GCS
 # paths, WandB run names, and region-tracker keys. Still starts with "exp"
@@ -106,13 +115,24 @@ def enumerate_fixed_model_plans(
     hidden_sizes: tuple[int, ...] = TARGET_HIDDEN_SIZES,
     budgets: tuple[float, ...] = BUDGETS,
     seq_len: int = SEQ_LEN,
+    batch_divisor: int = 1,
 ) -> list[PlannedRun]:
     """Return PlannedRuns for the cartesian product methods x hidden_sizes x budgets.
 
     Natural epoching only (no ExpA/B distinction). t_target is set to the
     implicit Experiment-A target (`t_exp * s`) so downstream summary/plot code
     can interpret it identically to ExpA runs from the older sweep.
+
+    `batch_divisor`: mirror of `warc_scaling_plan.enumerate_warc_scaling_plans`
+    -- shrink each plan's batch by this factor (and re-derive HP) to drop the
+    TPU shape (e.g. v5p-256 -> v5p-32) when preemption gang-bounces on
+    multi-host slices make a clean run impractical. run_name_core differs from
+    the un-shrunk variant (it embeds the new B), so the shrunk cell starts
+    fresh -- no topology-mismatch resume from the old multi-host checkpoint.
     """
+    # Lazy import to avoid a cycle (warc_scaling_plan imports from fixed_model_plan).
+    from experiments.scaling_law_sweeps.warc_scaling_plan import _shrink_candidate_batch
+
     plans: list[PlannedRun] = []
     for method in methods:
         for hidden_size in hidden_sizes:
@@ -123,17 +143,33 @@ def enumerate_fixed_model_plans(
                     # small after the hparam-clamp descent. Shouldn't happen for
                     # our intended grid, but log-skip rather than crash.
                     continue
+                if batch_divisor > 1:
+                    candidate = _shrink_candidate_batch(candidate, batch_divisor, seq_len=seq_len)
+                    if candidate is None:
+                        continue
                 target_budget = int(implicit_target_exp_a(method, candidate.tokens))
-                plans.append(
-                    _planned_run_from_candidate(
-                        method,
-                        candidate,
-                        budget,
-                        target_budget,
-                        EXPERIMENT_TAG,
-                        seq_len,
-                    )
+                plan = _planned_run_from_candidate(
+                    method,
+                    candidate,
+                    budget,
+                    target_budget,
+                    EXPERIMENT_TAG,
+                    seq_len,
                 )
+                # When batch is shrunk, override the default TPU shape
+                # selection -- same fix as warc_scaling_plan does -- so the
+                # shrink actually drops the TPU footprint (without this,
+                # _planned_run_from_candidate bumps v5p UP to match v4's
+                # vm_count, undoing the point of the divisor).
+                if batch_divisor > 1:
+                    from iris.cluster.types import get_tpu_topology
+                    from marin.scaling_laws import pick_v5p_type
+
+                    v5p_raw = pick_v5p_type(plan.estimated_memory_bytes)
+                    vm_count_v5p = get_tpu_topology(v5p_raw).vm_count
+                    v4_match = f"v4-{vm_count_v5p * 8}"
+                    plan = dataclasses.replace(plan, v5p_tpu=v5p_raw, v4_tpu=v4_match)
+                plans.append(plan)
     return plans
 
 

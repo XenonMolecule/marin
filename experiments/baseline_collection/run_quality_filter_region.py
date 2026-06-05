@@ -133,9 +133,10 @@ def main(argv: list[str] | None = None) -> None:
     # Tokenize via Marin's default_tokenize helper. Resolve locally to keep
     # the executor hash stable, but write the cache to the region bucket so
     # training jobs in this region can read it without egress.
+    from marin.execution.executor import executor_main
+
     from experiments.defaults import default_tokenize  # local import: heavy deps
     from experiments.llama import llama3_tokenizer
-    from marin.execution.executor import executor_main
 
     tokenize_out_name = f"baseline_nemotron_q{args.preset}-{args.output_hash}"
     tok_step = default_tokenize(

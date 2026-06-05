@@ -45,11 +45,43 @@ logger = logging.getLogger(__name__)
 DEFAULT_REGIONS: tuple[str, ...] = ("us-central1", "us-east1", "us-east5", "us-west4", "europe-west4")
 CONSOLIDATED_SUBDIR = "documents/baseline_llm_extraction_consolidated"
 DEST_BUCKET = "marin-us-central1"
-COMPLETED_REGISTRY_PREFIX = "marin-us-central1/documents/baseline_llm_extraction/_completed"
+LEGACY_SPEC = "low_quality"
 
 
-def _load_inventory(region: str, inventories_prefix: str) -> list[dict]:
-    path = f"{inventories_prefix}/inventory_{region}.jsonl.gz"
+def _inventory_filename(region: str, spec: str) -> str:
+    if spec == LEGACY_SPEC:
+        return f"inventory_{region}.jsonl.gz"
+    return f"inventory_{region}_{spec}.jsonl.gz"
+
+
+def _resolved_filenames(spec: str) -> tuple[str, str, str, str, str]:
+    """Return (resolved, duplicates, missing_batches, integrity_report, done_warcs) filenames."""
+    if spec == LEGACY_SPEC:
+        return (
+            "resolved.jsonl.gz",
+            "duplicates.jsonl.gz",
+            "missing_batches.jsonl.gz",
+            "integrity_report.json",
+            "done_warcs.txt",
+        )
+    return (
+        f"resolved_{spec}.jsonl.gz",
+        f"duplicates_{spec}.jsonl.gz",
+        f"missing_batches_{spec}.jsonl.gz",
+        f"integrity_report_{spec}.json",
+        f"done_warcs_{spec}.txt",
+    )
+
+
+def _completed_registry_prefix(spec: str) -> str:
+    """Prefix for the central _completed/data-{hash} marker registry."""
+    if spec == LEGACY_SPEC:
+        return "marin-us-central1/documents/baseline_llm_extraction/_completed"
+    return f"marin-us-central1/documents/baseline_llm_extraction/{spec}/_completed"
+
+
+def _load_inventory(region: str, inventories_prefix: str, spec: str) -> list[dict]:
+    path = f"{inventories_prefix}/{_inventory_filename(region, spec)}"
     rows: list[dict] = []
     with fsspec.open(path, "rb") as f, gzip.open(f, "rt") as gz:
         for line in gz:
@@ -59,11 +91,11 @@ def _load_inventory(region: str, inventories_prefix: str) -> list[dict]:
     return rows
 
 
-def _load_completed_registry() -> set[str]:
+def _load_completed_registry(spec: str) -> set[str]:
     """Hashes with a central-registry marker written by ``_register_completed_warc``."""
     fs = fsspec.filesystem("gcs")
     try:
-        paths = fs.ls(COMPLETED_REGISTRY_PREFIX)
+        paths = fs.ls(_completed_registry_prefix(spec))
     except FileNotFoundError:
         return set()
     hashes: set[str] = set()
@@ -126,13 +158,13 @@ def _write_json(path: str, obj: Any) -> None:
         json.dump(obj, f, indent=2, sort_keys=True)
 
 
-def resolve(regions: list[str], out_prefix: str) -> dict:
+def resolve(regions: list[str], out_prefix: str, spec: str = LEGACY_SPEC) -> dict:
     inventories_prefix = f"{out_prefix}/inventories"
 
     all_batch_rows: list[dict] = []
     all_warc_rows: list[dict] = []
     for region in regions:
-        rows = _load_inventory(region, inventories_prefix)
+        rows = _load_inventory(region, inventories_prefix, spec)
         br = [r for r in rows if r.get("record_type") == "batch"]
         wr = [r for r in rows if r.get("record_type") == "warc"]
         logger.info("  region=%s batches=%d warcs=%d", region, len(br), len(wr))
@@ -192,11 +224,26 @@ def resolve(regions: list[str], out_prefix: str) -> dict:
             )
 
     # Cross-check against the central completed-WARC registry.
-    completed = _load_completed_registry()
-    resolved_hashes = {r["warc_hash"] for r in resolved}
+    completed = _load_completed_registry(spec)
+    resolved_hashes_all = {r["warc_hash"] for r in resolved}
     warcs_with_done_anywhere = {r["warc_hash"] for r in all_warc_rows if r.get("has_done")}
-    registry_missing_from_resolved = sorted(completed - resolved_hashes)
+    registry_missing_from_resolved = sorted(completed - resolved_hashes_all)
     registry_without_done_in_any_region = sorted(completed - warcs_with_done_anywhere)
+
+    # FILTER: drop batches belonging to WARCs that are not _done in any region.
+    # Partial extractions have growing batches whose sizes change between runs —
+    # transferring or curating them is wasteful and can leak incomplete data
+    # into the dedup/tokenize pipeline. Downstream readers must see only stable,
+    # frozen batches.
+    resolved_unfiltered_count = len(resolved)
+    resolved = [r for r in resolved if r["warc_hash"] in warcs_with_done_anywhere]
+    resolved_dropped_count = resolved_unfiltered_count - len(resolved)
+    logger.info(
+        "Filtered resolved manifest: kept %d batch rows (from %d WARCs); dropped %d rows belonging to partial WARCs.",
+        len(resolved),
+        len({r["warc_hash"] for r in resolved}),
+        resolved_dropped_count,
+    )
 
     # Per-WARC gap check: for each hash we see, are batch indices contiguous from 0?
     # Gaps suggest lost batches (possible if both owner and stealer died before flush).
@@ -219,19 +266,30 @@ def resolve(regions: list[str], out_prefix: str) -> dict:
             )
 
     # Write outputs.
-    resolved_path = f"{out_prefix}/resolved/resolved.jsonl.gz"
-    duplicates_path = f"{out_prefix}/resolved/duplicates.jsonl.gz"
-    missing_path = f"{out_prefix}/resolved/missing_batches.jsonl.gz"
-    report_path = f"{out_prefix}/resolved/integrity_report.json"
+    resolved_name, dup_name, missing_name, report_name, done_warcs_name = _resolved_filenames(spec)
+    resolved_path = f"{out_prefix}/resolved/{resolved_name}"
+    duplicates_path = f"{out_prefix}/resolved/{dup_name}"
+    missing_path = f"{out_prefix}/resolved/{missing_name}"
+    report_path = f"{out_prefix}/resolved/{report_name}"
+    done_warcs_path = f"{out_prefix}/resolved/{done_warcs_name}"
 
     _write_jsonl_gz(resolved_path, resolved)
     _write_jsonl_gz(duplicates_path, duplicates)
     _write_jsonl_gz(missing_path, missing_batches)
 
+    # Plain-text done-WARC-hash list. Sorted for diff-friendliness across runs.
+    # transfer_region.py reads this and skips batches whose warc_hash isn't here.
+    with fsspec.open(done_warcs_path, "w") as f:
+        for h in sorted(warcs_with_done_anywhere):
+            f.write(h + "\n")
+    logger.info("Wrote %d done WARC hashes to %s", len(warcs_with_done_anywhere), done_warcs_path)
+
     report = {
         "regions": regions,
         "total_batch_copies_observed": len(all_batch_rows),
         "unique_keys_resolved": len(resolved),
+        "unique_keys_resolved_before_done_filter": resolved_unfiltered_count,
+        "batches_dropped_partial_warcs": resolved_dropped_count,
         "duplicate_keys": len(duplicates),
         "invalid_on_all_copies": len(invalid_all),
         "warcs_with_done_in_any_region": len(warcs_with_done_anywhere),
@@ -247,6 +305,7 @@ def resolve(regions: list[str], out_prefix: str) -> dict:
             "duplicates": duplicates_path,
             "missing_batches": missing_path,
             "integrity_report": report_path,
+            "done_warcs": done_warcs_path,
         },
     }
     _write_json(report_path, report)
@@ -268,8 +327,13 @@ def main() -> None:
         default=f"gs://{DEST_BUCKET}/{CONSOLIDATED_SUBDIR}",
         help="Root prefix for inventories/ and resolved/ (gs:// URI).",
     )
+    parser.add_argument(
+        "--spec",
+        default=LEGACY_SPEC,
+        help=("Extraction spec. Legacy 'low_quality' uses unprefixed manifest names; " "others use the {spec} suffix."),
+    )
     args = parser.parse_args()
-    resolve(args.regions, args.out_prefix)
+    resolve(args.regions, args.out_prefix, spec=args.spec)
 
 
 if __name__ == "__main__":

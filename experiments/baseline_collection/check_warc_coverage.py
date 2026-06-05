@@ -16,7 +16,6 @@ import logging
 from collections import Counter
 
 import fsspec
-
 from zephyr.readers import load_file
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")

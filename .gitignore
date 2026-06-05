@@ -220,6 +220,8 @@ gha-creds-*.json
 
 *.jsonl
 **/*.jsonl
+!experiments/scaling_law_sweeps/dclm_core/custom_tasks/**/*.jsonl
+!experiments/scaling_law_sweeps/dclm_core/eval_meta_data.csv
 scr/*
 .weaver/
 
@@ -237,11 +239,15 @@ scr/*
 
 # Dashboard runtime cache and large manifest data
 experiments/baseline_collection/.dashboard_cache.json
-experiments/distill/dclm_400m_1x_warcs.txt
+# dclm_400m_1x_warcs.txt is the canonical 10,364-WARC pool manifest used for
+# high_quality full-pool extraction. It must be tracked so it bundles into Iris
+# job workspaces, exactly like baseline_warcs_3000.txt. The no-trailing-newline
+# duplicate (dclm_400m_1x.txt) stays ignored below.
 experiments/baseline_collection/_tmp_target_urls/
 experiments/baseline_collection/*.jsonl.gz
 experiments/distill/dclm_400m_1x.txt
-experiments/distill/subsets/
+experiments/distill/subsets/*
+!experiments/distill/subsets/baseline_warcs_*.txt
 experiments/scaling_law_sweeps/.warc_scaling_dashboard_cache.json
 plots/
 

@@ -111,6 +111,25 @@ class LMEvaluationHarnessEvaluator(Evaluator):
                         logger.warning(f"Failed to upload {task_dir_name} results to GCS: {e}")
 
                 def _run_lm_eval(lm_eval_model_local: str, pretrained_args_local: str) -> None:
+                    # vllm-tpu 0.18+ moved get_open_port out of vllm.utils into a
+                    # submodule; lm-evaluation-harness still does the old import.
+                    # Patch the symbol back into vllm.utils before lm_eval loads.
+                    import vllm.utils as _vu
+
+                    if not hasattr(_vu, "get_open_port"):
+                        for _mod_path in (
+                            "vllm.utils.network_utils",
+                            "vllm.utils.network",
+                            "vllm.utils._utils",
+                            "vllm.utils.utils",
+                        ):
+                            try:
+                                _mod = __import__(_mod_path, fromlist=["get_open_port"])
+                                _vu.get_open_port = _mod.get_open_port
+                                break
+                            except (ImportError, AttributeError):
+                                continue
+
                     from lm_eval.evaluator import simple_evaluate
                     from lm_eval.loggers import EvaluationTracker, WandbLogger
                     from lm_eval.tasks import TaskManager

@@ -1,0 +1,56 @@
+# Layout for the headline "Extraction methods x model scale" CORE table.
+#
+# Columns are the canonical fixed-model trio: d=512 (157M), d=1536 (998M),
+# d=2432 (2.9B). Per-cell budgets are NOT uniform across the row: each
+# (method, scale) point is the run that won under "best Uncheatable Eval
+# validation loss" checkpoint selection, so different methods land on
+# different FLOPs budgets at the same model size.
+#
+# Render with:
+#   python -m experiments.scaling_law_sweeps.dclm_core.render_core_table \
+#       --layout experiments/scaling_law_sweeps/dclm_core/layouts/dclm_core_3000warc.yaml
+
+experiment_tag: expFM_natural
+# Report CORE as percentage (×100) so the leading zeros don't eat column width.
+scale: 100
+precision: 2
+bold_mode: max
+
+columns:
+  - {header: "157M",  hidden_size: 512}
+  - {header: "998M",  hidden_size: 1536}
+  - {header: "2.9B",  hidden_size: 2432}
+
+# Each row's `budgets:` list aligns 1:1 with `columns` above. Order is
+# 157M, 998M, 2.9B.
+rows:
+  - label: "Resiliparse"
+    method: resiliparse_dedup
+    group: Baselines
+    budgets: [2.0e+20, 2.0e+20, 3.0e+20]
+  - label: "Nemotron-CC"
+    method: nemotron_full_bos_fixed
+    group: Baselines
+    budgets: [3.0e+18, 9.0e+19, 2.0e+20]
+  - label: "DCLM-Baseline"
+    method: dclm
+    group: Baselines
+    budgets: [9.0e+18, 9.0e+19, 3.0e+20]
+  - label: "Spec-Driven (ours)"
+    method: high_quality_3000
+    group: Ours
+    bold: true
+    budgets: [9.0e+19, 2.0e+21, 9.0e+20]
+
+bootstrap_glob: "scratch/bootstrap/*_bootstrap.json"
+template: "experiments/scaling_law_sweeps/dclm_core/templates/dclm_core_table.tex.j2"
+output_csv: "scratch/dclm_core_table.csv"
+output_tex: "scratch/dclm_core_table.tex"
+
+caption: |
+  DCLM CORE scores for four extraction methods applied to the same 3000-WARC pool.
+  For each method, the evaluated checkpoint is the one with the lowest Uncheatable
+  Eval validation loss across training. CORE is the unweighted mean of 22
+  centered-normalized task scores~\citep{dclm}. $\pm$ is 1000-sample bootstrap
+  stdev, resampling examples within each task and re-aggregating.
+label: tab:dclm-core

@@ -23,9 +23,9 @@ Launch:
 """
 
 from fray.cluster import ResourceConfig
+from marin.execution.executor import executor_main
 
 from experiments.evals.evals import default_eval
-from marin.execution.executor import executor_main
 
 MODEL_PATH = "gs://marin-us-central1/short-cooldown-rephraser-d7d976d3-v2-eebec0/hf/step-4999"
 

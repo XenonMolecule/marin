@@ -68,7 +68,25 @@ OUT_COMPLETE = OUT_DIR / "warc_scaling_complete.csv"
 # llm_curated_bos_fixed → llm_curated, nemotron_full_bos_fixed → nemotron_full.
 # llm_curated_dedup is kept as its own base (NOT folded into llm_curated) so
 # the dedup A/B can be read off the CSV directly.
-CANONICAL_METHODS = {"dclm", "nemotron_full", "llm_curated", "resiliparse", "llm_curated_dedup"}
+CANONICAL_METHODS = {
+    "dclm",
+    "nemotron_full",
+    "llm_curated",
+    "resiliparse",
+    "llm_curated_dedup",
+    "llm_curated_dclm_filtered",
+    # Spec-driven quality tiers (newer naming; same Llama-3.1 tokenizer, BOS-fixed by default).
+    "low_quality",
+    "med_quality",
+    "high_quality",
+    "resiliparse_dedup",
+}
+
+# Method renames applied after suffix stripping. `llm_curated_dedup` is the
+# pre-spec name for the same pipeline that `low_quality` (a quality tier) ran;
+# d_obs / WARC matches to within 1%. Folding into one label gives `low_quality`
+# its N=3000 anchor from the 23 existing FM-prefix runs.
+METHOD_RENAMES = {"llm_curated_dedup": "low_quality"}
 
 # Suffix variants we should NOT pick up as separate rows when scanning the
 # warc-scaling prefix — they're rescue/retry copies of canonical cells. The
@@ -98,6 +116,8 @@ def _normalize_method(method_name: str) -> tuple[str, int | None]:
         warcs = None
     # Strip "_bos_fixed" (FM sweep canonical naming).
     name = re.sub(r"_bos_fixed$", "", name)
+    # Apply canonical renames (see METHOD_RENAMES doc).
+    name = METHOD_RENAMES.get(name, name)
     return name, warcs
 
 
@@ -212,6 +232,8 @@ def _row_from_summary(base: str, j: dict) -> tuple[dict, dict] | None:
     flops_target = plan.get("budget_flops", "")
     flops_actual = 6 * params * tokens_trained if (params and tokens_trained) else ""
     lima_loss = eval_blk.get("eval/lima/loss", "")
+    uncheatable_macro_loss = eval_blk.get("eval/uncheatable_eval/macro_loss", "")
+    paloma_macro_loss = eval_blk.get("eval/paloma/macro_loss", "")
 
     streamlined = {
         "method": method_base,
@@ -225,6 +247,8 @@ def _row_from_summary(base: str, j: dict) -> tuple[dict, dict] | None:
         "flops_target": flops_target,
         "flops_actual": flops_actual,
         "eval_lima_loss": lima_loss,
+        "eval_uncheatable_macro_loss": uncheatable_macro_loss,
+        "eval_paloma_macro_loss": paloma_macro_loss,
     }
     complete = {
         "run_name": plan.get("run_name_core", base),
@@ -247,8 +271,9 @@ def _row_from_summary(base: str, j: dict) -> tuple[dict, dict] | None:
         "flops_target": flops_target,
         "flops_actual": flops_actual,
         "eval_lima_loss": lima_loss,
+        "eval_uncheatable_macro_loss": uncheatable_macro_loss,
         "eval_loss": eval_blk.get("eval/loss", ""),
-        "paloma_macro_loss": eval_blk.get("eval/paloma/macro_loss", ""),
+        "paloma_macro_loss": paloma_macro_loss,
         "eval_bpb": eval_blk.get("eval/bpb", ""),
         "region": run.get("region", ""),
         "completed_at": run.get("completed_at", ""),

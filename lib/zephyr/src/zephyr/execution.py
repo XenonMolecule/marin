@@ -51,10 +51,8 @@ from zephyr.plan import (
     Scatter,
     Shard,
     SourceItem,
-    StageContext,
     StageType,
     compute_plan,
-    run_stage,
 )
 from zephyr.shuffle import ListShard, MemChunk, _write_scatter
 from zephyr.writers import INTERMEDIATE_CHUNK_SIZE, batchify, ensure_parent_dir, unique_temp_path
@@ -71,7 +69,15 @@ MAX_SHARD_FAILURES = 3
 # what's killing the worker (e.g. native SIGSEGV from Arrow / JAX, or an
 # OOM that brings the host down). Set well above realistic preemption
 # storms for any one shard in a multi-shard pipeline.
-MAX_SHARD_INFRA_FAILURES = 20
+#
+# Bumped 20→100 (2026-05-13) after a long-running fuzzy-CC stage1-Reduce
+# at low_quality N=500 kept aborting mid-iteration: workers preempted at
+# ~95% rate during cluster-wide saturation, single shards re-spawned 15-20
+# times before exhausting the cap and killing the entire pipeline despite
+# the rest of the iteration being healthy. cc_resume=True saves completed
+# iterations but stage1 of the in-flight iteration is atomic, so any one
+# shard exhausting retries discards substantial work.
+MAX_SHARD_INFRA_FAILURES = 100
 
 ZEPHYR_STAGE_ITEM_COUNT_KEY = "zephyr/stage/{stage_name}/item_count"
 ZEPHYR_STAGE_BYTES_PROCESSED_KEY = "zephyr/stage/{stage_name}/bytes_processed"
@@ -778,8 +784,15 @@ class ZephyrCoordinator:
         """Requeue the worker's in-flight task as an INFRA failure (preemption/heartbeat)."""
         self._record_shard_failure(worker_id, ShardFailureKind.INFRA)
 
-    def _check_worker_heartbeats(self, timeout: float = 120.0) -> None:
-        """Internal heartbeat check (called with lock held)."""
+    def _check_worker_heartbeats(self, timeout: float = 600.0) -> None:
+        """Internal heartbeat check (called with lock held).
+
+        Default 600s tolerates long vLLM TPU compile windows (3-5 min on v6e-4
+        with an 8B model) where the worker's heartbeat thread can be starved
+        by GIL contention from the JAX/XLA tracer. The original 120s default
+        was tripping on every TPU vLLM job; bumping it here removes a class
+        of false-positive infra requeues.
+        """
         now = time.monotonic()
         for worker_id, last in list(self._last_seen.items()):
             if now - last > timeout and self._worker_states.get(worker_id) not in {WorkerState.FAILED, WorkerState.DEAD}:
@@ -1208,8 +1221,12 @@ class ZephyrCoordinator:
             self._execution_id = execution_id
             self._chunk_size = chunk_size
 
-    def check_heartbeats(self, timeout: float = 120.0) -> None:
-        """Marks stale workers as FAILED, re-queues their in-flight tasks."""
+    def check_heartbeats(self, timeout: float = 600.0) -> None:
+        """Marks stale workers as FAILED, re-queues their in-flight tasks.
+
+        Default raised to 600s to accommodate vLLM TPU compile windows. See
+        ``_check_worker_heartbeats`` for the rationale.
+        """
         with self._lock:
             self._check_worker_heartbeats(timeout)
 
@@ -1599,6 +1616,11 @@ class _CoordinatorJobConfig:
     # cloudpickled and re-invoked once per worker actor, so per-runner
     # mutable state is per-worker.
     stage_runner_factory: Callable[[], StageRunner] | None = None
+    # Items per intermediate chunk. Lower → more frequent checkpoints, less
+    # work lost on preemption, more output files. The 100k default is fine
+    # for non-preemptible TPU work but disastrous for long shards on
+    # preemptible v5p — restore from the value of ``ZephyrContext.chunk_size``.
+    chunk_size: int = 100_000
 
 
 def _run_coordinator_job(config_path: str, result_path: str) -> None:
@@ -1646,6 +1668,14 @@ def _run_coordinator_job(config_path: str, result_path: str) -> None:
             config.chunk_storage_prefix,
             coordinator,
             config.no_workers_timeout,
+        ).result()
+        # Persist the chunk_size knob the user requested via ZephyrContext.
+        # set_chunk_config also updates prefix/execution_id; we pass the
+        # values that initialize used so they stay consistent.
+        coordinator.set_chunk_config.remote(
+            config.chunk_storage_prefix,
+            config.execution_id,
+            config.chunk_size,
         ).result()
 
         # Create workers (child jobs)
@@ -1768,27 +1798,23 @@ class ZephyrContext:
     max_execution_retries: int = 100
     stage_runner_factory: Callable[[], StageRunner] | None = None
 
-    # MERGE BREADCRUMB (2026-05-06, upstream/main pull):
-    # The local branch previously exposed `chunk_size: int = 100_000` as a
-    # public field here, with the doc "Lower values (e.g. 500) reduce work
-    # lost on TPU preemption but increase the number of output files."
-    # That knob was dropped during the merge — upstream refactored chunk
-    # accounting so `chunk_size` is plumbed *internally* via
-    # ``ZephyrCoordinator.initialize(chunk_size=...)`` and ``set_chunk_config``
-    # (see _CoordinatorJobConfig and line ~1204), but it's no longer
-    # configurable from the public ZephyrContext API.
+    # Number of items per intermediate chunk. Lower values (e.g. 500) reduce
+    # work lost on TPU preemption but increase the number of output files.
+    # Default 100_000 is fine for short pipelines on non-preemptible compute;
+    # long-running TPU vLLM shards on preemptible TPUs should set this much
+    # lower to checkpoint progress more frequently.
     #
-    # If a future preemption-heavy TPU run loses too much in-flight work
-    # because the default 100k chunk size is too coarse, restore the field
-    # here and re-thread it through:
-    #   ZephyrContext.chunk_size
-    #     -> _CoordinatorJobConfig.chunk_size  (currently absent)
-    #     -> _run_coordinator_job's coordinator.initialize.remote(..., chunk_size=...)
-    # The other in-process behaviors that used to live in this file
-    # (WorkerContext methods, _execute_shard body) were preserved by upstream
-    # via zephyr.runners.InlineRunner (the default StageRunner), so user code
-    # using ``zephyr_worker_ctx().increment_counter / .get_shared`` is
-    # unaffected.
+    # Threading:
+    #   ZephyrContext.chunk_size -> _CoordinatorJobConfig.chunk_size
+    #     -> _run_coordinator_job calls ZephyrCoordinator.set_chunk_config(..., chunk_size)
+    #     -> stored on the coordinator actor as ``_chunk_size``
+    #     -> propagated to workers in their task config (see line ~851)
+    #     -> consumed by ``_write_pickle_chunks(..., chunk_size=...)``.
+    #
+    # 2026-05-06 upstream/main merge originally dropped this field; restored
+    # 2026-05-09 because preemptible v5p-8 / v6e jobs were losing entire
+    # WARC shards (5.5h of compute) on a single preemption.
+    chunk_size: int = 100_000
 
     # Shared data staged by put(), uploaded to disk at the start of execute()
     _shared_data: dict[str, Any] = field(default_factory=dict, repr=False)
@@ -1911,6 +1937,7 @@ class ZephyrContext:
                     name=self.name,
                     pipeline_id=self._pipeline_id,
                     stage_runner_factory=self.stage_runner_factory,
+                    chunk_size=self.chunk_size,
                 )
                 ensure_parent_dir(config_path)
                 with open_url(config_path, "wb") as f:

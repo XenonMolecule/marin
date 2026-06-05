@@ -34,8 +34,7 @@ from dataclasses import dataclass
 
 import fsspec
 import pyarrow.parquet as pq
-
-from fray.v2.types import ResourceConfig
+from fray import ResourceConfig
 from zephyr import Dataset, ZephyrContext
 from zephyr.execution import zephyr_worker_ctx
 

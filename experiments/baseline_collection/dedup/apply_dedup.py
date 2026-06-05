@@ -23,12 +23,10 @@ from typing import Any
 
 import fsspec
 import pyarrow.parquet as pq
-
-from fray.v2.types import ResourceConfig
+from fray import ResourceConfig
+from marin.utils import fsspec_glob, rebase_file_path
 from zephyr import Dataset, ZephyrContext, counters
 from zephyr.readers import load_file as zephyr_load_file
-
-from marin.utils import fsspec_glob, rebase_file_path
 
 CLUSTER_SIZE_BIN_EDGES = [(1, 1, "1"), (2, 2, "2"), (3, 5, "3-5"), (6, 10, "6-10"), (11, 100, "11-100")]
 """Edges for cluster_size_histogram. Sizes >100 fall into the ``>100`` bin."""

@@ -21,7 +21,6 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import fsspec
-
 from zephyr import Dataset, ZephyrContext, load_file
 
 logger = logging.getLogger(__name__)

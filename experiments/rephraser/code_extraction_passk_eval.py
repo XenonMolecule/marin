@@ -26,10 +26,11 @@ Dry run:
         experiments/rephraser/code_extraction_passk_eval.py --dry_run true
 """
 
-from experiments.evals.evals import evaluate_lm_evaluation_harness
 from fray.cluster import ResourceConfig
 from marin.evaluation.evaluation_config import EvalTaskConfig
 from marin.execution.executor import executor_main
+
+from experiments.evals.evals import evaluate_lm_evaluation_harness
 
 # ---------------------------------------------------------------------------
 # humaneval_64: 64 samples per prompt, temperature=0.2, pass@k for k=[2,8,16,32,64]

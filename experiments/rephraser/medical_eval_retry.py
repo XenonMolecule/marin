@@ -17,10 +17,11 @@ Launch:
         -- python experiments/rephraser/medical_eval_retry.py
 """
 
-from experiments.evals.evals import evaluate_lm_evaluation_harness
 from fray.cluster import ResourceConfig
 from marin.evaluation.evaluation_config import EvalTaskConfig
 from marin.execution.executor import ExecutorStep, executor_main
+
+from experiments.evals.evals import evaluate_lm_evaluation_harness
 
 # Split evals into small fast batches
 BATCH_1 = [  # ~7400 questions — the big ones

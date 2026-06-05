@@ -14,13 +14,15 @@ import fsspec
 import pyarrow as pa
 import ray
 from fray.cluster import ResourceConfig, TpuConfig
+
 from marin.generation.chunk_utils import ChunkStrategy
 
 logger = logging.getLogger(__name__)
-from marin.generation.pipeline import vLLMTextGeneration
-from marin.utils import fsspec_glob
 from ray.data import DataContext
 from ray.data.datasource import FilenameProvider
+
+from marin.generation.pipeline import vLLMTextGeneration
+from marin.utils import fsspec_glob
 
 
 @dataclass

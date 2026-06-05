@@ -44,9 +44,8 @@ from collections.abc import Iterator
 import draccus
 import fsspec
 import transformers
-from zephyr import Dataset, ZephyrContext, load_jsonl, zephyr_worker_ctx
-
 from marin.utils import fsspec_glob
+from zephyr import Dataset, ZephyrContext, load_jsonl, zephyr_worker_ctx
 
 logger = logging.getLogger(__name__)
 

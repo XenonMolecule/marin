@@ -42,9 +42,8 @@ from urllib.parse import urlparse
 
 import draccus
 import fsspec
-from zephyr import Dataset, ZephyrContext, load_jsonl
-
 from marin.utils import fsspec_glob
+from zephyr import Dataset, ZephyrContext, load_jsonl
 
 logger = logging.getLogger(__name__)
 

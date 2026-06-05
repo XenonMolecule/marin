@@ -32,7 +32,7 @@ Usage (Iris, CPU only)::
 
 from pathlib import Path
 
-from fray.v2.types import ResourceConfig
+from fray import ResourceConfig
 from marin.execution.executor import ExecutorStep, executor_main, this_output_path
 from marin.execution.remote import remote
 

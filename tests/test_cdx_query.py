@@ -11,7 +11,6 @@ import os
 import tempfile
 
 import pytest
-
 from marin.datakit.download.commoncrawl.cdx_query import (
     CDXQueryConfig,
     _load_progress,

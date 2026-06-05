@@ -163,6 +163,12 @@ rl = [
 eval = [
     "lm-eval[math,api]@git+https://github.com/stanford-crfm/lm-evaluation-harness@d5e3391f22cde186c827674d5c3ec7c5f4fe0cab",
     "tenacity",
+    # lm-eval imports these eagerly even on TPU (type annotations / generation tasks).
+    # Without them, `import lm_eval` fails before we ever touch a model.
+    "transformers",
+    "sentencepiece",
+    "sacrebleu",
+    "rouge_score",
 ]
 
 # Evalchemy for reasoning-focused LLM evaluations (AIME, MATH500, HumanEval+, etc.)
@@ -214,6 +220,10 @@ dclm = [
     "retrie",          # URL ban list regex compilation
     "nltk",            # n-gram generation for repetition filters
     "uniseg",          # Unicode word segmentation
+]
+
+safety = [
+    "detoxify",        # local Perspective-analog classifier for RTP-style toxicity eval
 ]
 
 [[tool.uv.index]]

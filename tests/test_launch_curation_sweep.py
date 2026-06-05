@@ -19,6 +19,8 @@ import pytest
 
 from experiments.scaling_law_sweeps import (
     curation_plan,
+)
+from experiments.scaling_law_sweeps import (
     launch_curation_sweep as launcher,
 )
 from experiments.scaling_law_sweeps.curation_plan import METHODS

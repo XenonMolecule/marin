@@ -27,7 +27,6 @@ from dataclasses import replace
 from datetime import timedelta
 
 import jmp
-
 from fray.cluster import ResourceConfig
 from haliax.partitioning import ResourceAxis
 from levanter.checkpoint import CheckpointerConfig

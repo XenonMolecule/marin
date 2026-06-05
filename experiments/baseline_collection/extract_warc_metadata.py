@@ -17,8 +17,7 @@ import logging
 import re
 from dataclasses import dataclass
 
-from fray.v2.types import ResourceConfig
-
+from fray import ResourceConfig
 from zephyr import Dataset, ZephyrContext
 
 logger = logging.getLogger(__name__)

@@ -6,10 +6,11 @@
 
 """mediqa_qa2019_lite with 1-shot and 2-shot for baseline + best configs."""
 
-from experiments.evals.evals import evaluate_lm_evaluation_harness
 from fray.cluster import ResourceConfig
 from marin.evaluation.evaluation_config import EvalTaskConfig
 from marin.execution.executor import ExecutorStep, executor_main
+
+from experiments.evals.evals import evaluate_lm_evaluation_harness
 
 EVAL_RESOURCE = ResourceConfig.with_tpu("v5p-8")
 EVAL_ENGINE_KWARGS = {"max_model_len": 16384, "max_gen_toks": 512}

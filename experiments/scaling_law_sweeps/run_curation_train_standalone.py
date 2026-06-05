@@ -30,16 +30,14 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import datetime
+import importlib
 import json
 import logging
-
-import fsspec
-
-import importlib
 import os
 import threading
 from datetime import timedelta
 
+import fsspec
 import jmp
 from fray.cluster import ResourceConfig
 from levanter.checkpoint import CheckpointerConfig
@@ -296,7 +294,13 @@ def _build_train_lm_config(
             train_batch_size=plan.batch_size,
             per_device_parallelism=-1,
             num_train_steps=plan.train_steps,
-            steps_per_eval=1000,
+            # Eval every 5000 steps (was 1000): each eval runs the FULL eval set
+            # (max_eval_batches=None), ~35s, so 1000 was ~17% wall-clock overhead
+            # on long runs and dominated short/fast cells. A guaranteed final eval
+            # (trainer.train force=True) always captures the terminal loss, so the
+            # scaling-law data point is unaffected — only intermediate curve
+            # markers get sparser. Loss VALUES are unchanged (full eval set kept).
+            steps_per_eval=5000,
             # Mesh: plumb tensor_parallel into the "model" axis. Without this,
             # Levanter's default mesh has model=1 and data=total_chips, so any
             # multi-host plan with batch_size < total_chips hits ZeroDivisionError
@@ -307,13 +311,23 @@ def _build_train_lm_config(
             ),
             allow_nondivisible_batch_size=True,
             # Checkpoint policy: rolling 15-min time-based for preemption recovery
-            # (auto-deleted on next save) + one permanent final checkpoint (via
-            # trainer.py's `force=True` save at end of training). NO intermediate
-            # step checkpoints -- `keep=[]` disables them, saving ~2 TB across the
-            # 508-run sweep (3 permanent intermediates x 1.2 GB x 508 runs).
+            # (auto-deleted on next save within an attempt) + one permanent final
+            # checkpoint (via trainer.py's `force=True` save at end of training).
+            # NO intermediate step checkpoints -- `keep=[]` disables them, saving
+            # ~2 TB across the 508-run sweep (3 permanent intermediates x 1.2 GB
+            # x 508 runs).
+            #
+            # delete_old_temp_checkpoints=False preserves the rolling temp across
+            # Iris-level child retries so a fresh attempt can resume from the
+            # crashed attempt's last 15-min checkpoint instead of training from
+            # scratch. Net storage cost: still exactly 1 rolling temp per run
+            # (~12 GB for d=2432) — same as the default; the only difference is
+            # cross-attempt persistence. HF exports (under hf/) and the final
+            # force-saved Levanter checkpoint are unaffected by this flag.
             checkpointer=CheckpointerConfig(
                 save_interval=timedelta(minutes=15),
                 keep=[],
+                delete_old_temp_checkpoints=False,
             ),
         ),
         train_seq_len=plan.seq_len,

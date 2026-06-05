@@ -27,10 +27,7 @@ import os
 from dataclasses import dataclass
 
 from levanter.data.text import TextLmDatasetFormat
-
-from experiments.llama import llama3_tokenizer
 from marin.datakit.download.commoncrawl.download_warc import WarcDownloadConfig, download_and_extract_warcs
-from marin.execution.remote import remote
 from marin.execution.executor import (
     ExecutorStep,
     ensure_versioned,
@@ -39,12 +36,14 @@ from marin.execution.executor import (
     this_output_path,
     versioned,
 )
+from marin.execution.remote import remote
 from marin.generation.build_llamacpp import BuildLlamaCppConfig, build_llamacpp
 from marin.generation.inference_llamacpp import LlamaCppInferenceConfig, run_inference_llamacpp
 from marin.processing.tokenize import TokenizeConfig, tokenize
 from marin.transform.filter_by_token_length import FilterByTokenLengthConfig, filter_by_token_length
 from marin.transform.postprocess_extraction import PostProcessExtractionConfig, postprocess_extraction
 
+from experiments.llama import llama3_tokenizer
 from experiments.rephraser.rephraser_cooldown import (
     SPECS,
     SYSTEM_MESSAGE,

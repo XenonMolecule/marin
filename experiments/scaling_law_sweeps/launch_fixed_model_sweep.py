@@ -39,12 +39,13 @@ import logging
 import os
 import time
 
+from iris.client.client import IrisClient
+
 from experiments.scaling_law_sweeps import curation_plan, fixed_model_plan
 from experiments.scaling_law_sweeps.launch_curation_sweep import (
     PRIORITY_BAND_MAP,
     submit_all,
 )
-from iris.client.client import IrisClient
 
 logger = logging.getLogger(__name__)
 
@@ -115,6 +116,16 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         help="Override every plan's per-host CPU memory (e.g. 64). Use when the "
         "default memory tier OOMs at large batch sizes on tiny models.",
+    )
+    parser.add_argument(
+        "--batch-divisor",
+        type=int,
+        default=1,
+        help="Shrink each plan's batch by this factor (and re-derive HP) to drop the "
+        "TPU shape (e.g. v5p-256 → v5p-32) when multi-host gang-bounce on preemption "
+        "makes a clean run impractical. Total FLOP budget is preserved; train_steps "
+        "multiplies by the same factor. The shrunk run_name embeds the new batch, so "
+        "it starts fresh -- no topology-mismatch resume from the unshrunk checkpoint.",
     )
     parser.add_argument(
         "--child-priority",
@@ -212,6 +223,7 @@ def main(argv: list[str] | None = None) -> None:
         methods,
         hidden_sizes=hidden_sizes,
         budgets=tuple(args.budgets),
+        batch_divisor=args.batch_divisor,
     )
     if args.filter_name_contains is not None:
         plans = [p for p in plans if args.filter_name_contains in p.run_name_core]

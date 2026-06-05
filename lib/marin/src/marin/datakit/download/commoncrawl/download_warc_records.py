@@ -36,7 +36,6 @@ from dataclasses import dataclass
 import fsspec
 import requests
 import warcio
-
 from fray.v2.types import ResourceConfig as ZephyrResourceConfig
 from zephyr import Dataset, ZephyrContext
 

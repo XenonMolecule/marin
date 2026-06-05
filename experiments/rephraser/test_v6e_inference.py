@@ -25,9 +25,8 @@ from dataclasses import dataclass
 
 import fsspec
 from fray.cluster import ResourceConfig
-
-from marin.execution.remote import remote
 from marin.execution.executor import ExecutorStep, executor_main, this_output_path
+from marin.execution.remote import remote
 from marin.generation.inference import TextGenerationInferenceConfig, run_inference
 
 logger = logging.getLogger(__name__)

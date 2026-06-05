@@ -17,11 +17,11 @@ asked us to enforce:
 from __future__ import annotations
 
 import pytest
+from marin.execution.executor import InputName
 
 from experiments.scaling_law_sweeps import data_curation_isoflop as dc
 from experiments.scaling_law_sweeps import region_tracker as rt
 from experiments.scaling_law_sweeps.data_curation_math import CurationMethod
-from marin.execution.executor import InputName
 
 MIRROR_PATH = "mirror://tokenized/baseline_dclm-23e9be/"
 

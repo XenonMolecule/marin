@@ -61,22 +61,29 @@ def submit_one(
     cpu: float,
     memory: str,
     disk: str,
+    spec: str,
 ) -> str:
     cmd = [
         "python",
         SCRIPT,
         "--region",
         region,
+        "--spec",
+        spec,
         "--max-workers",
         str(max_workers),
     ]
+    # Constraint.create auto-wraps raw strings into AttributeValue; the bare
+    # Constraint(values=("us-east1",)) constructor regressed and now silently fails
+    # at submit with "'str' object has no attribute 'to_proto'".
     constraints = [
         preemptible_constraint(True),
-        Constraint(key=WellKnownAttribute.REGION, op=ConstraintOp.IN, values=(region,)),
+        Constraint.create(key=WellKnownAttribute.REGION, op=ConstraintOp.IN, values=(region,)),
     ]
+    suffix = "" if spec == "low_quality" else f"-{spec}"
     job = client.submit(
         entrypoint=Entrypoint.from_command(*cmd),
-        name=f"extract-inventory-{region}",
+        name=f"extract-inventory-{region}{suffix}",
         resources=ResourceSpec(cpu=cpu, memory=memory, disk=disk),
         environment=EnvironmentSpec(extras=["cpu"], env_vars={"PYTHONUNBUFFERED": "1"}),
         constraints=constraints,
@@ -90,6 +97,7 @@ def submit_one(
 def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser()
     p.add_argument("--regions", nargs="+", default=list(REGIONS), choices=list(REGIONS))
+    p.add_argument("--spec", default="low_quality", help="Extraction spec to inventory.")
     p.add_argument("--priority", choices=sorted(PRIORITY_BAND_MAP), default="batch")
     p.add_argument("--max-workers", type=int, default=64, help="Per-job decompression threads.")
     p.add_argument("--cpu", type=float, default=4.0)
@@ -105,7 +113,7 @@ def main() -> None:
 
     if args.dry_run:
         for r in args.regions:
-            logger.info("DRY: would submit inventory for region=%s", r)
+            logger.info("DRY: would submit inventory for region=%s spec=%s", r, args.spec)
         return
 
     controller = os.environ.get("IRIS_CONTROLLER_ADDRESS")
@@ -125,6 +133,7 @@ def main() -> None:
                 cpu=args.cpu,
                 memory=args.memory,
                 disk=args.disk,
+                spec=args.spec,
             )
             submitted.append((region, jid))
             logger.info("submitted %s -> %s", region, jid)

@@ -31,7 +31,6 @@ import os
 import time
 
 import fsspec
-
 from iris.client.client import IrisClient
 from iris.cluster.constraints import (
     Constraint,

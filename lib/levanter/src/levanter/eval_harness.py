@@ -861,12 +861,13 @@ class LevanterHarnessLM(TemplateLM):
             compute_dtype=jnp.bfloat16,
             hbm_utilization=0.3,
         )
-        engine = InferenceEngine.from_model_with_config(
-            model=self.leader.model,
-            tokenizer=self.tokenizer,
-            config=engine_cfg,
-            axis_resources=self.compute_axis_resources,
-        )
+        with hax.axis_mapping(self.axis_resources or {}):
+            engine = InferenceEngine.from_model_with_config(
+                model=self.leader.model,
+                tokenizer=self.tokenizer,
+                config=engine_cfg,
+                axis_resources=self.axis_resources,
+            )
 
         # Build generation requests
         base_key = jrandom.PRNGKey(engine_cfg.seed)

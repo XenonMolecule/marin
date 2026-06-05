@@ -27,7 +27,7 @@ Usage::
         -- python experiments/baseline_collection/pipeline_10k_dclm.py
 """
 
-from fray.v2.types import ResourceConfig
+from fray import ResourceConfig
 from marin.execution.executor import ExecutorStep, executor_main, this_output_path
 from marin.execution.remote import remote
 from marin.transform.extract_text_from_html import ExtractTextConfig

@@ -26,8 +26,7 @@ from dataclasses import dataclass
 
 import requests
 import warcio
-from fray.v2.types import ResourceConfig
-
+from fray.types import ResourceConfig
 from zephyr import Dataset, ZephyrContext
 
 logger = logging.getLogger(__name__)

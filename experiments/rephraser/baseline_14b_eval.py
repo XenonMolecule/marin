@@ -14,10 +14,11 @@ Launch:
         -- python experiments/rephraser/baseline_14b_eval.py
 """
 
-from experiments.evals.evals import evaluate_lm_evaluation_harness
 from fray.cluster import ResourceConfig
 from marin.evaluation.evaluation_config import EvalTaskConfig
 from marin.execution.executor import executor_main
+
+from experiments.evals.evals import evaluate_lm_evaluation_harness
 
 EVAL_TASKS = [
     EvalTaskConfig(name="humaneval", num_fewshot=0, task_alias="humaneval_0shot"),

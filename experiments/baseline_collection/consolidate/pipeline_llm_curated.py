@@ -32,14 +32,14 @@ import logging
 from dataclasses import dataclass
 
 import fsspec
-from fray.v2.types import ResourceConfig
+from fray import ResourceConfig
+from marin.execution.executor import ExecutorStep, executor_main, this_output_path
+from marin.execution.remote import remote
 from zephyr import Dataset, ZephyrContext
 from zephyr.readers import load_jsonl
 
 from experiments.defaults import default_tokenize
 from experiments.llama import llama3_tokenizer
-from marin.execution.executor import ExecutorStep, executor_main, this_output_path
-from marin.execution.remote import remote
 
 logger = logging.getLogger(__name__)
 

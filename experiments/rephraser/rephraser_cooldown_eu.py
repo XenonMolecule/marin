@@ -24,15 +24,15 @@ Launch (eu-west4-a):
 import os
 
 from levanter.data.text import TextLmDatasetFormat
-
-from experiments.llama import llama3_tokenizer
 from marin.datakit.download.commoncrawl.download_warc import WarcDownloadConfig, download_and_extract_warcs
-from marin.execution.remote import remote
 from marin.execution.executor import ExecutorStep, ensure_versioned, executor_main, this_output_path, versioned
+from marin.execution.remote import remote
 from marin.generation.inference_v2 import InferenceV2Config, run_inference_v2
 from marin.processing.tokenize import TokenizeConfig, tokenize
 from marin.transform.filter_by_token_length import FilterByTokenLengthConfig, filter_by_token_length
 from marin.transform.postprocess_extraction import PostProcessExtractionConfig, postprocess_extraction
+
+from experiments.llama import llama3_tokenizer
 
 # Import shared prompt config and helpers from the rephraser cooldown experiment
 from experiments.rephraser.rephraser_cooldown import (

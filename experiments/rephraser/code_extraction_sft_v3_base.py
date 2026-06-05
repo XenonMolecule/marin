@@ -31,6 +31,11 @@ Dry run:
 
 import dataclasses
 
+from fray.cluster import ResourceConfig
+from levanter.layers.rotary import DefaultRotaryEmbeddingsConfig
+from marin.evaluation.evaluation_config import EvalTaskConfig
+from marin.execution.executor import executor_main
+
 from experiments.qwen3 import qwen3_0_6b_hd128
 from experiments.rephraser.extraction_sft_recipe import (
     DomainSource,
@@ -40,10 +45,6 @@ from experiments.rephraser.extraction_sft_recipe import (
     UrlPattern,
     build_extraction_sft_experiment,
 )
-from fray.cluster import ResourceConfig
-from levanter.layers.rotary import DefaultRotaryEmbeddingsConfig
-from marin.evaluation.evaluation_config import EvalTaskConfig
-from marin.execution.executor import executor_main
 
 # ---------------------------------------------------------------------------
 # 8B extractor model
@@ -213,8 +214,9 @@ result = build_extraction_sft_experiment(
 # ---------------------------------------------------------------------------
 # MBPP evals — separate from HumanEval to avoid hash invalidation
 # ---------------------------------------------------------------------------
-from experiments.evals.evals import evaluate_lm_evaluation_harness
 from marin.execution.executor import output_path_of
+
+from experiments.evals.evals import evaluate_lm_evaluation_harness
 
 v3_branch = result.extraction_branches[0]
 resili_train, _ = result.shared_branches["resiliparse"]

@@ -54,8 +54,7 @@ import logging
 from dataclasses import dataclass
 
 import fsspec
-from fray.v2.types import ResourceConfig
-
+from fray import ResourceConfig
 from zephyr import Dataset, ZephyrContext
 from zephyr.execution import zephyr_worker_ctx
 from zephyr.readers import load_file as zephyr_load_file

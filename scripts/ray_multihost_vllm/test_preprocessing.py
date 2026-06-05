@@ -15,8 +15,8 @@ Runs on CPU only (JAX_PLATFORMS=cpu). Validates:
 
 import os
 import sys
-import time
 import tempfile
+import time
 
 os.environ["JAX_PLATFORMS"] = "cpu"
 sys.path.insert(0, "/workspace/tpu_inference")
@@ -60,12 +60,12 @@ except Exception as e:
     fail(f"quantization imports: {e}")
 
 try:
+    from tpu_inference.layers.common.moe import MoEBackend
     from tpu_inference.layers.common.process_weights.moe_weights import (
         FusedMoEWeights,
         process_moe_weights,
         quantize_moe_weights,
     )
-    from tpu_inference.layers.common.moe import MoEBackend
 
     ok("moe_weights imports")
 except Exception as e:
@@ -103,12 +103,12 @@ else:
 test("2. MoE byte-exact round-trip (8 experts)")
 
 import torch
+from tpu_inference.layers.common.moe import MoEBackend
 from tpu_inference.layers.common.process_weights.moe_weights import (
     FusedMoEWeights,
     process_moe_weights,
     quantize_moe_weights,
 )
-from tpu_inference.layers.common.moe import MoEBackend
 
 E_TEST = 8
 BLOCK_SIZE = (128, 128)

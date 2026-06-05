@@ -54,10 +54,8 @@ import os
 from dataclasses import dataclass
 
 import fsspec
-
-from experiments.defaults import default_tokenize
-from experiments.llama import llama3_tokenizer
-from marin.datakit.download.huggingface import DownloadConfig as HfDownloadConfig, download_hf
+from marin.datakit.download.huggingface import DownloadConfig as HfDownloadConfig
+from marin.datakit.download.huggingface import download_hf
 from marin.execution.executor import (
     ExecutorStep,
     executor_main,
@@ -65,6 +63,9 @@ from marin.execution.executor import (
     versioned,
 )
 from marin.processing.tokenize.data_configs import TokenizerStep
+
+from experiments.defaults import default_tokenize
+from experiments.llama import llama3_tokenizer
 
 logger = logging.getLogger(__name__)
 

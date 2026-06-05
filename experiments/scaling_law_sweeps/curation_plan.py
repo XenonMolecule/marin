@@ -20,6 +20,9 @@ from collections import Counter
 from collections.abc import Iterator
 from dataclasses import dataclass
 
+from iris.cluster.types import get_tpu_topology
+from marin.scaling_laws import CandidateConfig, pick_v4_type, pick_v5p_type
+
 from experiments.scaling_law_sweeps.completed_adamh import (
     SEQ_LEN,
     _compute_tensor_parallel_size,
@@ -32,8 +35,6 @@ from experiments.scaling_law_sweeps.data_curation_math import (
     slice_tokens_for,
     t_exp_ceiling,
 )
-from iris.cluster.types import get_tpu_topology
-from marin.scaling_laws import CandidateConfig, pick_v4_type, pick_v5p_type
 
 logger = logging.getLogger(__name__)
 
@@ -116,6 +117,15 @@ MIN_SLICE_TOKENS_DEFAULT: float = 25e6
 # Hardcoded to avoid a slow GCS read at every coordinator/child startup.
 # Update from `{path}/train/.stats.json:total_tokens` after re-tokenization.
 _D_OBS_DEFAULTS: dict[str, int] = {
+    # --- Random 3000-WARC sample (uniform draw from the DCLM 400m-1x pool, seed 0;
+    #     manifest experiments/distill/subsets/baseline_warcs_3000_random.txt).
+    #     INDEPENDENT from the head-biased baseline_warcs_3000.txt runs below —
+    #     distinct cache hashes so nothing collides. Built 2026-05-30 via pipeline.py
+    #     (--products dclm/nemotron_full/resiliparse) + dedup_resiliparse_warc_scaling.py.
+    #     token counts from train/.stats.json:total_tokens.
+    "baseline_dclm-cf177e": 2_114_092_590,
+    "baseline_nemotron_full-75f981": 2_943_995_743,
+    "resiliparse_random_dedup_3000warcs-7de1e2": 109_186_106_815,
     "baseline_dclm-23e9be": 2_663_454_015,
     "baseline_nemotron-c67de9": 1_919_401_016,
     "baseline_fineweb_edu-7a3bc5": 817_221_529,
@@ -156,16 +166,75 @@ _D_OBS_DEFAULTS: dict[str, int] = {
     "baseline_resiliparse_500warcs": 21_330_844_102,
     "baseline_resiliparse_1000warcs": 46_283_090_573,
     "baseline_resiliparse_2000warcs": 93_393_249_192,
+    # resiliparse with per-N fuzzy dedup. N=100 smoke ran in eu-west4 then
+    # mirrored to us-east5/us-central1/us-central2 (one-off cross-continent;
+    # larger N's will use a different routing).
+    "resiliparse_100warcs-7f8246": 3_952_774_658,
+    # resiliparse full-corpus (3000-WARC) fuzzy dedup output, built as a side
+    # experiment by tokenizing gs://marin-us-central2/documents/
+    # baseline_resiliparse_deduped/data-XXXXX-of-03000.jsonl.gz (flat layout).
+    # us-central2 ONLY — pin_region enforces it. Acts as the N=3000 anchor for
+    # the WARC-scaling sweep's resiliparse_dedup curve.
+    "baseline_resiliparse_deduped-471baf": 94_332_023_608,
+    # resiliparse per-N fuzzy dedup, N=500/1000/2000. Built 2026-05-17 via
+    # dedup_resiliparse_warc_scaling.py in us-east5 (raw extraction
+    # pre-mirrored from us-central2). Tokenized in us-east5; pin_region on
+    # the methods below enforces region locality.
+    "resiliparse_dedup_500warcs-a491f7": 18_484_848_433,
+    "resiliparse_dedup_1000warcs-4384bb": 35_289_322_730,
+    "resiliparse_dedup_2000warcs-7e2171": 66_568_599_303,
     # nemotron_full BOS-fixed: us-central1 only.
     "baseline_nemotron_full_bos_fixed_100warcs": 316_603_329,
     "baseline_nemotron_full_bos_fixed_500warcs": 799_434_481,
     "baseline_nemotron_full_bos_fixed_1000warcs": 1_292_527_311,
     "baseline_nemotron_full_bos_fixed_2000warcs": 1_968_904_506,
+    # Nemotron-CC-HQ (quality=high only, both kind=actual + kind=synthetic).
+    # 3k canonical built by tokenizing existing filtered/baseline_nemotron_qhigh-v1/
+    # via run_quality_filter_region.py --skip-filter. Per-N subsamples built by
+    # subset_baselines.py --methods nemotron_qhigh. Tokenized on us-central1 only;
+    # pinned. d_obs values PENDING until tokenize lands.
+    "baseline_nemotron_qhigh-v1": 801_420_584,
+    "baseline_nemotron_qhigh_100warcs": 93_509_322,
+    "baseline_nemotron_qhigh_500warcs": 235_506_216,
+    "baseline_nemotron_qhigh_1000warcs": 386_117_427,
+    "baseline_nemotron_qhigh_2000warcs": 585_125_784,
     # llm_curated BOS-fixed: us-central1 only.
     "baseline_llm_curated_bos_fixed_100warcs": 1_862_581_865,
     "baseline_llm_curated_bos_fixed_500warcs": 8_857_302_468,
     "baseline_llm_curated_bos_fixed_1000warcs": 19_007_039_689,
     "baseline_llm_curated_bos_fixed_2000warcs": 37_856_619_271,
+    # llm_curated_dclm_filtered: full DCLM curation pipeline (filter +
+    # bff dedup at old-both/13-gram/0.8) on the full 200-shard / 3000-WARC
+    # llm_curated extraction. Built 2026-05-06; cache mirrored to us-central1 /
+    # us-central2 / us-east5. 5.08M docs / 3.75B tokens after curation
+    # (~6.7% of the 56B-token llm_curated_bos_fixed corpus survived filter+dedup).
+    "llm_curated_dclm_filtered_v1": 3_746_596_900,
+    # llm_curated_dclm_filtered WARC-scaling subsamples: same DCLM filter + bff
+    # dedup pipeline applied to the per-N-WARC subset of the llm_curated
+    # documents. Built 2026-05-09 via subset_one.py. Mirrored to us-central1 /
+    # us-central2 / us-east5 (matching the 3000-WARC parent's mirror set).
+    "baseline_llm_curated_dclm_filtered_100warcs": 139_571_843,
+    "baseline_llm_curated_dclm_filtered_500warcs": 680_741_252,
+    "baseline_llm_curated_dclm_filtered_1000warcs": 1_483_083_390,
+    "baseline_llm_curated_dclm_filtered_2000warcs": 2_933_069_326,
+    "low_quality_100warcs-98f9ef": 1_672_294_999,
+    # low_quality_N WARC-scaling subsamples built 2026-05-17 via
+    # dedup_extracted.py + tokenize_deduped_extracted.py in us-east5.
+    # Mirrored to us-central1 / us-east1 / us-west4 (US-only — no eu-west4).
+    "low_quality_500warcs-8e47af": 7_390_911_794,
+    "low_quality_1000warcs-adbb79": 15_239_047_004,
+    "low_quality_2000warcs-71e35e": 28_853_042_069,
+    "high_quality_100warcs-e2ecfb": 413_651_686,
+    "high_quality_500warcs-f32bb0": 1_879_608_841,
+    "high_quality_1000warcs-bafd0c": 3_973_047_728,
+    "high_quality_2000warcs-5d569a": 7_393_534_806,
+    "high_quality_3000warcs-b9cfe2": 9_445_377_136,
+    "med_quality_100warcs-1c23ed": 994_571_360,
+    "med_quality_500warcs-da4724": 4_568_817_591,
+    "med_quality_1000warcs-84becd": 9_626_306_890,
+    "med_quality_2000warcs-37ac75": 18_079_574_033,
+    "med_quality_3000warcs-73cd32": 26_931_419_795,
+    "med_low_quality_100warcs-03c59e": 1_445_631_560,
 }
 _SOURCE_BUCKET: str = "gs://marin-us-central2"
 # BOS-fixed rebuilds were only tokenized on us-central1 (see rebuild_bos_fixed.py)
@@ -257,6 +326,15 @@ METHODS: dict[str, CurationMethod] = {
         "llm_curated_dedup",
         "baseline_llm_curated_deduped-c444e2",
     ),
+    # DCLM-faithful curation pipeline (filter + bff dedup) applied to the
+    # full 200-shard / 3000-WARC llm_curated extraction. Method name kept
+    # distinct from the broken ``llm_curated_dclm_curated`` 30-shard attempt
+    # (see scratch/broken_30shard_oneoff/). Cache will be mirrored to
+    # us-central1 / us-central2 / us-east5 once tokenize completes.
+    "llm_curated_dclm_filtered": _method(
+        "llm_curated_dclm_filtered",
+        "llm_curated_dclm_filtered_v1",
+    ),
     # ExpC 10k re-extractions — placeholders. Replace cache_hash and the
     # corresponding _D_OBS_DEFAULTS entry once tokenization completes.
     # `_iter_valid_candidates` will raise if these are enumerated with d_obs=0.
@@ -277,6 +355,23 @@ METHODS: dict[str, CurationMethod] = {
     #     "dclm_400m_1x_10k_fineweb_edu-0a3143",
     #     sampled_warcs=EXPC_SAMPLED_WARCS,
     # ),
+    # --- Random 3000-WARC sample (independent from the head-biased 3000-WARC
+    #     methods; uniform draw seed 0, manifest baseline_warcs_3000_random.txt).
+    #     Distinct IDs + cache hashes so these never collide with the existing
+    #     3000-WARC runs. DCLM + Nemotron caches mirrored to all regions (float).
+    #     resiliparse-dedup cache (432.8 GB): input_ids + ledger + stats copied
+    #     central2->us-east5 (2026-05-31, ~$4.3, lean copy skipping vestigial
+    #     part-dirs); floats us-central2/us-east5 like the head anchor -471baf to
+    #     dodge us-central2 v4 starvation. (Full mirror incl eu-west4 was ~$69.)
+    "dclm_random_3000": _method("dclm_random_3000", "baseline_dclm-cf177e", sampled_warcs=3000),
+    "nemotron_full_random_3000": _method(
+        "nemotron_full_random_3000", "baseline_nemotron_full-75f981", sampled_warcs=3000
+    ),
+    "resiliparse_random_dedup_3000": _method(
+        "resiliparse_random_dedup_3000",
+        "resiliparse_random_dedup_3000warcs-7de1e2",
+        sampled_warcs=3000,
+    ),
     # --- WARC-scaling sweep subsamples ---
     # dclm: mirrored to us-central1 / us-central2 / us-east1 / us-east5 — float
     # so children can claim v6e capacity in us-central2 / us-east5 when v5p is
@@ -293,6 +388,39 @@ METHODS: dict[str, CurationMethod] = {
     "resiliparse_500": _method("resiliparse_500", "baseline_resiliparse_500warcs", sampled_warcs=500),
     "resiliparse_1000": _method("resiliparse_1000", "baseline_resiliparse_1000warcs", sampled_warcs=1000),
     "resiliparse_2000": _method("resiliparse_2000", "baseline_resiliparse_2000warcs", sampled_warcs=2000),
+    # resiliparse with per-N fuzzy dedup. N=100 smoke landed in eu-west4 and
+    # was mirrored to 3 US regions; the N=3000 anchor cache `-471baf` lives
+    # in us-central2 only (pinned). N=500/1000/2000 caches land in us-east5
+    # and stay pinned there (no mirror per user direction — pin_region
+    # enforces TPU scheduling there).
+    "resiliparse_dedup_100": _method("resiliparse_dedup_100", "resiliparse_100warcs-7f8246", sampled_warcs=100),
+    # N=3000 anchor for the resiliparse_dedup curve. Cache mirrored to
+    # us-east5 on 2026-05-17 ($7.20, 360 GB) after FM children starved on
+    # us-central2 v4 capacity; dropped pin_region so iris floats to either
+    # us-central2 or us-east5.
+    "resiliparse_dedup": _method(
+        "resiliparse_dedup",
+        "baseline_resiliparse_deduped-471baf",
+    ),
+    # N=500/1000/2000 entries — fill in cache_hash + d_obs once tokenize lands.
+    "resiliparse_dedup_500": _method(
+        "resiliparse_dedup_500",
+        "resiliparse_dedup_500warcs-a491f7",
+        sampled_warcs=500,
+        pin_region="us-east5",
+    ),
+    "resiliparse_dedup_1000": _method(
+        "resiliparse_dedup_1000",
+        "resiliparse_dedup_1000warcs-4384bb",
+        sampled_warcs=1000,
+        pin_region="us-east5",
+    ),
+    "resiliparse_dedup_2000": _method(
+        "resiliparse_dedup_2000",
+        "resiliparse_dedup_2000warcs-7e2171",
+        sampled_warcs=2000,
+        pin_region="us-east5",
+    ),
     # nemotron_full BOS-fixed: mirrored to all 4 regions (us-central1/2 +
     # us-east1/5) — float for v6e access.
     "nemotron_full_100": _method("nemotron_full_100", "baseline_nemotron_full_bos_fixed_100warcs", sampled_warcs=100),
@@ -303,6 +431,39 @@ METHODS: dict[str, CurationMethod] = {
     "nemotron_full_2000": _method(
         "nemotron_full_2000", "baseline_nemotron_full_bos_fixed_2000warcs", sampled_warcs=2000
     ),
+    # Nemotron-CC-HQ: quality=high subset of nemotron_full, both kind=actual +
+    # kind=synthetic (matches Nvidia's "Nemotron-CC-HQ" definition).
+    # Pinned to us-central1 — filter and tokenize both run there only.
+    "nemotron_qhigh": _method(
+        "nemotron_qhigh",
+        "baseline_nemotron_qhigh-v1",
+        pin_region="us-central1",
+    ),
+    # nemotron_qhigh_100/500: tokenized caches mirrored to us-central1/2 +
+    # us-east1/5 (2026-05-12) to unblock TPU scheduling across US regions.
+    # No pin_region so iris can dispatch to whichever region has capacity.
+    "nemotron_qhigh_100": _method(
+        "nemotron_qhigh_100",
+        "baseline_nemotron_qhigh_100warcs",
+        sampled_warcs=100,
+    ),
+    "nemotron_qhigh_500": _method(
+        "nemotron_qhigh_500",
+        "baseline_nemotron_qhigh_500warcs",
+        sampled_warcs=500,
+    ),
+    "nemotron_qhigh_1000": _method(
+        "nemotron_qhigh_1000",
+        "baseline_nemotron_qhigh_1000warcs",
+        sampled_warcs=1000,
+        pin_region="us-central1",
+    ),
+    "nemotron_qhigh_2000": _method(
+        "nemotron_qhigh_2000",
+        "baseline_nemotron_qhigh_2000warcs",
+        sampled_warcs=2000,
+        pin_region="us-central1",
+    ),
     # llm_curated BOS-fixed: all 4 sizes mirrored to us-central1 + us-east5,
     # float across both. One-time mirror cost paid 2026-05-01 to unblock the
     # remaining sizes that were starving on us-central1 capacity.
@@ -310,6 +471,44 @@ METHODS: dict[str, CurationMethod] = {
     "llm_curated_500": _method("llm_curated_500", "baseline_llm_curated_bos_fixed_500warcs", sampled_warcs=500),
     "llm_curated_1000": _method("llm_curated_1000", "baseline_llm_curated_bos_fixed_1000warcs", sampled_warcs=1000),
     "llm_curated_2000": _method("llm_curated_2000", "baseline_llm_curated_bos_fixed_2000warcs", sampled_warcs=2000),
+    # llm_curated_dclm_filtered WARC-scaling: filter + bff dedup applied to
+    # per-N-WARC subset of llm_curated documents. Mirror set: us-central1,
+    # us-central2, us-east5.
+    "llm_curated_dclm_filtered_100": _method(
+        "llm_curated_dclm_filtered_100",
+        "baseline_llm_curated_dclm_filtered_100warcs",
+        sampled_warcs=100,
+    ),
+    "llm_curated_dclm_filtered_500": _method(
+        "llm_curated_dclm_filtered_500",
+        "baseline_llm_curated_dclm_filtered_500warcs",
+        sampled_warcs=500,
+    ),
+    "llm_curated_dclm_filtered_1000": _method(
+        "llm_curated_dclm_filtered_1000",
+        "baseline_llm_curated_dclm_filtered_1000warcs",
+        sampled_warcs=1000,
+    ),
+    "llm_curated_dclm_filtered_2000": _method(
+        "llm_curated_dclm_filtered_2000",
+        "baseline_llm_curated_dclm_filtered_2000warcs",
+        sampled_warcs=2000,
+    ),
+    "low_quality_100": _method("low_quality_100", "low_quality_100warcs-98f9ef", sampled_warcs=100),
+    "low_quality_500": _method("low_quality_500", "low_quality_500warcs-8e47af", sampled_warcs=500),
+    "low_quality_1000": _method("low_quality_1000", "low_quality_1000warcs-adbb79", sampled_warcs=1000),
+    "low_quality_2000": _method("low_quality_2000", "low_quality_2000warcs-71e35e", sampled_warcs=2000),
+    "high_quality_100": _method("high_quality_100", "high_quality_100warcs-e2ecfb", sampled_warcs=100),
+    "high_quality_500": _method("high_quality_500", "high_quality_500warcs-f32bb0", sampled_warcs=500),
+    "high_quality_1000": _method("high_quality_1000", "high_quality_1000warcs-bafd0c", sampled_warcs=1000),
+    "high_quality_2000": _method("high_quality_2000", "high_quality_2000warcs-5d569a", sampled_warcs=2000),
+    "high_quality_3000": _method("high_quality_3000", "high_quality_3000warcs-b9cfe2", sampled_warcs=3000),
+    "med_quality_100": _method("med_quality_100", "med_quality_100warcs-1c23ed", sampled_warcs=100),
+    "med_quality_500": _method("med_quality_500", "med_quality_500warcs-da4724", sampled_warcs=500),
+    "med_quality_1000": _method("med_quality_1000", "med_quality_1000warcs-84becd", sampled_warcs=1000),
+    "med_quality_2000": _method("med_quality_2000", "med_quality_2000warcs-37ac75", sampled_warcs=2000),
+    "med_quality_3000": _method("med_quality_3000", "med_quality_3000warcs-73cd32", sampled_warcs=3000),
+    "med_low_quality_100": _method("med_low_quality_100", "med_low_quality_100warcs-03c59e", sampled_warcs=100),
 }
 
 

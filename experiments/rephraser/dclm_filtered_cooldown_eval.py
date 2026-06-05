@@ -25,9 +25,9 @@ Launch:
 """
 
 from fray.cluster import ResourceConfig
+from marin.execution.executor import executor_main
 
 from experiments.evals.evals import default_eval
-from marin.execution.executor import executor_main
 
 MODEL_PATH = "gs://marin-us-central1/cooldown-dclm-filtered-v1-54cdb7/hf/step-9758"
 

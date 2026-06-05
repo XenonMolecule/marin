@@ -1,0 +1,5 @@
+# med_quality 3000-WARC run: the last 2 WARCs still missing from the completion
+# registry as of 2026-05-25 (3 of the prior 5 landed). Single contention-free
+# v6e-4 child; watched live to capture per-WARC status.
+s3://commoncrawl/crawl-data/CC-MAIN-2016-44/segments/1476988720962.53/warc/CC-MAIN-20161020183840-00462-ip-10-171-6-4.ec2.internal.warc.gz
+s3://commoncrawl/crawl-data/CC-MAIN-2017-04/segments/1484560281746.82/warc/CC-MAIN-20170116095121-00114-ip-10-171-10-70.ec2.internal.warc.gz

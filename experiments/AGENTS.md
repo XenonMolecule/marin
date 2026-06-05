@@ -2,6 +2,16 @@
 
 Start with `/AGENTS.md`; this file adds experiment-specific guidance.
 
+## Run Registry (natural-epoching curation runs)
+
+- `experiments/scaling_law_sweeps/run_registry/` is the shared source of truth for
+  what has run, where checkpoints landed, and who is supervising what. See its
+  `AGENTS.md` for the contract.
+- **When you launch or monitor a natural-epoching curation run, keep it current**:
+  `claim` before babysitting, `check` every time you look, `set` the checkpoint +
+  status when it finishes. Runs key on `(method, sample)` — an independent WARC
+  draw is a new `sample`, never just a different N.
+
 ## Artifact Path Rules
 
 - Do not hardcode `gs://...` paths in experiment configs unless there is no viable alternative.

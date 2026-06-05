@@ -358,7 +358,7 @@ class TestDeterministicRecordOrder:
 
     def test_filter_is_deterministic(self):
         """Character-length filter produces same output for same input."""
-        from experiments.baseline_collection.run_extract_standalone import _filter_by_length, MAX_DOC_TOKENS
+        from experiments.baseline_collection.run_extract_standalone import MAX_DOC_TOKENS, _filter_by_length
 
         records = [
             {"html": "short" * 10},

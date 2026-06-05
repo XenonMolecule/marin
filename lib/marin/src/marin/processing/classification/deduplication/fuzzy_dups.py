@@ -233,7 +233,7 @@ def compute_fuzzy_dups_attrs(
     inputs: list[MinHashAttrData],
     output_path: str,
     cc_max_iterations: int = 10,
-    cc_resume: bool = False,
+    cc_resume: bool = True,
     max_parallelism: int,
     worker_resources: ResourceConfig | None = None,
     coordinator_resources: ResourceConfig | None = None,
@@ -364,12 +364,25 @@ def compute_fuzzy_dups_attrs_step(
     name: str,
     minhash_steps: list[StepSpec],
     cc_max_iterations: int = 10,
+    cc_resume: bool = True,
     max_parallelism: int,
     worker_resources: ResourceConfig | None = None,
     coordinator_resources: ResourceConfig | None = None,
     override_output_path: str | None = None,
 ) -> StepSpec:
-    """Create a StepSpec that computes fuzzy duplicate attrs from ``MinHashAttrData`` step outputs."""
+    """Create a StepSpec that computes fuzzy duplicate attrs from ``MinHashAttrData`` step outputs.
+
+    ``cc_resume`` defaults to ``True``: on restart, already-complete CC
+    iterations in ``{output_path}/metadata/cc/it_N/`` from a prior run are
+    skipped and the job picks up from ``it_{last_complete + 1}``. Set
+    ``cc_resume=False`` only if you specifically want to discard prior CC
+    state and re-run from ``it_0``. NOT included in ``hash_attrs`` because
+    it's a runtime resumption hint, not a correctness-affecting parameter.
+
+    The resume behavior is always safe: if no prior iteration state exists
+    (fresh output_path), the job naturally starts from ``it_0`` regardless
+    of this flag's value.
+    """
     return StepSpec(
         name=name,
         deps=list(minhash_steps),
@@ -377,6 +390,7 @@ def compute_fuzzy_dups_attrs_step(
             inputs=[Artifact.load(s, MinHashAttrData) for s in minhash_steps],
             output_path=output_path,
             cc_max_iterations=cc_max_iterations,
+            cc_resume=cc_resume,
             max_parallelism=max_parallelism,
             worker_resources=worker_resources,
             coordinator_resources=coordinator_resources,

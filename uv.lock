@@ -1707,6 +1707,24 @@ wheels = [
 ]
 
 [[package]]
+name = "detoxify"
+version = "0.5.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "sentencepiece" },
+    { name = "torch", version = "2.10.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'extra-5-marin-cpu') or (platform_machine == 'arm64' and sys_platform == 'darwin' and extra != 'extra-5-marin-gpu' and extra == 'extra-5-marin-tpu') or (platform_machine == 'arm64' and sys_platform == 'darwin' and extra != 'extra-5-marin-gpu' and extra == 'extra-5-marin-vllm') or (platform_machine != 'arm64' and extra == 'extra-14-marin-levanter-tpu' and extra == 'extra-5-marin-gpu') or (platform_machine != 'arm64' and extra == 'extra-5-marin-cpu' and extra == 'extra-5-marin-gpu') or (platform_machine != 'arm64' and extra == 'extra-5-marin-cpu' and extra == 'extra-5-marin-vllm') or (platform_machine != 'arm64' and extra == 'extra-5-marin-gpu' and extra == 'extra-5-marin-tpu') or (platform_machine != 'arm64' and extra == 'extra-5-marin-gpu' and extra == 'extra-5-marin-vllm') or (platform_machine != 'arm64' and extra == 'extra-5-marin-gpu' and extra == 'group-10-marin-fray-fray-tpu-test') or (sys_platform != 'darwin' and extra == 'extra-14-marin-levanter-tpu' and extra == 'extra-5-marin-gpu') or (sys_platform != 'darwin' and extra == 'extra-5-marin-cpu' and extra == 'extra-5-marin-gpu') or (sys_platform != 'darwin' and extra == 'extra-5-marin-cpu' and extra == 'extra-5-marin-vllm') or (sys_platform != 'darwin' and extra == 'extra-5-marin-gpu' and extra == 'extra-5-marin-tpu') or (sys_platform != 'darwin' and extra == 'extra-5-marin-gpu' and extra == 'extra-5-marin-vllm') or (sys_platform != 'darwin' and extra == 'extra-5-marin-gpu' and extra == 'group-10-marin-fray-fray-tpu-test') or (sys_platform == 'darwin' and extra != 'extra-14-marin-levanter-gpu' and extra != 'extra-5-marin-cpu' and extra != 'extra-5-marin-gpu' and extra == 'extra-5-marin-tpu' and extra != 'extra-5-marin-vllm') or (extra == 'extra-14-marin-levanter-gpu' and extra == 'extra-14-marin-levanter-tpu') or (extra == 'extra-14-marin-levanter-gpu' and extra == 'extra-5-marin-cpu') or (extra == 'extra-14-marin-levanter-gpu' and extra == 'extra-5-marin-tpu') or (extra == 'extra-14-marin-levanter-gpu' and extra == 'extra-5-marin-vllm') or (extra == 'extra-14-marin-levanter-gpu' and extra == 'group-10-marin-fray-fray-tpu-test') or (extra == 'extra-14-marin-levanter-tpu' and extra != 'extra-5-marin-cpu' and extra == 'extra-5-marin-gpu') or (extra != 'extra-5-marin-cpu' and extra == 'extra-5-marin-gpu' and extra == 'extra-5-marin-tpu') or (extra != 'extra-5-marin-cpu' and extra == 'extra-5-marin-gpu' and extra == 'extra-5-marin-vllm') or (extra != 'extra-5-marin-cpu' and extra == 'extra-5-marin-gpu' and extra == 'group-10-marin-fray-fray-tpu-test')" },
+    { name = "torch", version = "2.10.0", source = { registry = "https://pypi.org/simple" }, marker = "(extra == 'extra-14-marin-levanter-gpu' and extra == 'extra-14-marin-levanter-tpu') or (extra == 'extra-14-marin-levanter-gpu' and extra == 'extra-5-marin-cpu') or (extra == 'extra-14-marin-levanter-gpu' and extra != 'extra-5-marin-gpu') or (extra == 'extra-14-marin-levanter-tpu' and extra == 'extra-5-marin-gpu') or (extra == 'extra-5-marin-cpu' and extra == 'extra-5-marin-gpu') or (extra == 'extra-5-marin-cpu' and extra == 'extra-5-marin-vllm') or (extra == 'extra-5-marin-gpu' and extra == 'extra-5-marin-tpu') or (extra == 'extra-5-marin-gpu' and extra == 'extra-5-marin-vllm') or (extra == 'extra-5-marin-gpu' and extra == 'group-10-marin-fray-fray-tpu-test')" },
+    { name = "torch", version = "2.10.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(platform_machine != 'arm64' and extra == 'extra-5-marin-cpu') or (platform_machine != 'arm64' and extra == 'extra-5-marin-vllm') or (sys_platform != 'darwin' and extra == 'extra-5-marin-cpu') or (sys_platform != 'darwin' and extra == 'extra-5-marin-tpu') or (sys_platform != 'darwin' and extra == 'extra-5-marin-vllm') or (extra == 'extra-14-marin-levanter-gpu' and extra == 'extra-14-marin-levanter-tpu') or (extra == 'extra-14-marin-levanter-gpu' and extra == 'extra-5-marin-cpu') or (extra == 'extra-14-marin-levanter-gpu' and extra == 'extra-5-marin-tpu') or (extra == 'extra-14-marin-levanter-gpu' and extra == 'extra-5-marin-vllm') or (extra == 'extra-14-marin-levanter-gpu' and extra == 'group-10-marin-fray-fray-tpu-test') or (extra == 'extra-14-marin-levanter-tpu' and extra == 'extra-5-marin-gpu') or (extra == 'extra-5-marin-cpu' and extra == 'extra-5-marin-gpu') or (extra == 'extra-5-marin-cpu' and extra == 'extra-5-marin-vllm') or (extra == 'extra-5-marin-gpu' and extra == 'extra-5-marin-tpu') or (extra == 'extra-5-marin-gpu' and extra == 'extra-5-marin-vllm') or (extra == 'extra-5-marin-gpu' and extra == 'group-10-marin-fray-fray-tpu-test')" },
+    { name = "torch", version = "2.11.0", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform != 'linux' and extra != 'extra-14-marin-levanter-gpu' and extra == 'extra-5-marin-gpu') or (sys_platform == 'linux' and extra == 'extra-14-marin-levanter-gpu' and extra == 'extra-5-marin-tpu') or (sys_platform == 'linux' and extra == 'extra-14-marin-levanter-gpu' and extra == 'extra-5-marin-vllm') or (sys_platform == 'linux' and extra == 'extra-14-marin-levanter-gpu' and extra == 'group-10-marin-fray-fray-tpu-test') or (sys_platform != 'linux' and extra != 'extra-14-marin-levanter-tpu' and extra != 'extra-5-marin-cpu' and extra == 'extra-5-marin-gpu') or (sys_platform != 'linux' and extra != 'extra-14-marin-levanter-gpu' and extra != 'extra-5-marin-cpu' and extra != 'extra-5-marin-tpu' and extra != 'extra-5-marin-vllm') or (extra == 'extra-14-marin-levanter-gpu' and extra == 'extra-14-marin-levanter-tpu') or (extra == 'extra-14-marin-levanter-gpu' and extra == 'extra-5-marin-cpu') or (extra == 'extra-14-marin-levanter-tpu' and extra == 'extra-5-marin-gpu') or (extra == 'extra-5-marin-cpu' and extra == 'extra-5-marin-gpu') or (extra == 'extra-5-marin-cpu' and extra == 'extra-5-marin-vllm') or (extra == 'extra-14-marin-levanter-gpu' and extra != 'extra-5-marin-gpu' and extra == 'extra-5-marin-tpu') or (extra == 'extra-14-marin-levanter-gpu' and extra != 'extra-5-marin-gpu' and extra == 'extra-5-marin-vllm') or (extra == 'extra-14-marin-levanter-gpu' and extra != 'extra-5-marin-gpu' and extra == 'group-10-marin-fray-fray-tpu-test') or (extra != 'extra-14-marin-levanter-gpu' and extra == 'extra-5-marin-gpu' and extra == 'extra-5-marin-tpu') or (extra != 'extra-14-marin-levanter-gpu' and extra == 'extra-5-marin-gpu' and extra == 'extra-5-marin-vllm') or (extra != 'extra-14-marin-levanter-gpu' and extra == 'extra-5-marin-gpu' and extra == 'group-10-marin-fray-fray-tpu-test') or (extra == 'extra-14-marin-levanter-tpu' and extra != 'extra-5-marin-cpu' and extra != 'extra-5-marin-tpu' and extra != 'extra-5-marin-vllm') or (extra != 'extra-14-marin-levanter-gpu' and extra != 'extra-5-marin-cpu' and extra != 'extra-5-marin-gpu' and extra != 'extra-5-marin-tpu' and extra != 'extra-5-marin-vllm')" },
+    { name = "torch", version = "2.11.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(sys_platform == 'linux' and extra == 'extra-5-marin-gpu') or (sys_platform != 'linux' and extra == 'extra-14-marin-levanter-gpu' and extra == 'extra-5-marin-tpu') or (sys_platform != 'linux' and extra == 'extra-14-marin-levanter-gpu' and extra == 'extra-5-marin-vllm') or (sys_platform != 'linux' and extra == 'extra-14-marin-levanter-gpu' and extra == 'group-10-marin-fray-fray-tpu-test') or (extra == 'extra-14-marin-levanter-tpu' and extra == 'extra-5-marin-gpu') or (extra == 'extra-14-marin-levanter-gpu' and extra == 'extra-14-marin-levanter-tpu') or (extra == 'extra-14-marin-levanter-gpu' and extra == 'extra-5-marin-cpu') or (extra == 'extra-5-marin-cpu' and extra == 'extra-5-marin-gpu') or (extra == 'extra-5-marin-cpu' and extra == 'extra-5-marin-vllm') or (extra != 'extra-14-marin-levanter-gpu' and extra == 'extra-5-marin-gpu' and extra == 'extra-5-marin-tpu') or (extra != 'extra-14-marin-levanter-gpu' and extra == 'extra-5-marin-gpu' and extra == 'extra-5-marin-vllm') or (extra != 'extra-14-marin-levanter-gpu' and extra == 'extra-5-marin-gpu' and extra == 'group-10-marin-fray-fray-tpu-test') or (extra == 'extra-14-marin-levanter-gpu' and extra != 'extra-5-marin-gpu' and extra == 'extra-5-marin-tpu') or (extra == 'extra-14-marin-levanter-gpu' and extra != 'extra-5-marin-gpu' and extra == 'extra-5-marin-vllm') or (extra == 'extra-14-marin-levanter-gpu' and extra != 'extra-5-marin-gpu' and extra == 'group-10-marin-fray-fray-tpu-test')" },
+    { name = "transformers" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ab/1f/3b0a6cba11a0e9e2530d6021bb2f723b2c5b6653244e6eda47df80356acc/detoxify-0.5.2.tar.gz", hash = "sha256:c119d0b47545bb076190ff583faad9aa3bb0a90ac01c7c4144758606d21da5b1", size = 13813, upload-time = "2024-02-01T14:51:23.61Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1f/5c/94f765f08fe52473bc945284b7912032c099d0737cb8ad9235deb3b40d35/detoxify-0.5.2-py3-none-any.whl", hash = "sha256:e6135a2d85ad17bfb19d8cf53756a1b499e6d9c03cb1976ddefdc013bf29d32a", size = 12103, upload-time = "2024-02-01T14:51:21.791Z" },
+]
+
+[[package]]
 name = "dill"
 version = "0.3.8"
 source = { registry = "https://pypi.org/simple" }
@@ -4968,7 +4986,11 @@ dedup = [
 ]
 eval = [
     { name = "lm-eval", extra = ["api", "math"] },
+    { name = "rouge-score" },
+    { name = "sacrebleu" },
+    { name = "sentencepiece" },
     { name = "tenacity" },
+    { name = "transformers" },
 ]
 evalchemy = [
     { name = "antlr4-python3-runtime" },
@@ -4998,6 +5020,9 @@ rl = [
     { name = "prime" },
     { name = "sympy" },
     { name = "verifiers" },
+]
+safety = [
+    { name = "detoxify" },
 ]
 tpu = [
     { name = "jax", version = "0.9.2", source = { registry = "https://pypi.org/simple" } },
@@ -5105,6 +5130,7 @@ requires-dist = [
     { name = "cryptography", specifier = ">=46.0.6" },
     { name = "datasets", specifier = "<5.0.0" },
     { name = "deepdiff", specifier = ">=8.6.2" },
+    { name = "detoxify", marker = "extra == 'safety'" },
     { name = "draccus", specifier = ">=0.11.5" },
     { name = "duckdb", marker = "extra == 'cpu'", specifier = ">=1.0.0" },
     { name = "dupekit", marker = "extra == 'dedup'" },
@@ -5155,7 +5181,10 @@ requires-dist = [
     { name = "requests", specifier = ">=2.33.0" },
     { name = "resiliparse", specifier = ">=0.17.2", index = "https://marin-community.github.io/chatnoir-resiliparse/simple" },
     { name = "retrie", marker = "extra == 'dclm'" },
+    { name = "rouge-score", marker = "extra == 'eval'" },
     { name = "s3fs", specifier = ">=2024" },
+    { name = "sacrebleu", marker = "extra == 'eval'" },
+    { name = "sentencepiece", marker = "extra == 'eval'" },
     { name = "sqlalchemy", marker = "extra == 'evalchemy'" },
     { name = "sympy", marker = "extra == 'evalchemy'", specifier = ">=1.12.1,<1.14" },
     { name = "sympy", marker = "extra == 'math'" },
@@ -5180,6 +5209,7 @@ requires-dist = [
     { name = "tpu-inference", marker = "extra == 'vllm'", specifier = "==0.18.0" },
     { name = "tqdm" },
     { name = "tqdm-loggable" },
+    { name = "transformers", marker = "extra == 'eval'" },
     { name = "triton", marker = "platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'vllm'", specifier = "==3.6.0" },
     { name = "uniseg", marker = "extra == 'dclm'" },
     { name = "verifiers", marker = "extra == 'rl'", specifier = "==0.1.5" },
@@ -5187,7 +5217,7 @@ requires-dist = [
     { name = "wandb", specifier = ">0.24.0" },
     { name = "warcio" },
 ]
-provides-extras = ["gpu", "tpu", "cpu", "rl", "eval", "evalchemy", "vizier", "vllm", "harbor", "dedup", "math", "dclm"]
+provides-extras = ["gpu", "tpu", "cpu", "rl", "eval", "evalchemy", "vizier", "vllm", "harbor", "dedup", "math", "dclm", "safety"]
 
 [package.metadata.requires-dev]
 dev = [

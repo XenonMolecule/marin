@@ -123,6 +123,7 @@ METRIC_DISPLAY_LABELS: dict[str, str] = {
     "eval/lima/loss": "LIMA Loss",
     "eval/lima/bpb": "LIMA BPB",
     "paloma_macro_loss": "Paloma Macro Loss",
+    "uncheatable_macro_loss": "Uncheatable Macro Loss",
     "eval/paloma/bpb": "Paloma BPB",
     "eval/paloma/macro_bpb": "Paloma Macro BPB",
     "eval/loss": "Eval Loss",
@@ -730,6 +731,8 @@ def main(argv: list[str] | None = None) -> None:
             "nemotron_full_bos_fixed",
             "llm_curated_bos_fixed",
             "llm_curated_dedup",
+            "llm_curated_dclm_filtered",
+            "high_quality_3000",
         ],
     )
     parser.add_argument(
@@ -814,6 +817,8 @@ def main(argv: list[str] | None = None) -> None:
             "llm_curated",
             "nemotron_full_bos_fixed",
             "llm_curated_bos_fixed",
+            "llm_curated_dclm_filtered",
+            "high_quality_3000",
         ]
 
     summaries = load_summaries(args.results_prefix, methods, args.suffix)

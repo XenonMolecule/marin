@@ -49,7 +49,6 @@ from pathlib import Path
 
 import fsspec
 import pandas as pd
-
 from marin.scaling_laws.isoflop_analysis import IsoFlopRecord, fit_scaling_laws
 from marin.scaling_laws.scaling_plots import create_isoflop_plot, create_scaling_plot
 
@@ -239,8 +238,9 @@ def detect_outlier_runs(
 
     Returns the set of `plan.run_name` values to exclude.
     """
-    import numpy as np
     from collections import defaultdict
+
+    import numpy as np
 
     if abs_floor is None:
         abs_floor = _DEFAULT_OUTLIER_FLOOR_BY_METRIC.get(metric_key, 0.07)
@@ -444,22 +444,40 @@ def plot_experiment(
 COMPARE_COLORS = {
     "dclm": "#1f77b4",
     "nemotron_org": "#ff7f0e",
-    "nemotron_full": "#2ca02c",
+    # nemotron_full: was green #2ca02c — moved to black 2026-05-11 to free
+    # green for high_quality (the natural "good data" color).
+    "nemotron_full": "#000000",
     "fineweb_edu": "#d62728",
     "resiliparse": "#9467bd",
+    # Per-N fuzzy-deduped resiliparse — same hue, darker shade so it sits
+    # next to the non-deduped curve on cross-method plots.
+    "resiliparse_dedup": "#5d3a8a",
     "llm_curated": "#8c564b",
     # BOS-fixed rebuilds: same base hue as the broken twin, darker shade to
     # separate visually from the original on the legend.
     "nemotron_full_bos_fixed": "#14571c",
     "llm_curated_bos_fixed": "#4a2b22",
+    # Nemotron-CC-HQ (quality=high subset, ~30% of full Nemotron-CC).
+    # Goldenrod = "premium / high quality" + warm to stay in nemotron family,
+    # distinct from nemotron_full's black on cross-method plots.
+    "nemotron_qhigh": "#B8860B",
     # Deduped llm_curated — distinct teal so it pops next to the brown
     # bos_fixed twin on cross-method comparisons.
     "llm_curated_dedup": "#17becf",
+    # DCLM-faithful curation on llm_curated extraction (full 200-shard corpus).
+    "llm_curated_dclm_filtered": "#bcbd22",
     # ExpC 10k re-extractions: keep the base-method hue but use a saturated
     # primary so the 4 ExpC methods (these two + LC bos_fixed + resiliparse)
     # are all visually distinct from each other on the cross-method comparison.
     "dclm_10k": "#1f77b4",  # dclm blue
     "nemotron_10k": "#2ca02c",  # nemotron green
+    # LLM-extracted quality bands — low→high quality gradient using freed
+    # palette slots (fineweb_edu was dropped; nemotron_full moved to black
+    # so its green could host high_quality).
+    "low_quality": "#e91e63",  # pink
+    "med_low_quality": "#d62728",  # red (was fineweb_edu)
+    "med_quality": "#ff7f0e",  # orange (was nemotron_org, deprecated)
+    "high_quality": "#2ca02c",  # green (was nemotron_full, now black)
 }
 
 
@@ -499,8 +517,8 @@ def plot_comparison(
       2. Scaling fit: x=compute (log), y=D* (log), per method + forecast to 1e23 FLOPs
       3. Loss frontier: x=compute (log), y=loss, per method + forecast to 1e23 FLOPs
     """
-    import plotly.graph_objects as go
     import numpy as np
+    import plotly.graph_objects as go
 
     filtered = [s for s in summaries if s.get("plan", {}).get("experiment_tag") == experiment_tag]
     if not filtered:

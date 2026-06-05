@@ -20,10 +20,11 @@ Launch:
         -- python experiments/rephraser/math_extraction_minerva_eval.py
 """
 
-from experiments.evals.evals import evaluate_lm_evaluation_harness
 from fray.cluster import ResourceConfig
 from marin.evaluation.evaluation_config import EvalTaskConfig
 from marin.execution.executor import ExecutorStep, executor_main
+
+from experiments.evals.evals import evaluate_lm_evaluation_harness
 
 # ---------------------------------------------------------------------------
 # Eval tasks

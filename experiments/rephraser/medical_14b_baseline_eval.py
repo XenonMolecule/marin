@@ -16,10 +16,11 @@ Launch:
         -- python experiments/rephraser/medical_14b_baseline_eval.py
 """
 
-from experiments.evals.evals import evaluate_lm_evaluation_harness
-from experiments.rephraser.medical_extraction_sft_v2 import MEDICAL_EVALS
 from fray.cluster import ResourceConfig
 from marin.execution.executor import executor_main
+
+from experiments.evals.evals import evaluate_lm_evaluation_harness
+from experiments.rephraser.medical_extraction_sft_v2 import MEDICAL_EVALS
 
 EVAL_ENGINE_KWARGS = {"max_model_len": 4096, "max_gen_toks": 256}
 EVAL_RESOURCE = ResourceConfig.with_tpu("v5p-8")

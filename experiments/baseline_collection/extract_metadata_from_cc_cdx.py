@@ -38,7 +38,6 @@ from dataclasses import dataclass
 
 import fsspec
 import requests
-
 from zephyr import Dataset, ZephyrContext
 from zephyr.execution import zephyr_worker_ctx
 

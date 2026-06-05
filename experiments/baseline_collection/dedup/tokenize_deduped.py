@@ -37,8 +37,9 @@ move the deduped trees to permanent storage first.
 
 from __future__ import annotations
 
-from experiments.defaults import default_tokenize
 from marin.execution.executor import InputName, executor_main
+
+from experiments.defaults import default_tokenize
 
 LLM_CURATED_DEDUPED = "gs://marin-us-central1/documents/baseline_llm_curated_deduped"
 RESILIPARSE_DEDUPED = "gs://marin-us-central2/documents/baseline_resiliparse_deduped"

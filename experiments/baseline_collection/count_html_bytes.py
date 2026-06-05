@@ -28,9 +28,9 @@ import argparse
 import gzip
 import json
 import logging
+import multiprocessing as mp
 import os
 import time
-import multiprocessing as mp
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime, timezone
 

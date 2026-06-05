@@ -27,6 +27,10 @@ Dry run:
 
 import dataclasses
 
+from levanter.layers.rotary import DefaultRotaryEmbeddingsConfig
+from marin.evaluation.evaluation_config import EvalTaskConfig
+from marin.execution.executor import executor_main
+
 from experiments.qwen3 import qwen3_0_6b_hd128
 from experiments.rephraser.extraction_sft_recipe import (
     BaselineDataset,
@@ -40,14 +44,13 @@ from experiments.rephraser.extraction_sft_recipe import (
 from experiments.rephraser.gsm8k_sft_plaintext import plaintext_transform_step as gsm8k_plaintext_step
 from experiments.rephraser.mathhelpforum_extract import (
     EXTRACTION_SPEC as GENERAL_PROMPT,
+)
+from experiments.rephraser.mathhelpforum_extract import (
     REPHRASER_MODEL,
     REPHRASER_TOKENIZER,
     consolidate_step,
 )
 from experiments.rephraser.mathhelpforum_extract_qra import EXTRACTION_SPEC as QRA_PROMPT
-from levanter.layers.rotary import DefaultRotaryEmbeddingsConfig
-from marin.evaluation.evaluation_config import EvalTaskConfig
-from marin.execution.executor import executor_main
 
 # Qwen3 0.6B architecture with head_dim=128 and theta=1M (matching HF weights)
 qwen3_0_6b_hd128_with_rope = dataclasses.replace(

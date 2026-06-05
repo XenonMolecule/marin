@@ -1,0 +1,227 @@
+# 10k + random-3k fleet purge manifest
+# Created: 2026-06-02T08:10Z
+# Reason: free TPU for a higher-priority launch. Kept only runs >85% complete.
+# Coords LEFT ALIVE: 10k-natural-interactive, curation-fm-random3k-dclm-nem,
+#                    curation-fm-random3k-resiliparse
+# RELAUNCH: re-run launch_10k_natural.py (10k cells) and the random-3k fixed-model
+#           launcher; skip-if-done reruns only the killed (unfinished) cells.
+
+kept_running_above_85pct:
+  - method: dclm_10k
+    budget: 9e+18  # d1536 L16 B8
+    pct_at_purge: 100.0
+    job_id: /michaelryan/10k-natural-interactive/curation-curation-dclm_10k-expFM_natural-9e+18-d1536-L16-B8
+  - method: nemotron_10k
+    budget: 9e+18  # d1536 L16 B8
+    pct_at_purge: 93.3
+    job_id: /michaelryan/10k-natural-interactive/curation-curation-nemotron_10k-expFM_natural-9e+18-d1536-L16-B8
+  - method: nemotron_full_random_3000
+    budget: 3e+19  # d512 L6 B256
+    pct_at_purge: 92.4
+    job_id: /michaelryan/curation-fm-random3k-dclm-nem/curation-curation-nemotron_full_random_3000-expFM_natural-3e+19-d512-L6-B256
+  - method: dclm_random_3000
+    budget: 2e+20  # d2432 L24 B64
+    pct_at_purge: 90.6
+    job_id: /michaelryan/curation-fm-random3k-dclm-nem/curation-curation-dclm_random_3000-expFM_natural-2e+20-d2432-L24-B64
+  - method: nemotron_10k
+    budget: 9e+18  # d1024 L11 B16
+    pct_at_purge: 87.5
+    job_id: /michaelryan/10k-natural-interactive/curation-curation-nemotron_10k-expFM_natural-9e+18-d1024-L11-B16
+
+killed_to_relaunch:
+  - method: nemotron_10k
+    budget: 2e+20  # d3584 L35 B16
+    pct_at_purge: null  # not yet logging (~0%)
+    job_id: /michaelryan/10k-natural-interactive/curation-curation-nemotron_10k-expFM_natural-2e+20-d3584-L35-B16
+  - method: nemotron_10k
+    budget: 2e+21  # d3584 L35 B128
+    pct_at_purge: 0.0
+    job_id: /michaelryan/10k-natural-interactive/curation-curation-nemotron_10k-expFM_natural-2e+21-d3584-L35-B128
+  - method: dclm_10k
+    budget: 2e+21  # d2432 L24 B256
+    pct_at_purge: 0.0
+    job_id: /michaelryan/10k-natural-interactive/curation-curation-dclm_10k-expFM_natural-2e+21-d2432-L24-B256
+  - method: nemotron_10k
+    budget: 3e+20  # d2432 L24 B64
+    pct_at_purge: 0.2
+    job_id: /michaelryan/10k-natural-interactive/curation-curation-nemotron_10k-expFM_natural-3e+20-d2432-L24-B64
+  - method: nemotron_10k
+    budget: 9e+19  # d512 L6 B512
+    pct_at_purge: 0.3
+    job_id: /michaelryan/10k-natural-interactive/curation-curation-nemotron_10k-expFM_natural-9e+19-d512-L6-B512
+  - method: nemotron_10k
+    budget: 9e+19  # d1536 L16 B64
+    pct_at_purge: 0.3
+    job_id: /michaelryan/10k-natural-interactive/curation-curation-nemotron_10k-expFM_natural-9e+19-d1536-L16-B64
+  - method: dclm_10k
+    budget: 3e+20  # d1536 L16 B256
+    pct_at_purge: 0.4
+    job_id: /michaelryan/10k-natural-interactive/curation-curation-dclm_10k-expFM_natural-3e+20-d1536-L16-B256
+  - method: nemotron_10k
+    budget: 3e+20  # d1536 L16 B256
+    pct_at_purge: 0.4
+    job_id: /michaelryan/10k-natural-interactive/curation-curation-nemotron_10k-expFM_natural-3e+20-d1536-L16-B256
+  - method: dclm_10k
+    budget: 9e+19  # d1536 L16 B64
+    pct_at_purge: 0.4
+    job_id: /michaelryan/10k-natural-interactive/curation-curation-dclm_10k-expFM_natural-9e+19-d1536-L16-B64
+  - method: nemotron_10k
+    budget: 2e+20  # d1536 L16 B128
+    pct_at_purge: 0.4
+    job_id: /michaelryan/10k-natural-interactive/curation-curation-nemotron_10k-expFM_natural-2e+20-d1536-L16-B128
+  - method: dclm_10k
+    budget: 2e+20  # d3584 L35 B16
+    pct_at_purge: 0.5
+    job_id: /michaelryan/10k-natural-interactive/curation-curation-dclm_10k-expFM_natural-2e+20-d3584-L35-B16
+  - method: nemotron_10k
+    budget: 9e+19  # d2432 L24 B32
+    pct_at_purge: 0.6
+    job_id: /michaelryan/10k-natural-interactive/curation-curation-nemotron_10k-expFM_natural-9e+19-d2432-L24-B32
+  - method: nemotron_10k
+    budget: 2e+20  # d2432 L24 B64
+    pct_at_purge: 0.8
+    job_id: /michaelryan/10k-natural-interactive/curation-curation-nemotron_10k-expFM_natural-2e+20-d2432-L24-B64
+  - method: dclm_10k
+    budget: 2e+20  # d2432 L24 B64
+    pct_at_purge: 0.9
+    job_id: /michaelryan/10k-natural-interactive/curation-curation-dclm_10k-expFM_natural-2e+20-d2432-L24-B64
+  - method: dclm_10k
+    budget: 2e+20  # d512 L6 B1024
+    pct_at_purge: 1.2
+    job_id: /michaelryan/10k-natural-interactive/curation-curation-dclm_10k-expFM_natural-2e+20-d512-L6-B1024
+  - method: nemotron_10k
+    budget: 2e+20  # d512 L6 B1024
+    pct_at_purge: 1.2
+    job_id: /michaelryan/10k-natural-interactive/curation-curation-nemotron_10k-expFM_natural-2e+20-d512-L6-B1024
+  - method: nemotron_10k
+    budget: 9e+19  # d1024 L11 B256
+    pct_at_purge: 1.3
+    job_id: /michaelryan/10k-natural-interactive/curation-curation-nemotron_10k-expFM_natural-9e+19-d1024-L11-B256
+  - method: nemotron_10k
+    budget: 2e+20  # d1024 L11 B512
+    pct_at_purge: 1.4
+    job_id: /michaelryan/10k-natural-interactive/curation-curation-nemotron_10k-expFM_natural-2e+20-d1024-L11-B512
+  - method: dclm_10k
+    budget: 3e+20  # d1024 L11 B512
+    pct_at_purge: 1.4
+    job_id: /michaelryan/10k-natural-interactive/curation-curation-dclm_10k-expFM_natural-3e+20-d1024-L11-B512
+  - method: dclm_10k
+    budget: 9e+19  # d2432 L24 B32
+    pct_at_purge: 1.7
+    job_id: /michaelryan/10k-natural-interactive/curation-curation-dclm_10k-expFM_natural-9e+19-d2432-L24-B32
+  - method: dclm_10k
+    budget: 3e+20  # d2432 L24 B64
+    pct_at_purge: 1.7
+    job_id: /michaelryan/10k-natural-interactive/curation-curation-dclm_10k-expFM_natural-3e+20-d2432-L24-B64
+  - method: dclm_10k
+    budget: 2e+20  # d1536 L16 B128
+    pct_at_purge: 2.0
+    job_id: /michaelryan/10k-natural-interactive/curation-curation-dclm_10k-expFM_natural-2e+20-d1536-L16-B128
+  - method: dclm_10k
+    budget: 9e+19  # d1024 L11 B256
+    pct_at_purge: 3.3
+    job_id: /michaelryan/10k-natural-interactive/curation-curation-dclm_10k-expFM_natural-9e+19-d1024-L11-B256
+  - method: dclm_10k
+    budget: 9e+19  # d512 L6 B512
+    pct_at_purge: 7.0
+    job_id: /michaelryan/10k-natural-interactive/curation-curation-dclm_10k-expFM_natural-9e+19-d512-L6-B512
+  - method: nemotron_10k
+    budget: 3e+19  # d512 L6 B256
+    pct_at_purge: 16.2
+    job_id: /michaelryan/10k-natural-interactive/curation-curation-nemotron_10k-expFM_natural-3e+19-d512-L6-B256
+  - method: dclm_10k
+    budget: 3e+20  # d512 L6 B2048
+    pct_at_purge: 17.0
+    job_id: /michaelryan/10k-natural-interactive/curation-curation-dclm_10k-expFM_natural-3e+20-d512-L6-B2048
+  - method: dclm_10k
+    budget: 3e+19  # d512 L6 B256
+    pct_at_purge: 18.1
+    job_id: /michaelryan/10k-natural-interactive/curation-curation-dclm_10k-expFM_natural-3e+19-d512-L6-B256
+  - method: nemotron_10k
+    budget: 3e+19  # d1024 L11 B64
+    pct_at_purge: 20.7
+    job_id: /michaelryan/10k-natural-interactive/curation-curation-nemotron_10k-expFM_natural-3e+19-d1024-L11-B64
+  - method: nemotron_10k
+    budget: 2e+21  # d2432 L24 B256
+    pct_at_purge: 25.0
+    job_id: /michaelryan/10k-natural-interactive/curation-curation-nemotron_10k-expFM_natural-2e+21-d2432-L24-B256
+  - method: nemotron_10k
+    budget: 3e+19  # d1536 L16 B32
+    pct_at_purge: 26.5
+    job_id: /michaelryan/10k-natural-interactive/curation-curation-nemotron_10k-expFM_natural-3e+19-d1536-L16-B32
+  - method: nemotron_10k
+    budget: 2e+19  # d512 L6 B128
+    pct_at_purge: 29.0
+    job_id: /michaelryan/10k-natural-interactive/curation-curation-nemotron_10k-expFM_natural-2e+19-d512-L6-B128
+  - method: dclm_10k
+    budget: 2e+19  # d512 L6 B128
+    pct_at_purge: 29.1
+    job_id: /michaelryan/10k-natural-interactive/curation-curation-dclm_10k-expFM_natural-2e+19-d512-L6-B128
+  - method: dclm_10k
+    budget: 3e+19  # d1024 L11 B64
+    pct_at_purge: 29.3
+    job_id: /michaelryan/10k-natural-interactive/curation-curation-dclm_10k-expFM_natural-3e+19-d1024-L11-B64
+  - method: nemotron_10k
+    budget: 3e+19  # d2432 L24 B8
+    pct_at_purge: 29.8
+    job_id: /michaelryan/10k-natural-interactive/curation-curation-nemotron_10k-expFM_natural-3e+19-d2432-L24-B8
+  - method: dclm_10k
+    budget: 2e+21  # d3584 L35 B128
+    pct_at_purge: 31.4
+    job_id: /michaelryan/10k-natural-interactive/curation-curation-dclm_10k-expFM_natural-2e+21-d3584-L35-B128
+  - method: dclm_10k
+    budget: 3e+19  # d2432 L24 B8
+    pct_at_purge: 33.8
+    job_id: /michaelryan/10k-natural-interactive/curation-curation-dclm_10k-expFM_natural-3e+19-d2432-L24-B8
+  - method: dclm_10k
+    budget: 3e+19  # d1536 L16 B32
+    pct_at_purge: 34.0
+    job_id: /michaelryan/10k-natural-interactive/curation-curation-dclm_10k-expFM_natural-3e+19-d1536-L16-B32
+  - method: nemotron_10k
+    budget: 9e+20  # d3584 L35 B128
+    pct_at_purge: 35.9
+    job_id: /michaelryan/10k-natural-interactive/curation-curation-nemotron_10k-expFM_natural-9e+20-d3584-L35-B128
+  - method: nemotron_10k
+    budget: 3e+20  # d512 L6 B2048
+    pct_at_purge: 36.9
+    job_id: /michaelryan/10k-natural-interactive/curation-curation-nemotron_10k-expFM_natural-3e+20-d512-L6-B2048
+  - method: dclm_10k
+    budget: 9e+20  # d3584 L35 B128
+    pct_at_purge: 42.7
+    job_id: /michaelryan/10k-natural-interactive/curation-curation-dclm_10k-expFM_natural-9e+20-d3584-L35-B128
+  - method: dclm_10k
+    budget: 2e+19  # d1536 L16 B16
+    pct_at_purge: 43.8
+    job_id: /michaelryan/10k-natural-interactive/curation-curation-dclm_10k-expFM_natural-2e+19-d1536-L16-B16
+  - method: dclm_10k
+    budget: 2e+19  # d1024 L11 B32
+    pct_at_purge: 47.4
+    job_id: /michaelryan/10k-natural-interactive/curation-curation-dclm_10k-expFM_natural-2e+19-d1024-L11-B32
+  - method: dclm_10k
+    budget: 2e+19  # d2432 L24 B8
+    pct_at_purge: 49.4
+    job_id: /michaelryan/10k-natural-interactive/curation-curation-dclm_10k-expFM_natural-2e+19-d2432-L24-B8
+  - method: nemotron_10k
+    budget: 2e+19  # d1536 L16 B16
+    pct_at_purge: 50.2
+    job_id: /michaelryan/10k-natural-interactive/curation-curation-nemotron_10k-expFM_natural-2e+19-d1536-L16-B16
+  - method: nemotron_10k
+    budget: 2e+19  # d1024 L11 B32
+    pct_at_purge: 51.0
+    job_id: /michaelryan/10k-natural-interactive/curation-curation-nemotron_10k-expFM_natural-2e+19-d1024-L11-B32
+  - method: nemotron_10k
+    budget: 2e+19  # d2432 L24 B8
+    pct_at_purge: 56.5
+    job_id: /michaelryan/10k-natural-interactive/curation-curation-nemotron_10k-expFM_natural-2e+19-d2432-L24-B8
+  - method: nemotron_10k
+    budget: 9e+18  # d512 L6 B64
+    pct_at_purge: 67.9
+    job_id: /michaelryan/10k-natural-interactive/curation-curation-nemotron_10k-expFM_natural-9e+18-d512-L6-B64
+  - method: nemotron_full_random_3000
+    budget: 9e+19  # d1536 L16 B64
+    pct_at_purge: 70.3
+    job_id: /michaelryan/curation-fm-random3k-dclm-nem/curation-curation-nemotron_full_random_3000-expFM_natural-9e+19-d1536-L16-B64
+  - method: nemotron_10k
+    budget: 3e+20  # d1024 L11 B512
+    pct_at_purge: 76.8
+    job_id: /michaelryan/10k-natural-interactive/curation-curation-nemotron_10k-expFM_natural-3e+20-d1024-L11-B512

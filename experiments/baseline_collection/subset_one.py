@@ -35,14 +35,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import fsspec
-from fray.v2.types import ResourceConfig
+from fray import ResourceConfig
+from levanter.data.text import TextLmDatasetFormat
+from marin.processing.tokenize.tokenize import TokenizeConfig, tokenize
 from rigging.filesystem import marin_prefix
 from zephyr import Dataset, ZephyrContext
 from zephyr.execution import zephyr_worker_ctx
-
-from levanter.data.text import TextLmDatasetFormat
-
-from marin.processing.tokenize.tokenize import TokenizeConfig, tokenize
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +53,13 @@ logger = logging.getLogger(__name__)
 DCLM_FILTERED_SUFFIX = "filtered/baseline_dclm_resharded-1ac313"
 FINEWEB_EDU_FILTERED_SUFFIX = "filtered/baseline_fineweb_edu-72c2c7"
 NEMOTRON_FULL_FILTERED_SUFFIX = "filtered/baseline_nemotron_full-347dfe"
+# Nemotron-CC-HQ — quality=high subset of nemotron_full. Filter logic in
+# experiments/baseline_collection/filter_nemotron_quality.py preserves the
+# `url` field that subset_one filters on. Currently only exists on
+# us-central1; not mirrored.
+NEMOTRON_QHIGH_FILTERED_SUFFIX = "filtered/baseline_nemotron_qhigh-v1"
 LLM_CURATED_DOCUMENTS_SUFFIX = "documents/baseline_llm_curated-050243"
+LLM_CURATED_DCLM_FILTERED_DEDUPED_SUFFIX = "deduped/bff_llm_curated_dclm_filtered_v1"
 WARC_HTML_DOWNLOAD_SUFFIX = "raw/commoncrawl/baseline_3000-265ff5"
 
 # Canonical metadata: us-central2 primary, mirrored to us-central1. Either
@@ -99,6 +103,19 @@ METHOD_SPEC: dict[str, dict] = {
         "filter_name": "baseline_nemotron_full_bos_fixed",
         "tokenize_name": "baseline_nemotron_full_bos_fixed",
     },
+    # Nemotron-CC-HQ (quality=high only, both kind=actual + kind=synthetic).
+    # Same filter mode/keys as nemotron_full since the qhigh JSONL is a
+    # row-subset of the nemotron_full filtered output and preserves the `url`
+    # field.
+    "nemotron_qhigh": {
+        "region": "us-central1",
+        "source_suffix": NEMOTRON_QHIGH_FILTERED_SUFFIX,
+        "source_pattern": "*.jsonl.gz",
+        "mode": "metadata_url",
+        "use_metadata": True,
+        "filter_name": "baseline_nemotron_qhigh",
+        "tokenize_name": "baseline_nemotron_qhigh",
+    },
     "llm_curated": {
         "region": "us-central1",
         "source_suffix": LLM_CURATED_DOCUMENTS_SUFFIX,
@@ -107,6 +124,15 @@ METHOD_SPEC: dict[str, dict] = {
         "use_metadata": False,
         "filter_name": "baseline_llm_curated_bos_fixed",
         "tokenize_name": "baseline_llm_curated_bos_fixed",
+    },
+    "llm_curated_dclm_filtered": {
+        "region": "us-central1",
+        "source_suffix": LLM_CURATED_DCLM_FILTERED_DEDUPED_SUFFIX,
+        "source_pattern": "data-*.jsonl.gz",
+        "mode": "manifest_warc_file",
+        "use_metadata": False,
+        "filter_name": "baseline_llm_curated_dclm_filtered",
+        "tokenize_name": "baseline_llm_curated_dclm_filtered",
     },
     # Resiliparse needs re-extraction from HTML — its existing extracted output
     # only carries (text, url) and URLs can collide across snapshots within the

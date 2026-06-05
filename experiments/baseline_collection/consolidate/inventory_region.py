@@ -57,9 +57,29 @@ REGION_TO_BUCKET: dict[str, str] = {
     "eu-west4": "marin-eu-west4",
 }
 
-SOURCE_SUBDIR = "documents/baseline_llm_extraction"
+SOURCE_SUBDIR_ROOT = "documents/baseline_llm_extraction"
 CONSOLIDATED_SUBDIR = "documents/baseline_llm_extraction_consolidated"
 DEST_BUCKET = "marin-us-central1"
+
+# Legacy spec stays at the unprefixed source path and writes inventory_{region}.jsonl.gz
+# (no spec suffix), preserving the 2026-04 consolidation outputs that the rest of
+# the pipeline already depends on.
+LEGACY_SPEC = "low_quality"
+
+
+def _source_subdir(spec: str) -> str:
+    """Path under the regional bucket where this spec's extraction lives."""
+    if spec == LEGACY_SPEC:
+        return SOURCE_SUBDIR_ROOT
+    return f"{SOURCE_SUBDIR_ROOT}/{spec}"
+
+
+def _inventory_filename(region: str, spec: str) -> str:
+    """Canonical inventory filename for (region, spec)."""
+    if spec == LEGACY_SPEC:
+        return f"inventory_{region}.jsonl.gz"
+    return f"inventory_{region}_{spec}.jsonl.gz"
+
 
 _BATCH_RE = re.compile(r"data-([0-9a-f]+)/batch_(\d+)\.jsonl\.gz$")
 _COUNT_RE = re.compile(r"data-([0-9a-f]+)/batch_(\d+)\.count$")
@@ -68,8 +88,8 @@ _DONE_RE = re.compile(r"data-([0-9a-f]+)/_done$")
 _CLAIMED_RE = re.compile(r"data-([0-9a-f]+)/_claimed$")
 
 
-def _list_all_paths_with_meta(bucket: str) -> dict[str, dict]:
-    """Recursive list of every file under ``SOURCE_SUBDIR`` with size + mtime.
+def _list_all_paths_with_meta(bucket: str, source_subdir: str) -> dict[str, dict]:
+    """Recursive list of every file under ``source_subdir`` with size + mtime.
 
     Uses ``fs.find(..., detail=True)`` for a single paginated listing call —
     vastly cheaper than N per-file ``fs.info()`` round-trips (which would be
@@ -78,7 +98,7 @@ def _list_all_paths_with_meta(bucket: str) -> dict[str, dict]:
     Returns a dict keyed by ``gs://`` URI with ``{"size", "mtime"}`` values.
     """
     fs = fsspec.filesystem("gcs")
-    prefix = f"{bucket}/{SOURCE_SUBDIR}"
+    prefix = f"{bucket}/{source_subdir}"
     raw = fs.find(prefix, detail=True)  # dict: bare_path -> info
     out: dict[str, dict] = {}
     for bare_path, info in raw.items():
@@ -177,16 +197,30 @@ def _build_batch_row(
     }
 
 
-def inventory_region(region: str, max_workers: int, output_path: str | None = None) -> str:
-    """Inventory a region. Returns the output gs:// path."""
+def inventory_region(
+    region: str,
+    max_workers: int,
+    spec: str = LEGACY_SPEC,
+    output_path: str | None = None,
+) -> str:
+    """Inventory a region for a given spec. Returns the output gs:// path."""
     if region not in REGION_TO_BUCKET:
         raise ValueError(f"Unknown region {region!r}; expected one of {sorted(REGION_TO_BUCKET)}")
     bucket = REGION_TO_BUCKET[region]
-    logger.info("Inventorying region=%s bucket=%s", region, bucket)
+    source_subdir = _source_subdir(spec)
+    logger.info("Inventorying region=%s bucket=%s spec=%s prefix=%s", region, bucket, spec, source_subdir)
 
     t0 = time.monotonic()
-    meta = _list_all_paths_with_meta(bucket)
+    meta = _list_all_paths_with_meta(bucket, source_subdir)
     logger.info("Listed %d files (with size+mtime) in %.1fs", len(meta), time.monotonic() - t0)
+
+    # For legacy spec, the listing prefix matches ALL specs (since they live under
+    # documents/baseline_llm_extraction/{spec}/...). Drop paths that have a spec
+    # subdir between the root and data-{h}/.
+    if spec == LEGACY_SPEC:
+        spec_path_re = re.compile(rf"{re.escape(SOURCE_SUBDIR_ROOT)}/[a-z0-9_]+/data-[0-9a-f]+/")
+        meta = {p: m for p, m in meta.items() if not spec_path_re.search(p)}
+        logger.info("After legacy-spec filtering (excluding spec subdirs): %d files", len(meta))
 
     batches: dict[tuple[str, int], str] = {}
     counts: dict[tuple[str, int], str] = {}
@@ -273,7 +307,9 @@ def inventory_region(region: str, max_workers: int, output_path: str | None = No
             }
         )
 
-    out_path = output_path or (f"gs://{DEST_BUCKET}/{CONSOLIDATED_SUBDIR}/inventories/inventory_{region}.jsonl.gz")
+    out_path = output_path or (
+        f"gs://{DEST_BUCKET}/{CONSOLIDATED_SUBDIR}/inventories/{_inventory_filename(region, spec)}"
+    )
     logger.info("Writing %d rows to %s", len(rows), out_path)
     with fsspec.open(out_path, "wb") as f, gzip.open(f, "wt", encoding="utf-8") as gz:
         for r in rows:
@@ -286,6 +322,16 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
     parser = argparse.ArgumentParser()
     parser.add_argument("--region", required=True, choices=sorted(REGION_TO_BUCKET.keys()))
+    parser.add_argument(
+        "--spec",
+        default=LEGACY_SPEC,
+        help=(
+            "Extraction spec to inventory. Legacy 'low_quality' lives at the unprefixed "
+            "documents/baseline_llm_extraction/ path and writes inventory_{region}.jsonl.gz. "
+            "Other specs live under documents/baseline_llm_extraction/{spec}/ and write "
+            "inventory_{region}_{spec}.jsonl.gz."
+        ),
+    )
     parser.add_argument("--max-workers", type=int, default=64)
     parser.add_argument(
         "--output-path",
@@ -293,7 +339,12 @@ def main() -> None:
         help="Override destination path. Default: us-central1 consolidated/inventories/.",
     )
     args = parser.parse_args()
-    inventory_region(args.region, max_workers=args.max_workers, output_path=args.output_path)
+    inventory_region(
+        args.region,
+        max_workers=args.max_workers,
+        spec=args.spec,
+        output_path=args.output_path,
+    )
 
 
 if __name__ == "__main__":
