@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Dict, Optional, Type, cast
 
 import equinox as eqx
+import jax.numpy as jnp
 import jax.random as jrandom
 
 import haliax as hax
@@ -394,3 +395,115 @@ class Qwen3LMHeadModel(LlamaLMHeadModel):
         else:
             lm_head = hnn.Linear.init(In=config.Embed, Out=Vocab, key=k_emb, use_bias=False, out_first=True)
         return Qwen3LMHeadModel(transformer, embeddings, lm_head)
+
+
+# ============================================
+# Qwen-3 Sequence Classification (discriminative)
+# ============================================
+
+
+class Qwen3ForSequenceClassification(eqx.Module):
+    """Qwen3 decoder + linear classification head over the last real token.
+
+    The causal analogue of ``ModernBertForSequenceClassification``: where ModernBERT pools the
+    bidirectional CLS token (position 0), this pools the **last non-pad position**, which under a
+    causal mask has attended to the entire sequence. That position is intended to be the generative
+    "decision point" (the token right after ``[[ ## text ## ]]\\n[``), so its hidden state encodes
+    whether the model would continue with content or the abstention marker.
+
+    The head can be warm-started (see ``from_lm_head_model``) so that, at initialization, the
+    discard-class logit equals the backbone's own unembedding projection for the decision token —
+    e.g. the ``NO`` of ``[NO_USEFUL_CONTENT]``.
+    """
+
+    lm: Qwen3LMHeadModel
+    classifier: hnn.Linear
+    Label: Axis = eqx.field(static=True)
+
+    @property
+    def config(self) -> Qwen3Config:
+        return self.lm.config
+
+    @property
+    def Vocab(self) -> Axis:
+        return self.lm.Vocab
+
+    @classmethod
+    def init(cls, Vocab: Axis, config: Qwen3Config, Label: Axis, *, key) -> "Qwen3ForSequenceClassification":
+        k_lm, k_cls = jrandom.split(key, 2)
+        lm = Qwen3LMHeadModel.init(Vocab, config, key=k_lm)
+        classifier = hnn.Linear.init(In=config.Embed, Out=Label, key=k_cls, use_bias=True, out_first=True)
+        return cls(lm, classifier, Label)
+
+    def _pool(self, hidden: NamedArray, attn_mask: AttentionMask | NamedArray | None) -> NamedArray:
+        """Gather the hidden state at the last non-pad position of each sequence.
+
+        Uses the query segment ids on the mask (real = 0, pad = -1) to find the last valid index,
+        then selects it with a one-hot contraction over ``position`` (static XLA shapes, batched).
+        """
+        if not (isinstance(attn_mask, AttentionMask) and attn_mask.segment_ids is not None):
+            raise ValueError("Qwen3ForSequenceClassification requires an AttentionMask with segment_ids to locate pad")
+        q_seg = attn_mask.segment_ids[0]  # {Pos} or {Batch, Pos}
+        valid = (q_seg >= 0).astype(jnp.int32)
+        last = valid.sum("position") - 1  # {} or {Batch}
+        Pos = hidden.resolve_axis("position")
+        onehot = hax.nn.one_hot(last, Pos, dtype=hidden.dtype)  # {..., Pos}
+        return hax.dot(hidden, onehot, axis="position")  # {..., Embed}
+
+    @named_call
+    def __call__(
+        self,
+        input_ids: NamedArray,
+        attn_mask: AttentionMask | NamedArray | None = None,
+        *,
+        key=None,
+        pos_ids: NamedArray | None = None,
+    ) -> NamedArray:
+        hidden = self.lm.activations(input_ids, attn_mask, key=key, pos_ids=pos_ids)
+        pooled = self._pool(hidden, attn_mask)
+        return self.classifier(pooled)
+
+    def compute_loss(
+        self,
+        example,
+        *,
+        key=None,
+        reduction: Optional[hax.ReductionFunction] = hax.mean,
+        reduction_axis: Optional[hax.AxisSelection] = None,
+    ) -> NamedArray:
+        logits = self(example.tokens, example.attn_mask, key=key).astype(jnp.float32)
+        target = hax.nn.one_hot(example.label, self.Label, dtype=logits.dtype)
+        return hax.nn.cross_entropy_loss(logits, self.Label, target, reduction, reduction_axis=reduction_axis)
+
+    def resize_vocab(self, new_size: int, key=None) -> "Qwen3ForSequenceClassification":
+        return dataclasses.replace(self, lm=self.lm.resize_vocab(new_size, key=key))
+
+    @staticmethod
+    def from_lm_head_model(
+        lm: Qwen3LMHeadModel,
+        config: Qwen3Config,
+        Label: Axis,
+        decision_token_id: int,
+        *,
+        key,
+        warm_head: bool = True,
+    ) -> "Qwen3ForSequenceClassification":
+        """Wrap a pretrained Qwen3 LM in a classifier.
+
+        With ``warm_head``, the label-0 (discard) row of the classifier is initialized to the
+        backbone's unembedding row for ``decision_token_id`` (e.g. the ``NO`` token), and the
+        label-1 (keep) row to zero. Because Qwen3-0.6B ties embeddings, that unembedding row is just
+        the token embedding, so the discard-logit at init equals the backbone's logit for emitting
+        ``decision_token_id`` at the pooled position. Otherwise the head is random.
+        """
+        classifier = hnn.Linear.init(In=config.Embed, Out=Label, key=key, use_bias=True, out_first=True)
+        if warm_head:
+            emb = lm.embeddings.token_embeddings.weight  # {Vocab, Embed}
+            decision_vec = emb[lm.Vocab.name, decision_token_id]  # {Embed}
+            rows = hax.stack(Label.name, [decision_vec, hax.zeros_like(decision_vec)])  # {Label, Embed}
+            classifier = dataclasses.replace(
+                classifier,
+                weight=rows.astype(classifier.weight.dtype),
+                bias=hax.zeros(Label, dtype=classifier.bias.dtype) if classifier.bias is not None else None,
+            )
+        return Qwen3ForSequenceClassification(lm, classifier, Label)

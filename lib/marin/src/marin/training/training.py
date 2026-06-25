@@ -80,8 +80,24 @@ class TrainDpoOnPodConfig:
     """
 
 
+@dataclass(frozen=True)
+class TrainClassifierOnPodConfig:
+    """Configuration for sequence-classification training on a pod."""
+
+    train_config: object
+    resources: ResourceConfig
+    output_path: str | None = None
+    """Base output directory to be used for training, mainly for use with executor framework."""
+    impute_run_id_from_output_path: bool = True
+    """If true and out_path is not None, the run id is set to the basename of out_path plus a random string."""
+    env_vars: dict[str, str] | None = None
+    """Environment variables to pass to the training task (e.g., WANDB_MODE, WANDB_API_KEY)."""
+    auto_build_caches: bool = False
+    """No-op for classification (no cache), kept for parity with the LM/DPO configs."""
+
+
 TrainConfigT = TypeVar("TrainConfigT")
-TrainOnPodConfigT = TypeVar("TrainOnPodConfigT", TrainLmOnPodConfig, TrainDpoOnPodConfig)
+TrainOnPodConfigT = TypeVar("TrainOnPodConfigT", TrainLmOnPodConfig, TrainDpoOnPodConfig, TrainClassifierOnPodConfig)
 
 DEFAULT_CHECKPOINTS_PATH = "checkpoints"
 DEFAULT_HF_CHECKPOINTS_PATH = "hf"
@@ -346,6 +362,41 @@ def run_levanter_train_dpo(config: TrainDpoOnPodConfig):
     _submit_training_job(
         job_name="train_dpo",
         main_fn=importlib.import_module("levanter.main.train_dpo").main,
+        train_config=train_config,
+        resources=config.resources,
+        env=env,
+        extras=extras,
+    )
+
+
+def run_levanter_train_classifier(config: TrainClassifierOnPodConfig):
+    """Run the Levanter sequence-classification training main through Fray.
+
+    Designed to run on your machine or with sufficient variables in the env dict/os env.
+    """
+    config, train_config, env, extras = _prepare_training_run(config)
+
+    _submit_training_job(
+        job_name="train_classifier",
+        main_fn=importlib.import_module("levanter.main.train_classifier").main,
+        train_config=train_config,
+        resources=config.resources,
+        env=env,
+        extras=extras,
+    )
+
+
+def run_levanter_train_decoder_classifier(config: TrainClassifierOnPodConfig):
+    """Run the Levanter *decoder* (Qwen3) sequence-classification training main through Fray.
+
+    Same machinery as ``run_levanter_train_classifier`` (and the generic ``TrainClassifierOnPodConfig``);
+    only the Levanter entrypoint differs (a causal decoder classifier instead of ModernBERT).
+    """
+    config, train_config, env, extras = _prepare_training_run(config)
+
+    _submit_training_job(
+        job_name="train_decoder_classifier",
+        main_fn=importlib.import_module("levanter.main.train_decoder_classifier").main,
         train_config=train_config,
         resources=config.resources,
         env=env,
