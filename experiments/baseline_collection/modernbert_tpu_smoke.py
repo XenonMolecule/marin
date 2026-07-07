@@ -119,6 +119,29 @@ def read_fasttext_sharded(
     return texts, labels
 
 
+def read_presharded(prefix: str, rank: int) -> tuple[list[str], list[int]]:
+    """Rank r reads its own pre-materialized shard ``{prefix}_{rank:02d}.txt.gz`` in full.
+
+    At 1M+ rows the striding reader has every rank re-stream the whole train prefix
+    (~5 GB ×world, and again on every preemption/resume) — the scaling bottleneck.
+    Pre-sharding (see preshard_train.py) round-robins the same rows into per-rank
+    files up front, so each rank reads only its ~1/world slice and resume is cheap.
+    """
+    path = f"{prefix}_{rank:02d}.txt.gz"
+    texts, labels = [], []
+    with fsspec.open(path, "rt", compression="gzip", encoding="utf-8") as f:
+        for line in f:
+            line = line.rstrip("\n")
+            if not line:
+                continue
+            label, _, text = line.partition(" ")
+            if not text:
+                continue
+            labels.append(1 if label == LABEL_USEFUL else 0)
+            texts.append(text)
+    return texts, labels
+
+
 def encode(tokenizer, texts: list[str], max_length: int) -> dict[str, torch.Tensor]:
     # Fixed-length padding -> static shapes -> XLA compiles once.
     return tokenizer(
@@ -162,20 +185,26 @@ def pr_sweep(probs: list[float], truth: list[int]) -> list[dict]:
     return rows
 
 
-CKPT_EVERY_OPT_STEPS = 300  # checkpoint cadence — bounds progress lost to a preemption
+CKPT_EVERY_OPT_STEPS = 5  # every 5 opt-steps — banks fast enough for ~20min preempt windows, less GCS-write hang exposure than 2
 
 
 def save_checkpoint(ckpt_dir: str, model, scheduler, epoch: int, micro_done: int, is_main: bool) -> None:
     """Save model + LR schedule + position to GCS so a preempted run resumes. Optimizer state is
     NOT saved (fresh AdamW on resume) — losing Adam momentum is a minor cost vs the complexity of
     round-tripping XLA optimizer tensors. xm.save has a rendezvous so ALL ranks must call it."""
-    state = {"model": model.state_dict(), "sched": scheduler.state_dict(), "epoch": epoch, "micro_done": micro_done}
-    local = "/app/_ckpt.pt"
-    xm.save(state, local)  # all ranks rendezvous; master writes CPU tensors
-    if is_main:
-        with open(local, "rb") as src, fsspec.open(f"{ckpt_dir}/latest.pt", "wb") as dst:
-            dst.write(src.read())
-    xm.rendezvous("ckpt_saved")
+    # Rank-0-ONLY save (no cross-rank rendezvous). DP replicas are identical after each all-reduce, so
+    # rank 0's weights are authoritative; the other ranks return immediately and re-sync at the next
+    # optimizer all-reduce. This removes the rendezvous deadlock where a slow/stuck GCS write on rank 0
+    # hangs the whole gang — the failure mode that froze checkpoints (e.g. on v6e).
+    if not is_main:
+        return
+    print(f"[mb r0] [ckptsave] state_dict -> CPU (micro {micro_done})...", flush=True)
+    cpu_model = {k: v.detach().to("cpu") for k, v in model.state_dict().items()}
+    state = {"model": cpu_model, "sched": scheduler.state_dict(), "epoch": epoch, "micro_done": micro_done}
+    print("[mb r0] [ckptsave] writing to GCS...", flush=True)
+    with fsspec.open(f"{ckpt_dir}/latest.pt", "wb") as f:
+        torch.save(state, f)
+    print("[mb r0] [ckptsave] DONE", flush=True)
 
 
 def load_checkpoint(ckpt_dir: str):
@@ -209,6 +238,26 @@ def _mp_fn(index) -> None:
     ap.add_argument("--out", default="", help="GCS path to save a durable result JSON (config + F1 + sweep + preds).")
     ap.add_argument("--balance", action="store_true", help="Train on a 1:1 balanced set (vs the natural ~12:1).")
     ap.add_argument("--ckpt", default="", help="GCS dir for checkpoint/resume (survives preemption).")
+    ap.add_argument(
+        "--train-presharded",
+        default="",
+        help="Prefix of per-rank pre-sharded train files ({prefix}_NN.txt.gz). Rank r reads only its "
+        "shard — avoids the 1M-scale full-prefix re-read. Must be pre-sharded for exactly `world` ranks.",
+    )
+    ap.add_argument(
+        "--resume-skip-micro",
+        type=int,
+        default=0,
+        help="On resume, fast-forward the data iterator this many extra micro-batches past the checkpoint "
+        "position. Steps over a poison batch that deterministically hangs the forward pass (weights stay "
+        "at the checkpoint; only the skipped examples go untrained).",
+    )
+    ap.add_argument(
+        "--eval-only",
+        action="store_true",
+        help="Skip training entirely; load --ckpt and run only the held-out eval + write --out. "
+        "Used to recover the eval when the final training steps flakily hang on TPU.",
+    )
     args = ap.parse_args()
     rank, world = xr.global_ordinal(), xr.world_size()
     is_main = rank == 0
@@ -230,9 +279,31 @@ def _mp_fn(index) -> None:
         # ("module 'torch' has no attribute 'xla'"); non-reentrant is the modern, XLA-safe path.
         model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
         log("gradient checkpointing enabled (use_reentrant=False)")
-    xm.broadcast_master_param(model)  # all replicas start identical (incl. the random classifier head)
 
-    tr_text, tr_y = read_fasttext_sharded(args.train, args.train_rows, rank, world, balance=args.balance)
+    # Resume: load checkpoint MODEL weights BEFORE the broadcast, so the resume path is byte-identical
+    # to a fresh start (weights -> single broadcast -> first forward). Loading AFTER the broadcast (the
+    # old order) left a tangled lazy graph that hung the world16 forward first-compile. Scheduler state
+    # is restored later, once the scheduler is constructed.
+    # RANK-0-ONLY checkpoint read: 4 ranks reading the ~600MB file simultaneously deadlocks (same
+    # multi-rank contention that hung the save). Rank 0 loads the weights; broadcast_master_param
+    # distributes them; the resume position is all-reduced to every rank.
+    resume_ck = load_checkpoint(args.ckpt) if (args.ckpt and is_main) else None
+    start_epoch, start_micro = 0, 0
+    if resume_ck is not None:
+        model.load_state_dict(resume_ck["model"])
+        start_epoch, start_micro = resume_ck["epoch"], resume_ck["micro_done"]
+        log(f"RESUMED model weights (rank 0): epoch={start_epoch} micro_done={start_micro}")
+    xm.broadcast_master_param(model)  # rank 0's loaded-or-fresh weights -> all replicas
+    # All-reduce the resume position from rank 0 (other ranks contribute 0) so every rank fast-forwards equally.
+    pos = torch.tensor([start_epoch, start_micro], dtype=torch.int64, device=device)
+    pos = xm.all_reduce(xm.REDUCE_SUM, pos)
+    xm.mark_step()
+    start_epoch, start_micro = int(pos[0].item()), int(pos[1].item())
+
+    if args.train_presharded:
+        tr_text, tr_y = read_presharded(args.train_presharded, rank)
+    else:
+        tr_text, tr_y = read_fasttext_sharded(args.train, args.train_rows, rank, world, balance=args.balance)
     te_text, te_y = read_test(args.test, args.test_rows) if is_main else ([], [])
     log(
         f"per-rank train={len(tr_y)} (useful={sum(tr_y)}); global~{len(tr_y) * world}; test={len(te_y)} (useful={sum(te_y)})"
@@ -250,43 +321,55 @@ def _mp_fn(index) -> None:
     opt_steps_total = max(1, args.epochs * (micro_per_epoch // accum))
     scheduler = get_linear_schedule_with_warmup(opt, args.warmup_steps, opt_steps_total)
 
-    # Resume from a checkpoint if one exists (preemption recovery). Each rank loads the same GCS
-    # checkpoint, so all replicas stay identical.
-    start_epoch, start_micro = 0, 0
-    if args.ckpt:
-        ck = load_checkpoint(args.ckpt)
-        if ck is not None:
-            model.load_state_dict(ck["model"])
-            scheduler.load_state_dict(ck["sched"])
-            start_epoch, start_micro = ck["epoch"], ck["micro_done"]
-            log(f"RESUMED from checkpoint: epoch={start_epoch} micro_done={start_micro}")
+    # Restore the LR-schedule position on ALL ranks deterministically: the schedule is a pure function of
+    # opt-step count, so re-stepping matches the saved state without broadcasting scheduler internals — and
+    # keeps lr identical across ranks (each rank applies its own optimizer step, so divergent lr would split
+    # the replicas). resume_ck (rank 0 only) is no longer needed for this.
+    for _ in range(start_micro // accum):
+        scheduler.step()
     model.train()
     log(
         f"training — lr={args.lr} eff_batch={args.batch_size * accum * world} "
         f"(bs={args.batch_size}*accum={accum}*world={world}) warmup={args.warmup_steps}/{opt_steps_total}; FIRST compiles ..."
     )
     opt_step_count = 0
-    for epoch in range(start_epoch, args.epochs):
+    did_first = False  # granular logging on the first COMPUTED step (pinpoints world16 resume hang)
+    for epoch in ([] if args.eval_only else range(start_epoch, args.epochs)):
         t0 = time.time()
         torch.manual_seed(1000 + epoch)  # deterministic per-epoch shuffle so resume is reproducible
         perm = torch.randperm(n)
         total_loss, steps = 0.0, 0
         opt.zero_grad()
         for i in range(0, n, args.batch_size):
-            # Fast-forward past already-completed micro-batches when resuming mid-epoch.
-            if epoch == start_epoch and steps < start_micro:
+            # Fast-forward past already-completed micro-batches when resuming mid-epoch. The extra
+            # resume_skip_micro steps over a deterministic poison batch that hangs the forward pass.
+            if epoch == start_epoch and steps < start_micro + args.resume_skip_micro:
                 steps += 1
                 continue
+            dbg = not did_first
+            if dbg:
+                log(f"[firststep] fast-forward done at steps={steps}; encoding...")
             idx = perm[i : i + args.batch_size]
             enc = encode(tokenizer, [tr_text[j] for j in idx.tolist()], args.max_length)
             ids = enc["input_ids"].to(device)
             mask = enc["attention_mask"].to(device)
             labels = tr_labels[idx].to(device)
+            if dbg:
+                log("[firststep] encoded + moved to device; forward (FIRST COMPILE)...")
             with torch.autocast(device_type="xla", dtype=torch.bfloat16, enabled=args.bf16):
                 out = model(input_ids=ids, attention_mask=mask, labels=labels)
+            if dbg:
+                log("[firststep] forward done; backward...")
             (out.loss / accum).backward()  # scale so accumulated grad = mean over the effective batch
+            if dbg:
+                log("[firststep] backward done; mark_step...")
             xm.mark_step()
+            if dbg:
+                log("[firststep] mark_step done; loss.item() (device sync)...")
             lv = out.loss.item()
+            if dbg:
+                log("[firststep] DONE — first computed step fully executed")
+                did_first = True
             total_loss += lv
             steps += 1
             if steps % accum == 0:  # one optimizer step per `accum` micro-batches

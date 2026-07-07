@@ -44,6 +44,25 @@ V4_SPEC = TpuSpec(
     core_options=(8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096),
 )
 
+# v5e (v5litepod) and v6e (Trillium) are single-core-per-chip parts named by chip
+# count (e.g. "v6e-128" == 128 chips), unlike v5p/v4 which are named by core count
+# (2 cores/chip). Both top out at a 256-chip single-slice topology. v5e has only
+# 16 GiB/chip -- half of v4/v6e -- so the same model+batch needs proportionally
+# more chips (or a smaller batch) to fit.
+V5E_SPEC = TpuSpec(
+    prefix="v5e",
+    hbm_per_chip_gib=16,
+    cores_per_chip=1,
+    core_options=(1, 4, 8, 16, 32, 64, 128, 256),
+)
+
+V6E_SPEC = TpuSpec(
+    prefix="v6e",
+    hbm_per_chip_gib=32,
+    cores_per_chip=1,
+    core_options=(1, 4, 8, 16, 32, 64, 128, 256),
+)
+
 
 def pick_tpu_type(estimated_memory_bytes: int, spec: TpuSpec) -> str:
     """Select the smallest TPU slice that fits the estimated memory.
@@ -77,3 +96,13 @@ def pick_v5p_type(estimated_memory_bytes: int) -> str:
 def pick_v4_type(estimated_memory_bytes: int) -> str:
     """Select the smallest TPU v4 slice that fits the estimated memory."""
     return pick_tpu_type(estimated_memory_bytes, V4_SPEC)
+
+
+def pick_v5e_type(estimated_memory_bytes: int) -> str:
+    """Select the smallest TPU v5e slice that fits the estimated memory."""
+    return pick_tpu_type(estimated_memory_bytes, V5E_SPEC)
+
+
+def pick_v6e_type(estimated_memory_bytes: int) -> str:
+    """Select the smallest TPU v6e slice that fits the estimated memory."""
+    return pick_tpu_type(estimated_memory_bytes, V6E_SPEC)

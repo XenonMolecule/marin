@@ -309,7 +309,10 @@ def extract_text_fast(config: ExtractTextConfig) -> None:
         .filter(_is_non_empty)
         .write_jsonl(f"{config.output_path}/data-{{shard:05d}}-of-{{total:05d}}.jsonl.gz", skip_existing=True)
     )
-    ctx = ZephyrContext(name="extract-text-resiliparse", max_workers=500)
+    # 32 GB/worker: the zephyr default (1 GB) OOM-kills the per-shard subprocess on
+    # the largest WARCs (resiliparse holds a whole WARC's HTML in memory). Does not
+    # affect the executor step version (body is not hashed), so re-runs reuse output.
+    ctx = ZephyrContext(name="extract-text-resiliparse", max_workers=500, resources=ResourceConfig(cpu=4, ram="32g"))
     ctx.put("config", config)
     ctx.execute(pipeline)
 

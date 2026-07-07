@@ -1,7 +1,11 @@
 # Copyright The Marin Authors
 # SPDX-License-Identifier: Apache-2.0
 
-"""Dedupe the llm_curated extraction (us-central1) and produce stats + final dataset.
+"""DEPRECATED — do not use. Depends on the deleted ``dedup_fuzzy_document`` API and will not
+run. Use ``dedup_resiliparse_warc_scaling.py`` (general flat-shard driver) or the canonical
+``dedup_extracted.py``, which call the current lib/marin dedup primitives.
+
+Dedupe the llm_curated extraction (us-central1) and produce stats + final dataset.
 
 Same pipeline as ``dedup_resiliparse.py``; key differences:
   - region: us-central1

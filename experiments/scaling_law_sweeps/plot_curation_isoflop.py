@@ -45,6 +45,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+from collections import defaultdict
 from pathlib import Path
 
 import fsspec
@@ -68,6 +69,54 @@ EXPERIMENT_TAG_LABELS: dict[str, str] = {
 
 def _label_for_tag(tag: str) -> str:
     return EXPERIMENT_TAG_LABELS.get(tag, tag)
+
+
+def _budget_key(budget_flops: float) -> int:
+    """Stable integer FLOPs key (units of 1e18), robust to JSON float round-trips."""
+    return round(budget_flops / 1e18)
+
+
+# Per-method batch selection at the d512/1.8e19 (157M) cell, which exists at both B64
+# and B128 (same budget/tokens/epochs, different optimization). We DROP the non-chosen
+# batch so each method contributes one point:
+#   - shallow methods (dclm / high_quality / fineweb_cc / resiliparse): keep B64 -- the
+#     smaller batch fixes the off-trend optimization artifact the natural B128 point had
+#     (B128 sat at/above its 9e18 neighbor for high_quality/fineweb_cc).
+#   - deep-epoch methods (nemotron, fineweb_edu): keep B128 -- in the overtrained regime
+#     the larger batch is the better / more-stable point (B64 overfits slightly more).
+# Keyed by (method_name, hidden_dim, budget//1e18, batch_size) -> DROP.
+SUPERSEDED_CELLS: set[tuple[str, int, int, int]] = {
+    ("dclm_10k", 512, 18, 128),
+    ("high_quality_10k", 512, 18, 128),
+    ("fineweb_cc_10k", 512, 18, 128),
+    ("resiliparse_10k", 512, 18, 128),
+    ("nemotron_10k", 512, 18, 64),
+    ("fineweb_edu_10k", 512, 18, 64),
+}
+
+
+def _apply_result_overrides(summaries: list[dict]) -> list[dict]:
+    """Drop summaries for cells listed in SUPERSEDED_CELLS (no-op for everything else).
+
+    Plot consumers key cells by (method, hidden, budget) and never read batch, so a
+    superseded cell and its replacement would otherwise both plot as points. Removing
+    the superseded summary leaves only the replacement.
+    """
+    kept: list[dict] = []
+    for s in summaries:
+        plan = s.get("plan", {})
+        budget = plan.get("budget_flops")
+        key = (
+            plan.get("method_name"),
+            plan.get("hidden_dim"),
+            _budget_key(budget) if budget is not None else None,
+            plan.get("batch_size"),
+        )
+        if key in SUPERSEDED_CELLS:
+            logger.info("Dropping superseded cell %s (run=%s)", key, plan.get("run_name"))
+            continue
+        kept.append(s)
+    return kept
 
 
 def load_summaries(
@@ -111,6 +160,7 @@ def load_summaries(
                 summaries.append(json.loads(fpath.read_text()))
             except Exception as e:
                 logger.warning("Failed to read %s: %s", fpath, e)
+    summaries = _apply_result_overrides(summaries)
     logger.info("Loaded %d summaries for methods=%s suffix=%s", len(summaries), methods, suffix)
     return summaries
 
@@ -238,8 +288,6 @@ def detect_outlier_runs(
 
     Returns the set of `plan.run_name` values to exclude.
     """
-    from collections import defaultdict
-
     import numpy as np
 
     if abs_floor is None:
@@ -447,7 +495,11 @@ COMPARE_COLORS = {
     # nemotron_full: was green #2ca02c — moved to black 2026-05-11 to free
     # green for high_quality (the natural "good data" color).
     "nemotron_full": "#000000",
-    "fineweb_edu": "#d62728",
+    # FineWeb family (10k natural-epoch). fineweb_edu's old #d62728 red is now
+    # owned by med_low_quality, so use a pink/salmon pair distinct from it and
+    # from low_quality's #e91e63.
+    "fineweb_edu": "#e377c2",  # magenta-pink (FineWeb-Edu)
+    "fineweb_cc": "#ff9896",  # salmon (full FineWeb-CC)
     "resiliparse": "#9467bd",
     # Per-N fuzzy-deduped resiliparse — same hue, darker shade so it sits
     # next to the non-deduped curve on cross-method plots.

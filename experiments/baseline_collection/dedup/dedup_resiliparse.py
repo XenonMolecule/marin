@@ -1,7 +1,13 @@
 # Copyright The Marin Authors
 # SPDX-License-Identifier: Apache-2.0
 
-"""Dedupe the resiliparse extraction (us-central2) and produce stats + final dataset.
+"""DEPRECATED — do not use. Depends on the deleted ``dedup_fuzzy_document`` API and will not
+run. The maintained flat-shard dedup driver is ``dedup_resiliparse_warc_scaling.py`` (general),
+with ``dedup_extracted.py`` as the canonical reference; both call the current
+``compute_minhash_attrs_step`` + ``compute_fuzzy_dups_attrs_step`` lib/marin primitives. Kept
+only for cross-checking that the fuzzy params + apply logic match.
+
+Dedupe the resiliparse extraction (us-central2) and produce stats + final dataset.
 
 Pipeline (StepSpec dag):
 

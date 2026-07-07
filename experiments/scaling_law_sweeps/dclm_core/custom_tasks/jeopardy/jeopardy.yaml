@@ -1,44 +1,33 @@
 # Custom lm-eval-harness task for DCLM CORE's `jeopardy`.
 #
-# Source: MosaicML llm-foundry eval gauntlet — jeopardy_all.jsonl
-# (https://github.com/mosaicml/llm-foundry/tree/v0.9.0/scripts/eval/local_data/world_knowledge/jeopardy_all.jsonl).
-# n=2117, matches the row count in DCLM's eval_meta_data.csv exactly.
+# Source: MosaicML llm-foundry eval gauntlet — jeopardy_all.jsonl (n=2117, matches
+# DCLM's eval_meta_data.csv). DCLM overrides MosaicML's 3-shot to 10-shot; we honor 10.
 #
-# DCLM's eval_meta_data.csv specifies 10-shot, random baseline=0 (treated
-# as a generation task). MosaicML's original gauntlet config used 3-shot;
-# DCLM overrides to 10. We honor DCLM here.
-#
-# Scoring: MosaicML's "language_modeling" task type compares the model's
-# greedy continuation to the gold continuation. We approximate with
-# lm-eval's `generate_until` + `exact_match` (with light normalization).
-# This is the closest stock metric; small numeric drift vs DCLM-published
-# is expected on this specific task.
+# DCLM scores this as icl_task_type=language_modeling -> MosaicML InContextLearningLMAccuracy:
+# teacher-force the gold continuation, score 1 iff EVERY continuation token is the greedy
+# argmax given the prefix (one forward pass). lm-eval reproduces this exactly with
+# output_type=loglikelihood + metric=acc (acc = is_greedy; see lm_eval/api/task.py) — faithful
+# to DCLM and fast. (Previously approximated with generate_until + exact_match, which diverges
+# in both score and speed.) DCLM sets continuation_delimiter="\nAnswer: " for this task.
 task: jeopardy
 dataset_path: json
 dataset_kwargs:
   data_files: jeopardy_all.jsonl
 test_split: train
-output_type: generate_until
-doc_to_text: "{{context}}\nAnswer: "
-doc_to_target: "{{continuation}}"
-generation_kwargs:
-  until:
-    - "\n"
-    - "\n\n"
-  do_sample: false
-  temperature: 0.0
-filter_list:
-  - name: "strip-then-match"
-    filter:
-      - function: "remove_whitespace"
-      - function: "take_first"
+output_type: loglikelihood
+# Bake the "\nAnswer: " delimiter into the PROMPT (doc_to_text) with target_delimiter: "",
+# so is_greedy scores ONLY the answer tokens — matching MosaicML, which puts the
+# continuation_delimiter in ctxt. (target_delimiter is prepended to the scored continuation
+# in lm-eval, so leaving it non-empty would wrongly score the delimiter tokens too.)
+doc_to_text: "{{ context | trim }}\nAnswer:"
+doc_to_target: " {{continuation}}"
+target_delimiter: ""
+fewshot_delimiter: "\n"
 metric_list:
-  - metric: exact_match
+  - metric: acc
     aggregation: mean
     higher_is_better: true
-    ignore_case: true
-    ignore_punctuation: true
 metadata:
-  version: 1.0
+  version: 2.0
   source: mosaicml/llm-foundry@v0.9.0
   dclm_meta_row: "jeopardy,world knowledge,language modeling,10,2117,0"

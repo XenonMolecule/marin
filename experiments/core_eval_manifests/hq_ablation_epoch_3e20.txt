@@ -1,0 +1,2 @@
+run_name,region,output_path,hf_dir
+curation-hq_epoch-expFM_natural-3e+20-d1536-L16-B256,us-east5,gs://marin-us-east5/checkpoints/isoflop-curation/curation-hq_epoch-expFM_natural-3e+20-d1536-L16-B256,gs://marin-us-east5/checkpoints/isoflop-curation/curation-hq_epoch-expFM_natural-3e+20-d1536-L16-B256/hf/

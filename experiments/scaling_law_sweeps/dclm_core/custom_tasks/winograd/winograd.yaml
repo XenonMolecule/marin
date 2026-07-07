@@ -1,36 +1,29 @@
-# Custom lm-eval-harness task for DCLM CORE's `winograd` (Winograd Schema 273).
+# Custom lm-eval-harness task for DCLM CORE's `winograd` (Winograd Schema Challenge, WSC273).
 #
-# Why custom: lm-eval-harness's stock `wsc273` task pulls from a
-# `cs.nyu.edu/faculty/davise/.../WSCollection.xml` URL whose dataset script
-# doesn't follow a 302 redirect, so the load deterministically fails.
-# We vendor WSCollection.xml + a JSONL converter under this directory; the
-# task here reads the local JSONL.
+# Why custom + why replaced (v2): the previous version vendored WSCollection.xml
+# (285 schemas) scored as plain multiple_choice. DCLM CoreV2 uses MosaicML
+# llm-foundry's WSC273 (273 rows) with the "schema" task type: score
+# P(continuation | each option-substituted context), argmax. We mirror lm-eval's
+# native `winogrande` schema mechanism (doc_to_choice = the two contexts,
+# doc_to_target = the shared continuation, doc_to_text = the gold index) on DCLM's
+# 273-row jsonl, so both the data (273 not 285) and the scoring match DCLM.
 #
-# Format mirrors MosaicML's gauntlet "schema" task type: per example we
-# have `prefix` (context before the pronoun) and `choices` (full continuations
-# with each candidate noun phrase substituted in). Scoring picks the
-# highest log-likelihood continuation.
-#
+# Source: mosaicml/llm-foundry scripts/eval/local_data/language_understanding/winograd_wsc.jsonl
 # DCLM eval_meta_data row: winograd,language understanding,schema,0,273,50
-# Note row count: WSCollection.xml ships 285 schemas; the original Levesque
-# 273 is often cited but the canonical XML has expanded over time.
 task: winograd
 dataset_path: json
 dataset_kwargs:
-  data_files: wsc273.jsonl
+  data_files: winograd_wsc.jsonl
 test_split: train
 output_type: multiple_choice
-doc_to_text: "{{prefix}}"
-doc_to_target: "{{gold}}"
-doc_to_choice: "{{choices}}"
+doc_to_text: !function preprocess_winograd.doc_to_text
+doc_to_target: !function preprocess_winograd.doc_to_target
+doc_to_choice: !function preprocess_winograd.doc_to_choice
 metric_list:
   - metric: acc
     aggregation: mean
     higher_is_better: true
-  - metric: acc_norm
-    aggregation: mean
-    higher_is_better: true
 metadata:
-  version: 1.0
-  source: cs.nyu.edu/faculty/davise/papers/WinogradSchemas/WSCollection.xml (mirrored)
+  version: 2.0
+  source: mosaicml/llm-foundry eval gauntlet (WSC273)
   dclm_meta_row: "winograd,language understanding,schema,0,273,50"

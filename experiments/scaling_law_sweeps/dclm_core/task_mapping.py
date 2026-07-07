@@ -49,20 +49,29 @@ CORE_TASK_MAP: tuple[TaskMapEntry, ...] = (
         "jeopardy",
         "jeopardy",
         10,
-        "exact_match",
-        notes="Custom lm-eval task in custom_tasks/jeopardy/ (vendored from mosaicml/llm-foundry@v0.9.0).",
+        "acc",
+        notes="Custom loglikelihood task in custom_tasks/jeopardy/ (mosaicml/llm-foundry@v0.9.0). "
+        "acc = is_greedy = DCLM's InContextLearningLMAccuracy (language_modeling), NOT generate_until.",
     ),
     TaskMapEntry(
         "bigbench_qa_wikidata",
-        "bigbench_qa_wikidata_generate_until",
+        "bigbench_qa_wikidata_dclm",
         10,
-        "exact_match",
-        notes="Only the generate_until variant exists in marin's lm-eval pin (verified via registry probe).",
+        "acc",
+        notes="Custom loglikelihood task in custom_tasks/bigbench_qa_wikidata/ (llm-foundry gauntlet). "
+        "acc = is_greedy = DCLM's language_modeling scoring, NOT the slower/looser generate_until.",
     ),
     TaskMapEntry("arc_easy", "arc_easy", 10, "acc_norm"),
     TaskMapEntry("arc_challenge", "arc_challenge", 10, "acc_norm"),
     TaskMapEntry("copa", "copa", 0, "acc"),
-    TaskMapEntry("commonsense_qa", "commonsense_qa", 10, "acc"),
+    TaskMapEntry(
+        "commonsense_qa",
+        "commonsense_qa_dclm4",
+        10,
+        "acc",
+        notes="Custom 4-choice task in custom_tasks/commonsense_qa/ (llm-foundry gauntlet). "
+        "Stock lm-eval commonsense_qa is 5-choice (baseline 20%); DCLM is 4-choice (baseline 25%).",
+    ),
     TaskMapEntry("piqa", "piqa", 10, "acc_norm"),
     TaskMapEntry("openbook_qa", "openbookqa", 0, "acc_norm"),
     TaskMapEntry("lambada_openai", "lambada_openai", 0, "acc"),
@@ -72,45 +81,57 @@ CORE_TASK_MAP: tuple[TaskMapEntry, ...] = (
         "winograd",
         0,
         "acc",
-        notes="Custom task in custom_tasks/winograd/ — stock lm-eval wsc273 fetches a "
-        "URL that 302-redirects and the dataset loader doesn't follow it. We "
-        "vendor WSCollection.xml + convert to jsonl.",
+        notes="Custom schema task in custom_tasks/winograd/ (llm-foundry gauntlet WSC273 = 273 rows). "
+        "Scores P(continuation | option-substituted context) via lm-eval's winogrande-style role "
+        "inversion (!function preprocess_winograd); matches DCLM's icl_task_type=schema.",
     ),
     TaskMapEntry("winogrande", "winogrande", 0, "acc"),
     TaskMapEntry(
         "bigbench_dyck_languages",
-        "bigbench_dyck_languages_generate_until",
+        "bigbench_dyck_languages_dclm",
         10,
-        "exact_match",
-        notes="DCLM's dyck is a completion task. lm-eval's generate_until variant fits.",
+        "acc",
+        notes="Custom loglikelihood task in custom_tasks/bigbench_dyck_languages/ (llm-foundry gauntlet). "
+        "acc = is_greedy = DCLM's language_modeling scoring, NOT generate_until.",
     ),
-    TaskMapEntry("agi_eval_lsat_ar", "agieval_lsat_ar", 3, "acc_norm"),
-    TaskMapEntry("bigbench_cs_algorithms", "bigbench_cs_algorithms_generate_until", 10, "exact_match"),
-    TaskMapEntry("bigbench_operators", "bigbench_operators_generate_until", 10, "exact_match"),
-    TaskMapEntry("bigbench_repeat_copy_logic", "bigbench_repeat_copy_logic_generate_until", 10, "exact_match"),
+    TaskMapEntry(
+        "agi_eval_lsat_ar",
+        "agi_eval_lsat_ar_dclm4",
+        3,
+        "acc_norm",
+        notes="Custom 4-choice task in custom_tasks/agi_eval_lsat_ar/ (llm-foundry gauntlet). "
+        "Stock lm-eval agieval_lsat_ar is 5-choice (baseline 20%); DCLM is 4-choice (baseline 25%).",
+    ),
+    TaskMapEntry("bigbench_cs_algorithms", "bigbench_cs_algorithms_dclm", 10, "acc"),
+    TaskMapEntry("bigbench_operators", "bigbench_operators_dclm", 10, "acc"),
+    TaskMapEntry("bigbench_repeat_copy_logic", "bigbench_repeat_copy_logic_dclm", 10, "acc"),
     TaskMapEntry(
         "squad",
-        "squad_completion",
+        "squad_dclm",
         10,
-        "contains",
-        notes="lm-eval's `squad_completion` only reports `contains` (not exact_match). "
-        "DCLM uses exact_match; for calibration we may need to swap to a different "
-        "squad variant or post-process generations against gold to compute em.",
+        "acc",
+        notes="Custom task in custom_tasks/squad/ (llm-foundry gauntlet, full SQuAD v1.1 dev = 10570). "
+        "output_type=loglikelihood → acc = is_greedy = DCLM's InContextLearningLMAccuracy "
+        "(teacher-forced greedy-token-match), NOT the slower/looser generate_until.",
     ),
     TaskMapEntry(
         "coqa",
-        "coqa",
+        "coqa_dclm",
         0,
-        "f1",
-        notes="DCLM's coqa is generative QA. lm-eval coqa reports f1 + em — DCLM uses what? Verify in calibration.",
+        "acc",
+        notes="Custom task in custom_tasks/coqa/ (llm-foundry gauntlet, per-question = 7983). "
+        "output_type=loglikelihood → acc = is_greedy = DCLM's InContextLearningLMAccuracy "
+        "(teacher-forced greedy-token-match), NOT the slower/looser generate_until.",
     ),
     TaskMapEntry("boolq", "boolq", 10, "acc"),
     TaskMapEntry(
         "bigbench_language_identification",
-        "bigbench_language_identification_multiple_choice",
+        "bigbench_language_identification",
         10,
         "acc",
-        notes="lm-eval's multiple_choice variant matches DCLM's task_type.",
+        notes="Custom 4-choice task in custom_tasks/bigbench_language_identification/ (MosaicML "
+        "llm-foundry gauntlet jsonl). Stock lm-eval's *_multiple_choice pulls hails/bigbench with "
+        "ELEVEN choices (baseline ~9%, ~10x slower); DCLM's CoreV2 is FOUR-choice (baseline 25%).",
     ),
 )
 

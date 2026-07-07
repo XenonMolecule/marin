@@ -165,10 +165,20 @@ def enumerate_fixed_model_plans(
                     from iris.cluster.types import get_tpu_topology
                     from marin.scaling_laws import pick_v5p_type
 
+                    from experiments.scaling_law_sweeps.curation_plan import pick_v6e_type_single_vm
+
                     v5p_raw = pick_v5p_type(plan.estimated_memory_bytes)
                     vm_count_v5p = get_tpu_topology(v5p_raw).vm_count
                     v4_match = f"v4-{vm_count_v5p * 8}"
-                    plan = dataclasses.replace(plan, v5p_tpu=v5p_raw, v4_tpu=v4_match)
+                    # Also recompute v6e for the shrunk batch — without this the v6e slice stays at the
+                    # pre-shrink value from _planned_run_from_candidate, so batch-divisor runs never offer
+                    # v6e as a scheduling variant.
+                    plan = dataclasses.replace(
+                        plan,
+                        v5p_tpu=v5p_raw,
+                        v4_tpu=v4_match,
+                        v6e_tpu=pick_v6e_type_single_vm(plan.estimated_memory_bytes) or "",
+                    )
                 plans.append(plan)
     return plans
 

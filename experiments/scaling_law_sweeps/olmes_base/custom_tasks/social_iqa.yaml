@@ -1,0 +1,23 @@
+# Faithful copy of lm-eval's stock siqa.yaml (task: social_iqa), with dataset_path
+# swapped from the datasets>=3-dead `allenai/social_i_qa` SCRIPT loader to the
+# `lighteval/siqa` parquet mirror (byte-identical rows: context/question/answerA-C/
+# label). Everything else — prompt, choices, target, metric — is verbatim stock, so
+# the Levanter harness scores it exactly as the stock task would if it still loaded.
+# This YAML is picked up by shadowing lm_eval's built-in social_iqa via include_path
+# (see olmes_custom_tasks.install_custom_task_path).
+task: social_iqa
+dataset_path: lighteval/siqa
+dataset_name: null
+output_type: multiple_choice
+training_split: train
+validation_split: validation
+doc_to_text: "Q: {{context}} {{question}}\nA:"
+target_delimiter: " "
+doc_to_choice: "{{[answerA, answerB, answerC]}}"
+doc_to_target: "{{ (label|int) - 1 }}"
+metric_list:
+  - metric: acc
+    aggregation: mean
+    higher_is_better: true
+metadata:
+  version: 0.0

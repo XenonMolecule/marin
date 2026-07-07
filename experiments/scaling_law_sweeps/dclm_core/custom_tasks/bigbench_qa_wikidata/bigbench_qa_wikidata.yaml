@@ -1,0 +1,29 @@
+# Custom lm-eval task for DCLM CORE's `bigbench_qa_wikidata` (language_modeling, DCLM variant).
+#
+# DCLM = MosaicML InContextLearningLMAccuracy: teacher-forced greedy argmax over the answer
+# tokens (acc = is_greedy; lm_eval/api/task.py:1554). This config renders the 10-shot prompt
+# BYTE-IDENTICAL to MosaicML and keeps the token boundary clean (verified via local render):
+#   - doc_to_text = trimmed context (MosaicML rstrips the query context)
+#   - doc_to_target = " " + continuation (MosaicML's continuation_delimiter " " rides on the
+#     answer with the tokenizer's prefix space -> one clean BPE token, e.g. " 3"/" Australia")
+#   - target_delimiter = "" (loglik query ignores it; MUST be "" so fewshot shots don't get a
+#     DOUBLE space) ; fewshot_delimiter = "\n" (MosaicML example_delimiter; NOT lm-eval's "\n\n")
+#
+# Source: mosaicml/llm-foundry eval gauntlet local_data/.../bigbench_qa_wikidata.jsonl (20321 rows)
+task: bigbench_qa_wikidata_dclm
+dataset_path: json
+dataset_kwargs:
+  data_files: bigbench_qa_wikidata.jsonl
+test_split: train
+output_type: loglikelihood
+doc_to_text: "{{ context | trim }}"
+doc_to_target: " {{continuation}}"
+target_delimiter: ""
+fewshot_delimiter: "\n"
+metric_list:
+  - metric: acc
+    aggregation: mean
+    higher_is_better: true
+metadata:
+  version: 4.0
+  source: mosaicml/llm-foundry eval gauntlet (bigbench_qa_wikidata)

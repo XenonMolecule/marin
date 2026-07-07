@@ -60,7 +60,9 @@ logger = logging.getLogger(__name__)
 DATASET_ROOT = "gs://marin-us-central2/datasets/high_quality_3000_distill"
 USEFUL_DIR = f"{DATASET_ROOT}/data"
 NO_USEFUL_DIR = f"{DATASET_ROOT}/data_no_useful"
-RESULTS_ROOT = "gs://marin-us-central2/classifiers/useful_fasttext"
+# Override via USEFUL_FT_ROOT to run in another region (e.g. gs://marin-us-east5/... for a v6e worker
+# that can hold the largest untruncated train.txt; copy the needed full_prep shards there first).
+RESULTS_ROOT = os.environ.get("USEFUL_FT_ROOT", "gs://marin-us-central2/classifiers/useful_fasttext")
 
 LABEL_USEFUL = "__label__useful"
 LABEL_NO_USEFUL = "__label__no_useful"
@@ -99,11 +101,14 @@ def resiliparse_text(html: str) -> str:
         return ""
 
 
-def to_fasttext_text(html: str, representation: str) -> str:
+def to_fasttext_text(html: str, representation: str, max_chars: int | None = None) -> str:
     """Turn raw HTML into a single fastText input line body (no label).
 
     fastText is line-oriented, so all whitespace (newlines included) is collapsed
-    to single spaces; text is lowercased. No truncation.
+    to single spaces; text is lowercased. ``max_chars`` keeps only the leading
+    ``max_chars`` characters of the cleaned text (a head-truncation that shrinks
+    the on-disk corpus and training tokens; fastText bag-of-bigrams leans on the
+    document head). ``None`` keeps the full document.
     """
     if representation == "body_strip":
         text = body_strip(html)
@@ -111,12 +116,13 @@ def to_fasttext_text(html: str, representation: str) -> str:
         text = resiliparse_text(html)
     else:  # raw_full
         text = html
-    return _WS_RE.sub(" ", text).strip().lower()
+    text = _WS_RE.sub(" ", text).strip().lower()
+    return text[:max_chars] if max_chars else text
 
 
-def fasttext_line(label: str, html: str, representation: str) -> str:
+def fasttext_line(label: str, html: str, representation: str, max_chars: int | None = None) -> str:
     """A full fastText training line: ``__label__x <single-line text>``."""
-    return f"{label} {to_fasttext_text(html, representation)}"
+    return f"{label} {to_fasttext_text(html, representation, max_chars)}"
 
 
 # --- Sampling + split ------------------------------------------------------
@@ -137,6 +143,9 @@ class PilotConfig:
     # index correlates with snapshot; "random"/"stratified" match the snapshot-uniform held-out test distribution.
     train_sample: str = "front"
     sample_seed: int = 0
+    # Head-truncate each cleaned doc to this many characters (None = full doc). Shrinks the
+    # on-disk corpus + training tokens so large WARC counts fit the local-disk cap and train fast.
+    max_chars: int | None = None
     reuse_config: str = ""  # GCS metrics.json to copy tuned HPs from (skip autotune; for clean cross-scale compare)
     # Fixed-config path (skip autotune). Defaults are the DCLM recipe: epoch=5, lr=0.1, dim=100, bigrams, softmax.
     fixed_config: bool = False
@@ -270,9 +279,9 @@ def write_split_files(cfg: PilotConfig, workdir: str) -> tuple[dict, dict]:
                 pos = _read_html_rows(useful_shards[i], cap)
                 neg = _read_html_rows(no_useful_shards[i], round(cfg.neg_per_pos * len(pos)))  # neg:pos within WARC
                 for html in pos:
-                    handles[split].write(fasttext_line(LABEL_USEFUL, html, cfg.representation) + "\n")
+                    handles[split].write(fasttext_line(LABEL_USEFUL, html, cfg.representation, cfg.max_chars) + "\n")
                 for html in neg:
-                    handles[split].write(fasttext_line(LABEL_NO_USEFUL, html, cfg.representation) + "\n")
+                    handles[split].write(fasttext_line(LABEL_NO_USEFUL, html, cfg.representation, cfg.max_chars) + "\n")
                 counts[split]["useful"] += len(pos)
                 counts[split]["no_useful"] += len(neg)
     finally:
@@ -583,6 +592,189 @@ def run_prep(representation: str, k_holdout: int, tag: str, limit_warcs: int | N
     logger.info("prep done -> %s/{train,val,test}/", prep_root)
 
 
+# --- Train from pre-materialized full_prep shards (skips per-WARC parquet+regex) ---
+
+
+def _shard_to_tempfile(
+    i: int, prep_root: str, neg_per_pos: float, max_chars: int | None, workdir: str
+) -> tuple[int, int, int, str | None]:
+    """Decompress one full_prep shard, keep ``neg_per_pos`` negatives per positive (the shard
+    stores all useful then all no_useful, so the cap is exact) + optional head-truncation, and
+    write the kept lines to a per-shard temp file. Returns (index, n_pos, n_neg, tmp_path) — or
+    tmp_path=None if the shard is missing. Runs in a thread pool: gzip decompression releases the
+    GIL, so per-shard work parallelizes (concat was a single-threaded ~37s/shard bottleneck)."""
+    shard = f"{prep_root}/train/data-{i:05d}.txt.gz"
+    fs, rpath = fsspec.core.url_to_fs(shard)
+    if not fs.exists(rpath):
+        return (i, 0, 0, None)
+    tmp = os.path.join(workdir, f"_shard-{i:05d}.txt")
+    pos_here = neg_here = 0
+    neg_cap: int | None = None
+    with fsspec.open(shard, "rt", compression="gzip", encoding="utf-8") as f, open(tmp, "w", encoding="utf-8") as out:
+        for line in f:
+            line = line.rstrip("\n")
+            if not line:
+                continue
+            is_pos = line.startswith(LABEL_USEFUL)
+            if max_chars:
+                label, _, text = line.partition(" ")
+                line = f"{label} {text[:max_chars]}"
+            if is_pos:
+                out.write(line + "\n")
+                pos_here += 1
+            else:
+                if neg_cap is None:
+                    neg_cap = round(neg_per_pos * pos_here)
+                if neg_here < neg_cap:
+                    out.write(line + "\n")
+                    neg_here += 1
+    return (i, pos_here, neg_here, tmp)
+
+
+def run_train_from_prep(
+    representation: str,
+    n_warcs: int,
+    train_sample: str,
+    sample_seed: int,
+    neg_per_pos: float,
+    max_chars: int | None,
+    epoch: int,
+    lr: float,
+    dim: int,
+    word_ngrams: int,
+    minn: int,
+    maxn: int,
+    min_count: int,
+    loss: str,
+    tag: str,
+    prep_tag: str,
+    shard_indices: list[int] | None = None,
+    dry_run: bool = False,
+    concat_workers: int = 16,
+) -> None:
+    """Train fastText from the durable ``full_prep`` per-WARC shards instead of re-reading
+    parquet + re-running ``body_strip`` (the slow ~2min/WARC prep). Selects ``n_warcs`` train
+    WARC shards (snapshot-stratified), concatenates them into a tmpfs ``train.txt`` keeping
+    ``neg_per_pos`` negatives per positive within each shard (the shards store all useful then
+    all no_useful, so the cap is exact), optionally head-truncating to ``max_chars``, then trains
+    the fixed DCLM config and saves model + metrics. Eval is the separate ``eval`` step against
+    ``full_prep/test``. Data is durable, so a preemption only loses the train step, never prep.
+    """
+    prep_root = f"{RESULTS_ROOT}/full_prep_{representation}{('_' + prep_tag) if prep_tag else ''}"
+    out_dir = f"{RESULTS_ROOT}/{representation}{('_' + tag) if tag else ''}"
+
+    if shard_indices is not None:
+        # Explicit indices (e.g. precomputed in another region) — no parquet/snapshot reads needed.
+        train_idx = sorted(shard_indices)
+        logger.info("train-from-prep: %d explicit WARC shards from %s", len(train_idx), prep_root)
+    else:
+        useful_shards = sorted(fsspec_glob(f"{USEFUL_DIR}/*.parquet"))
+        no_useful_shards = sorted(fsspec_glob(f"{NO_USEFUL_DIR}/*.parquet"))
+        n_total = min(len(useful_shards), len(no_useful_shards))
+        snapshots = _shard_snapshots(useful_shards[:n_total])
+        val_idx, test_idx = held_out_indices(snapshots, 1)
+        held = val_idx | test_idx
+        candidates = [i for i in range(n_total) if i not in held]
+        train_idx = _select_train_indices(candidates, snapshots, train_sample, n_warcs, sample_seed)
+        logger.info("train-from-prep: %d WARCs (sample=%s) from %s", len(train_idx), train_sample, prep_root)
+
+    if dry_run:
+        csv = ",".join(str(i) for i in train_idx)
+        print("SELECTED_SHARD_INDICES=" + csv)
+        # Also persist to GCS so the selection survives a log-plane outage (in-region, tiny).
+        sel_path = f"{prep_root}/_dryrun_selected_{n_warcs}_{train_sample}.txt"
+        with fsspec.open(sel_path, "w") as f:
+            f.write(csv + "\n")
+        logger.info("wrote selection -> %s", sel_path)
+        return
+
+    import fasttext
+
+    with tempfile.TemporaryDirectory() as workdir:
+        train_p = os.path.join(workdir, "train.txt")
+        # Parallel concat: process shards in a thread pool to per-shard temp files, then stitch
+        # them into one train.txt (deleting each temp as it is appended, so peak tmpfs stays ~=
+        # the final file). ex.map preserves input order. Single-threaded was ~37s/shard.
+        logger.info("concatenating %d shards (%d workers) ...", len(train_idx), concat_workers)
+        with ThreadPoolExecutor(max_workers=concat_workers) as ex:
+            results = list(
+                ex.map(lambda i: _shard_to_tempfile(i, prep_root, neg_per_pos, max_chars, workdir), train_idx)
+            )
+        n_pos = n_neg = n_missing = 0
+        with open(train_p, "w", encoding="utf-8") as out:
+            for _, pos_here, neg_here, tmp in results:
+                if tmp is None:
+                    n_missing += 1
+                    continue
+                with open(tmp, encoding="utf-8") as tf:
+                    shutil.copyfileobj(tf, out, length=16 * 1024 * 1024)
+                os.remove(tmp)
+                n_pos += pos_here
+                n_neg += neg_here
+        if n_pos == 0:
+            raise RuntimeError(f"no positives concatenated (missing shards={n_missing}/{len(train_idx)})")
+        logger.info(
+            "concat done: pos=%d neg=%d (ratio %.1f:1) missing_shards=%d/%d",
+            n_pos,
+            n_neg,
+            n_neg / max(n_pos, 1),
+            n_missing,
+            len(train_idx),
+        )
+
+        logger.info(
+            "training fixed config: epoch=%d lr=%g dim=%d wordNgrams=%d minCount=%d max_chars=%s",
+            epoch,
+            lr,
+            dim,
+            word_ngrams,
+            min_count,
+            max_chars,
+        )
+        model = fasttext.train_supervised(
+            input=train_p,
+            epoch=epoch,
+            lr=lr,
+            dim=dim,
+            wordNgrams=word_ngrams,
+            minn=minn,
+            maxn=maxn,
+            minCount=min_count,
+            loss=loss,
+        )
+
+        metrics = {
+            "config": {
+                "representation": representation,
+                "train_warcs": n_warcs,
+                "train_sample": train_sample,
+                "sample_seed": sample_seed,
+                "neg_per_pos": neg_per_pos,
+                "max_chars": max_chars,
+                "min_count": min_count,
+                "fixed_config": True,
+                "epoch": epoch,
+                "lr": lr,
+                "dim": dim,
+                "word_ngrams": word_ngrams,
+                "loss": loss,
+                "source": "train-from-prep",
+                "prep_root": prep_root,
+            },
+            "tuned_hyperparameters": tuned_hyperparameters(model),
+            "split_counts": {"train": {"useful": n_pos, "no_useful": n_neg}},
+            "n_missing_shards": n_missing,
+        }
+        # model.bin first (leaderboard key is metrics.json; never leave it without the model)
+        local_model = os.path.join(workdir, "model.bin")
+        model.save_model(local_model)
+        with open(local_model, "rb") as src, fsspec.open(f"{out_dir}/model.bin", "wb") as dst:
+            shutil.copyfileobj(src, dst)
+        with fsspec.open(f"{out_dir}/metrics.json", "w") as f:
+            json.dump(metrics, f, indent=2)
+    logger.info("train-from-prep done -> %s (model.bin, metrics.json) — eval with `eval` subcommand", out_dir)
+
+
 # --- Eval a saved model on an external (natural-ratio) test set ------------
 
 
@@ -592,7 +784,12 @@ def _max_recall_at_precision(sweep: list[dict], floor: float) -> dict | None:
 
 
 def run_eval(
-    model_path: str, test_glob: str, out_path: str, quality_label: str = LABEL_USEFUL, negative_label: str = ""
+    model_path: str,
+    test_glob: str,
+    out_path: str,
+    quality_label: str = LABEL_USEFUL,
+    negative_label: str = "",
+    max_chars: int | None = None,
 ) -> None:
     """Score a saved model.bin against an external fastText-formatted test set
     (e.g., the full-prep natural-ratio test) — recall is comparable to the
@@ -601,6 +798,8 @@ def run_eval(
     ``quality_label`` is the model's label whose probability means "useful/high
     quality" (``__label__useful`` for ours; ``__label__eli5`` for the DCLM model).
     Ground-truth is always the test line's ``__label__useful`` vs ``no_useful``.
+    ``max_chars`` head-truncates each test doc to match a truncation-trained model
+    (must equal the model's training ``max_chars`` to avoid train/serve skew).
     """
     import fasttext
 
@@ -633,6 +832,8 @@ def run_eval(
                         continue
                     truth_useful = _true_label(line) == LABEL_USEFUL
                     text = line.split(" ", 1)[1] if " " in line else ""
+                    if max_chars:
+                        text = text[:max_chars]
                     probs.append((quality_score(text), truth_useful))
                     n_useful += truth_useful
                     n_no_useful += not truth_useful
@@ -647,6 +848,7 @@ def run_eval(
             "model": model_path,
             "quality_label": quality_label,
             "negative_label": negative_label,
+            "max_chars": max_chars,
             "test_glob": test_glob,
             "n_useful": n_useful,
             "n_no_useful": n_no_useful,
@@ -864,6 +1066,13 @@ def main() -> None:
         help="How to pick train WARCs: front (biased prefix), random, or snapshot-stratified (matches test).",
     )
     p.add_argument("--sample-seed", type=int, default=0, help="Seed for random/stratified train-WARC sampling.")
+    p.add_argument(
+        "--max-chars",
+        type=int,
+        default=None,
+        help="Head-truncate each cleaned doc to this many chars (None=full). Shrinks corpus+tokens so "
+        "large WARC counts fit local disk; eval must pass the SAME --max-chars.",
+    )
     p.add_argument("--tag", default="", help="Suffix for the output dir (e.g. 'smoke').")
 
     pe = sub.add_parser("eval", help="Score a saved model.bin against an external (natural-ratio) test set.")
@@ -884,6 +1093,12 @@ def main() -> None:
         default="",
         help="If set, quality = 1 - P(this label) — robust to the positive label's name (DCLM: __label__cc).",
     )
+    pe.add_argument(
+        "--max-chars",
+        type=int,
+        default=None,
+        help="Head-truncate each test doc to this many chars; MUST match the model's training --max-chars.",
+    )
 
     pp = sub.add_parser("prep", help="Parallel (Zephyr) full-corpus prep: ALL data, no balancing, split-tagged.")
     pp.add_argument("--representation", required=True, choices=REPRESENTATIONS)
@@ -892,17 +1107,66 @@ def main() -> None:
     pp.add_argument("--only-split", default="all", choices=["all", "train", "val", "test"], help="Prep only this split.")
     pp.add_argument("--tag", default="", help="Suffix for the prep output dir.")
 
+    pt = sub.add_parser(
+        "train-from-prep", help="Train from durable full_prep shards (no re-prep); fast + resumable-data."
+    )
+    pt.add_argument("--representation", required=True, choices=REPRESENTATIONS)
+    pt.add_argument("--train-warcs", type=int, required=True, help="Number of stratified train WARC shards to use.")
+    pt.add_argument("--train-sample", default="stratified", choices=["front", "random", "stratified"])
+    pt.add_argument("--sample-seed", type=int, default=0)
+    pt.add_argument("--neg-per-pos", type=float, default=12.0, help="Negatives per positive within each shard.")
+    pt.add_argument("--max-chars", type=int, default=None, help="Head-truncate each doc (None=full, untruncated).")
+    pt.add_argument("--epoch", type=int, default=5)
+    pt.add_argument("--lr", type=float, default=0.1)
+    pt.add_argument("--dim", type=int, default=100)
+    pt.add_argument("--word-ngrams", type=int, default=2)
+    pt.add_argument("--minn", type=int, default=0)
+    pt.add_argument("--maxn", type=int, default=0)
+    pt.add_argument("--min-count", type=int, default=1, help="Prune tokens < this; 500 -> ~1GB deployable model.")
+    pt.add_argument("--loss", default="softmax")
+    pt.add_argument("--prep-tag", default="", help="full_prep dir suffix (default '' -> full_prep_<rep>).")
+    pt.add_argument("--tag", default="", help="Suffix for the output dir.")
+    pt.add_argument(
+        "--shard-indices",
+        default="",
+        help="Comma-separated explicit WARC shard indices (skip snapshot selection; for cross-region runs).",
+    )
+    pt.add_argument("--dry-run", action="store_true", help="Print the selected shard indices/paths and exit.")
+    pt.add_argument("--concat-workers", type=int, default=16, help="Parallel threads for shard decompress+concat.")
+
     pl = sub.add_parser("leaderboard", help="Scan all result JSONs and write the consolidated leaderboard.")
     pl.add_argument("--out-md", default=LEADERBOARD_MD, help="GCS/local path for the Markdown leaderboard.")
     pl.add_argument("--out-json", default=LEADERBOARD_JSON, help="GCS/local path for the leaderboard rows JSON.")
     args = parser.parse_args()
 
     if args.command == "eval":
-        run_eval(args.model, args.test_glob, args.out, args.quality_label, args.negative_label)
+        run_eval(args.model, args.test_glob, args.out, args.quality_label, args.negative_label, args.max_chars)
     elif args.command == "leaderboard":
         run_leaderboard(args.out_md, args.out_json)
     elif args.command == "prep":
         run_prep(args.representation, args.k_holdout, args.tag, args.limit_warcs, args.only_split)
+    elif args.command == "train-from-prep":
+        run_train_from_prep(
+            args.representation,
+            args.train_warcs,
+            args.train_sample,
+            args.sample_seed,
+            args.neg_per_pos,
+            args.max_chars,
+            args.epoch,
+            args.lr,
+            args.dim,
+            args.word_ngrams,
+            args.minn,
+            args.maxn,
+            args.min_count,
+            args.loss,
+            args.tag,
+            args.prep_tag,
+            [int(x) for x in args.shard_indices.split(",") if x.strip()] or None,
+            args.dry_run,
+            args.concat_workers,
+        )
     elif args.command == "pilot":
         run_pilot(
             PilotConfig(
@@ -926,6 +1190,7 @@ def main() -> None:
                 loss=args.loss,
                 train_sample=args.train_sample,
                 sample_seed=args.sample_seed,
+                max_chars=args.max_chars,
                 tag=args.tag,
             )
         )

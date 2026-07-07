@@ -30,10 +30,14 @@ GRID (per method; see scoping in the run registry notes):
                                               capacity for ~0% progress; see EXTENSION).
   - Corner policy: drop cells with tokens/param < MIN_TOKENS_PER_PARAM (0.3) so
     we don't burn slices on near-untrained points (e.g. 8.11B @ 9e17).
-  => 38 cells/method (76 for dclm_10k + nemotron_10k), peak slice v5p-128.
+  => 38 cells/method, peak slice v5p-128. Registered methods: dclm_10k,
+     nemotron_10k, high_quality_10k, fineweb_cc_10k, fineweb_edu_10k, resiliparse_10k.
 
-DATA / REGIONS: both caches are mirrored to all 6 Marin regions, so children
-float freely (no --allowed-regions, no cross-region egress).
+DATA / REGIONS: dclm_10k/nemotron_10k caches are mirrored to all 6 Marin regions,
+so those children float freely. high_quality_10k (us-central1), fineweb_cc_10k
+(us-central2), fineweb_edu_10k (us-central2) and resiliparse_10k (us-central2) are
+single-region for now; their pin_region (curation_plan.METHODS) hard-pins children
+to the cache region until mirrored.
 
 USAGE (CPU coordinator on Iris; parent batch is safe -- CPU jobs are non-preemptible):
     iris --cluster marin job run --priority batch --no-wait \\
@@ -61,7 +65,23 @@ from experiments.scaling_law_sweeps.launch_curation_sweep import PRIORITY_BAND_M
 logger = logging.getLogger(__name__)
 
 # --- FROZEN canonical grid (do not turn these into CLI flags) ----------------
-METHOD_NAMES: tuple[str, ...] = ("dclm_10k", "nemotron_10k")
+# dclm_10k/nemotron_10k caches are mirrored to all 6 regions (float freely).
+# high_quality_10k/fineweb_cc_10k/fineweb_edu_10k caches are single-region for now
+# (pin_region in curation_plan.METHODS hard-pins their children to the cache region
+# until they're mirrored). Same frozen grid for every method -> fair comparison.
+METHOD_NAMES: tuple[str, ...] = (
+    "dclm_10k",
+    "nemotron_10k",
+    "high_quality_10k",
+    "fineweb_cc_10k",
+    "fineweb_edu_10k",
+    "resiliparse_10k",
+    "fastpipe_v3_100",
+    "fastpipe_v3_80",
+    "fastpipe_v3_60",
+    "fastpipe_v3_40",
+    "fastpipe_v3_20",
+)
 WIDTHS: tuple[int, ...] = (512, 1024, 1536, 2432, 3584)
 BASE_BUDGETS: tuple[float, ...] = (
     3e16,
@@ -168,6 +188,15 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Subset of the frozen 10k methods to launch (default: both).",
     )
     p.add_argument("--child-priority", choices=["production", "interactive", "batch", "unspecified"], default="batch")
+    p.add_argument(
+        "--allowed-regions",
+        nargs="+",
+        default=None,
+        help="HARD-restrict children to these regions. Required when launching a method whose cache "
+        "is not in all 6 regions: high_quality_10k lacks us-central2, so pass "
+        "`us-central1 us-east1 us-east5 us-west4 eu-west4`. dclm/nemotron/fineweb_* are in all 6 "
+        "(default None = float freely). A method's pin_region, if set, still overrides this.",
+    )
     p.add_argument("--dry-run", action="store_true", help="Print the grid, do not submit.")
     p.add_argument("--no-skip-if-done", action="store_true", help="Re-submit completed runs.")
     p.add_argument("--max-count", type=int, default=None, help="Cap children submitted (smoke test).")
@@ -216,7 +245,7 @@ def main(argv: list[str] | None = None) -> None:
         wandb_project=args.wandb_project,
         wandb_entity=args.wandb_entity,
         wandb_group=args.wandb_group,
-        allowed_regions=None,  # cache is in all 6 regions -> float freely
+        allowed_regions=args.allowed_regions,  # None = float all regions; set to constrain (see --allowed-regions)
         run_suffix="",
         wandb_mode=args.wandb_mode,
         force_primary_tpu=None,

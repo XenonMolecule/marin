@@ -1737,16 +1737,24 @@ def _iterate_tokenized_requests(
             context_enc = context_encodings["input_ids"][off]
             all_enc = combined_encodings["input_ids"][off]
 
-            context_enc_len = len(context_enc)
+            # Tokens the completion contributes past the prompt. Keep at least one so
+            # PromptCompletion always has a continuation to score (it requires
+            # prompt_length < len(ids)).
+            continuation_len = max(1, len(all_enc) - len(context_enc))
 
             if len(all_enc) > max_length:
-                logger.warning(f"Request {i} is too long. Truncating.")
-                # Truncate from the left
-                context_enc_len = len(context_enc) - (len(all_enc) - max_length)
+                logger.warning(f"Request {i} is too long. Truncating from the left.")
                 all_enc = all_enc[-max_length:]
-                if context_enc_len < 0:
-                    context_enc_len = 0
-                    logger.warning("Prompt length is negative after truncation. Setting to 0.")
+
+            # Left-truncate the prompt so the full continuation fits within max_length,
+            # preserving the tail (MosaicML-style). Reserving continuation_len also guards
+            # the boundary case where the prompt alone fills the window (e.g. a long
+            # 10-shot loglikelihood prompt) — otherwise zero continuation tokens remain
+            # and PromptCompletion raises.
+            context_enc_len = min(len(context_enc), len(all_enc) - continuation_len)
+            if context_enc_len < 0:
+                context_enc_len = 0
+                logger.warning("Prompt length is negative after truncation. Setting to 0.")
             yield PromptCompletion(ids=all_enc, prompt_length=context_enc_len, segment_id=i)
 
 

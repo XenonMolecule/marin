@@ -379,6 +379,10 @@ def check_toml_yaml(files: list[pathlib.Path], fix: bool) -> int:
 
     yaml.add_constructor("!include", include_constructor, Loader=yaml.SafeLoader)
 
+    # lm-eval task yamls reference python callables via `!function module.fn`; the
+    # linter only needs to parse them, so treat the tag as its scalar string.
+    yaml.add_constructor("!function", lambda loader, node: loader.construct_scalar(node), Loader=yaml.SafeLoader)
+
     for file_path in config_files:
         if file_path.suffix == ".toml":
             try:

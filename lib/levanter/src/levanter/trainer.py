@@ -75,6 +75,32 @@ from levanter.utils.types import ComputeLossFunction, FilterSpec
 
 logger = pylogging.getLogger(__name__)
 
+
+def _enable_slice_portable_compile_cache() -> None:
+    """Make the JAX persistent-cache key portable across TPU slices.
+
+    JAX strips the physical device assignment from the cache key only on GPU
+    (`jax/_src/cache_key.py`), so on TPU the key changes with every slice and a
+    preempted job never hits the cache (full ~76min recompile instead of ~7min
+    warm load). Stripping it is correct for single-host data-parallel training,
+    whose executable does not depend on which physical slice it runs on.
+    """
+    try:
+        from jax._src import cache_key as _ck
+
+        original = _ck._hash_serialized_compile_options
+        if getattr(original, "_levanter_portable", False):
+            return
+
+        def _portable(hash_obj, compile_options_obj, strip_device_assignment=False):
+            return original(hash_obj, compile_options_obj, strip_device_assignment=True)
+
+        _portable._levanter_portable = True
+        _ck._hash_serialized_compile_options = _portable
+        logger.info("Slice-portable TPU compilation cache enabled (device assignment stripped from key).")
+    except Exception as exc:
+        logger.warning("Could not enable slice-portable TPU compile cache: %s", exc)
+
 X = TypeVar("X")  # Input
 M = TypeVar("M")  # Model
 S = TypeVar("S", bound=TrainerState)  # State
@@ -1032,6 +1058,12 @@ class TrainerConfig:
 
         if self.jax_compilation_cache_dir is not None:
             jax.config.update("jax_compilation_cache_dir", self.jax_compilation_cache_dir)
+            # The persistent-cache key strips the device assignment only on GPU, so on TPU
+            # every preemption (a fresh slice) misses the cache and pays a full cold recompile.
+            # Stripping it is safe for single-host data-parallel executables (identical across
+            # same-topology slices). Opt-in via env var so existing runs are unaffected.
+            if os.environ.get("LEVANTER_PORTABLE_TPU_CACHE", "0") == "1":
+                _enable_slice_portable_compile_cache()
 
     def _maybe_set_id(self):
         # always do this so we don't get weird hangs if the id isn't set right

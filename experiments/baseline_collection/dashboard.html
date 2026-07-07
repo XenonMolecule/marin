@@ -661,18 +661,20 @@ function renderProgress(data, updatedAt, mode) {
         // drags lifetime down. Only surface lifetime once the spec has
         // been running meaningfully longer than the recent window.
         const recentWin = data.recent_window_hours || 3;
-        // Approximate the spec's run age from total_batches / lifetime_rate
-        // (since we don't ship earliest_batch_ts to the frontend). When
-        // run_age <= recentWin * 1.5, the lifetime metric is just early
-        // ramp noise — drop it.
-        let ageHours = null;
-        if (data.batches_per_hour && data.total_batches) {
-          ageHours = data.total_batches / data.batches_per_hour;
-        }
+        // Run age from the registry completion span (authoritative). Fall back
+        // to the old total_batches/rate estimate only if the backend is stale
+        // and didn't ship run_age_hours. When run_age <= recentWin * 1.5 the
+        // lifetime metric is just early ramp noise — drop it.
+        let ageHours = (data.run_age_hours !== null && data.run_age_hours !== undefined)
+          ? data.run_age_hours
+          : (data.batches_per_hour && data.total_batches ? data.total_batches / data.batches_per_hour : null);
         const showLifetime = ageHours !== null && ageHours > recentWin * 1.5;
         let html = '';
+        if (data.warcs_per_hour_recent !== null && data.warcs_per_hour_recent !== undefined) {
+          html += `<div class="stat" title="WARCs marked complete in the central registry over the last ${recentWin}h — the authoritative throughput signal."><div class="stat-value green">${data.warcs_per_hour_recent.toLocaleString()}</div><div class="stat-label">WARCs/hr (last ${recentWin}h)</div></div>`;
+        }
         if (data.batches_per_hour_recent !== null && data.batches_per_hour_recent !== undefined) {
-          html += `<div class="stat"><div class="stat-value green">${data.batches_per_hour_recent.toLocaleString()}</div><div class="stat-label">Batches/hr (last ${recentWin}h)</div></div>`;
+          html += `<div class="stat" title="True batch throughput = WARCs-completed/hr × ${data.avg_batches_per_warc || '~90'} batches/WARC. Includes completed WARCs' batches, which the per-directory scan cannot see (that older method undercounted by ~40%)."><div class="stat-value green">${data.batches_per_hour_recent.toLocaleString()}</div><div class="stat-label">Batches/hr (last ${recentWin}h)</div></div>`;
         }
         if (showLifetime && data.batches_per_hour) {
           html += `<div class="stat" title="Average batches/hr from first batch to latest (${ageHours.toFixed(1)}h of activity)"><div class="stat-value blue">${data.batches_per_hour.toLocaleString()}</div><div class="stat-label">Batches/hr (run avg)</div></div>`;

@@ -241,11 +241,11 @@ scr/*
 experiments/baseline_collection/.dashboard_cache.json
 # dclm_400m_1x_warcs.txt is the canonical 10,364-WARC pool manifest used for
 # high_quality full-pool extraction. It must be tracked so it bundles into Iris
-# job workspaces, exactly like baseline_warcs_3000.txt. The no-trailing-newline
-# duplicate (dclm_400m_1x.txt) stays ignored below.
+# job workspaces, exactly like baseline_warcs_3000.txt. Its no-trailing-newline
+# duplicate dclm_400m_1x.txt must ALSO be tracked: pipeline_10k.py reads it as
+# WARC_MANIFEST, so it has to bundle into Iris workspaces too.
 experiments/baseline_collection/_tmp_target_urls/
 experiments/baseline_collection/*.jsonl.gz
-experiments/distill/dclm_400m_1x.txt
 experiments/distill/subsets/*
 !experiments/distill/subsets/baseline_warcs_*.txt
 experiments/scaling_law_sweeps/.warc_scaling_dashboard_cache.json
@@ -257,3 +257,6 @@ paper_*_draft.txt
 .worktrees
 .obsidian
 .cw_env
+
+# Large pipeline-planner web data (~285MB tracked shards) — exclude from iris job bundles (worker never needs it)
+experiments/baseline_collection/pipeline_planner/web/data/

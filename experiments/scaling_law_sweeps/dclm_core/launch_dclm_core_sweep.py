@@ -39,8 +39,9 @@ Methods in priority order (top-budget anchor first when --pilot):
 ## Per-checkpoint plan
 
   - run_name (from summary's plan.run_name)
-  - region (from summary's run.region — child is HARD-pinned here to avoid
-    cross-region reads, per CLAUDE.md)
+  - region (from summary's run.region — child is HARD-pinned here by default to
+    avoid cross-region reads, per CLAUDE.md; pass --region-float to relax to a
+    SOFT preference for end-of-run stragglers stuck pending in a contested home)
   - hf_checkpoint_gcs (run.output_path + /hf/step-<final>/)
   - output_json_gcs (parallel sibling prefix data_curation_core_results/)
 """
@@ -51,8 +52,8 @@ import argparse
 import json
 import logging
 import os
-import subprocess
 import sys
+import time
 from dataclasses import dataclass
 
 from iris.client.client import IrisClient
@@ -70,6 +71,7 @@ from iris.cluster.types import (
     tpu_device,
 )
 from iris.rpc import job_pb2
+from rigging.filesystem import filesystem as marin_filesystem
 
 logger = logging.getLogger(__name__)
 
@@ -111,40 +113,45 @@ class CheckpointPlan:
     method: str
     experiment_tag: str
     budget_flops: float
+    hidden_dim: int  # model width; (method, hidden_dim, budget_flops) is the cell key
     region: str
     output_path: str  # parent dir on GCS (no /hf/step-N appended)
-    summary_path: str  # the JSON we read it from
-    output_json_path: str  # where the CORE result will land
+    summary_path: str  # the training-run JSON we read this plan from
+    output_json_path: str  # where the full (sample-heavy) CORE result lands — a ttl= prefix
+    scores_json_path: str  # where the small scores-only summary lands — a PERMANENT prefix
+
+    def cell_key(self) -> tuple[str, int, float]:
+        """Identity of the isoflop cell this checkpoint fills."""
+        return (self.method, self.hidden_dim, self.budget_flops)
 
     def hf_dir(self) -> str:
         """The /hf/ directory; the final step subdir is resolved at run time."""
         return f"{self.output_path.rstrip('/')}/hf/"
 
 
-# --- GCS helpers (gsutil/gcloud-based for portability) ---------------------
+# --- GCS helpers ----------------------------------------------------------
+# fsspec/gcsfs, NOT the gcloud CLI: iris worker containers don't ship gcloud, so
+# the launcher must use the same filesystem the eval child uses.
 
 
 def _gcs_ls(prefix: str) -> list[str]:
-    """List immediate children of a GCS prefix. Falls back to empty on error."""
-    cmd = ["gcloud", "storage", "ls", prefix]
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
+    """List immediate children of a GCS prefix as gs:// paths. Empty on missing."""
+    try:
+        entries = marin_filesystem("gcs").ls(prefix, detail=False)
+    except FileNotFoundError:
         return []
-    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    # gcsfs strips the gs:// scheme; re-add it for downstream consumers (the
+    # resolved hf/step dir is handed to the child as --hf-checkpoint).
+    return [e if e.startswith("gs://") else f"gs://{e}" for e in entries]
 
 
 def _gcs_cat(path: str) -> bytes:
-    cmd = ["gcloud", "storage", "cat", path]
-    result = subprocess.run(cmd, capture_output=True)
-    if result.returncode != 0:
-        raise RuntimeError(f"gcs cat failed: {path}: {result.stderr.decode(errors='replace')}")
-    return result.stdout
+    with marin_filesystem("gcs").open(path, "rb") as f:
+        return f.read()
 
 
 def _gcs_exists(path: str) -> bool:
-    cmd = ["gcloud", "storage", "ls", path]
-    result = subprocess.run(cmd, capture_output=True)
-    return result.returncode == 0
+    return marin_filesystem("gcs").exists(path)
 
 
 def _resolve_final_step(hf_dir: str) -> str | None:
@@ -173,9 +180,17 @@ def enumerate_plans(
     summaries_prefix: str,
     method_filter: set[str] | None,
     *,
+    results_prefix: str = CORE_RESULTS_PREFIX,
+    samples_prefix: str | None = None,
     budget_desc: bool = True,
 ) -> list[CheckpointPlan]:
-    """List CheckpointPlans from a summaries prefix, optionally filtered by method."""
+    """List CheckpointPlans from a summaries prefix, optionally filtered by method.
+
+    ``results_prefix`` holds the small permanent scores summaries; ``samples_prefix``
+    (defaults to ``results_prefix``) holds the sample-heavy finals/partials and is
+    where a ttl= prefix belongs so the raw outputs auto-expire.
+    """
+    samples_prefix = samples_prefix or results_prefix
     plans: list[CheckpointPlan] = []
     summary_paths = [p for p in _gcs_ls(summaries_prefix) if p.endswith(".json")]
     logger.info("Found %d summary JSONs under %s", len(summary_paths), summaries_prefix)
@@ -223,10 +238,12 @@ def enumerate_plans(
                 method=method,
                 experiment_tag=plan_section.get("experiment_tag", ""),
                 budget_flops=float(plan_section.get("budget_flops", 0.0)),
+                hidden_dim=int(plan_section.get("hidden_dim", 0)),
                 region=run_section.get("region", ""),
                 output_path=run_section.get("output_path", ""),
                 summary_path=sp,
-                output_json_path=f"{CORE_RESULTS_PREFIX}{run_name}.json",
+                output_json_path=f"{samples_prefix}{run_name}.json",
+                scores_json_path=f"{results_prefix}{run_name}_summary.json",
             )
         )
     if budget_desc:
@@ -261,6 +278,95 @@ def select_pilot(plans: list[CheckpointPlan], top_n: int = 1) -> list[Checkpoint
     return pilot
 
 
+# Suffixes that mark a re-run or variance variant of an otherwise-canonical run
+# (a seed sweep, a persistent-cache re-export, a manual retry). These are dropped
+# when a plain run exists at the same cell. NOT a batch-size token (`-B128`):
+# distinct batch sizes are legitimately different training configs.
+_RERUN_SUFFIXES: tuple[str, ...] = ("-seed", "-pcache", "-retry", "-v2", "-v3")
+
+
+def _is_rerun_variant(run_name: str) -> bool:
+    leaf = run_name.rsplit("/", 1)[-1]
+    return any(tag in leaf for tag in _RERUN_SUFFIXES)
+
+
+def _canonical_rank(run_name: str) -> tuple[int, int, str]:
+    """Deterministic sort key for the rare cell that has ONLY re-run variants and
+    no plain run: prefer the shorter, then lexicographically-first name."""
+    leaf = run_name.rsplit("/", 1)[-1]
+    return (1 if _is_rerun_variant(run_name) else 0, len(leaf), leaf)
+
+
+def drop_rerun_variants(plans: list[CheckpointPlan]) -> list[CheckpointPlan]:
+    """Drop re-run / variance variants, keeping every distinct training config.
+
+    The 10k sweep has a few cells with extra summaries: high_quality's
+    `pcache-v1` re-export and fineweb_edu's `seed7/13/21` sweep are re-runs of a
+    plain run and are dropped. Distinct batch sizes (B64 vs B128 at d512/2e19) are
+    NOT re-runs — they are different training configs the canonical figure may
+    plot separately — so both are kept. Every drop is logged for --dry-run review.
+    """
+    by_cell: dict[tuple[str, int, float], list[CheckpointPlan]] = {}
+    for p in plans:
+        by_cell.setdefault(p.cell_key(), []).append(p)
+    kept: list[CheckpointPlan] = []
+    dropped = 0
+    for cell, group in by_cell.items():
+        plain = [p for p in group if not _is_rerun_variant(p.run_name)]
+        variants = [p for p in group if _is_rerun_variant(p.run_name)]
+        if not plain:
+            # No plain run at this cell — every summary here is a re-run variant
+            # (e.g. a file whose name says `-B64` but whose plan.run_name is
+            # `-B64-pcache-v1`). Keep one deterministically and log the pick.
+            ordered = sorted(group, key=lambda p: _canonical_rank(p.run_name))
+            kept.append(ordered[0])
+            dropped += len(ordered) - 1
+            if len(ordered) > 1:
+                method, hidden_dim, budget = cell
+                logger.info(
+                    "DROP rerun variants (no plain run) method=%s d=%d budget=%.0e: keep %s | drop [%s]",
+                    method,
+                    hidden_dim,
+                    budget,
+                    ordered[0].run_name,
+                    ", ".join(p.run_name for p in ordered[1:]),
+                )
+            continue
+        kept.extend(plain)
+        if variants:
+            dropped += len(variants)
+            method, hidden_dim, budget = cell
+            logger.info(
+                "DROP rerun variants method=%s d=%d budget=%.0e: keep [%s] | drop [%s]",
+                method,
+                hidden_dim,
+                budget,
+                ", ".join(p.run_name for p in plain),
+                ", ".join(p.run_name for p in variants),
+            )
+    logger.info("Dropped %d re-run variants: %d plans → %d", dropped, len(plans), len(kept))
+    return kept
+
+
+def filter_to_cells(plans: list[CheckpointPlan], cell_specs: list[str]) -> list[CheckpointPlan]:
+    """Keep only plans at the given (budget, width) cells.
+
+    Each cell spec is ``"<budget>:<width>"`` (e.g. ``"9e+17:1024"``). Matching is on the
+    run-name substring ``-<budget>-d<width>-`` so it's exact and float-safe. Used to run a
+    focused wave at a specific set of isoflop cells (e.g. the fastpipe-aligned scales)
+    instead of the whole sweep.
+    """
+    if not cell_specs:
+        return plans
+    subs = []
+    for c in cell_specs:
+        budget, width = c.split(":")
+        subs.append(f"-{budget}-d{width}-")
+    kept = [p for p in plans if any(s in p.run_name for s in subs)]
+    logger.info("Cell filter (%d cells): %d plans → %d", len(cell_specs), len(plans), len(kept))
+    return kept
+
+
 # --- Command emission -----------------------------------------------------
 
 
@@ -288,6 +394,7 @@ def submit_one(
     preemptible: bool = True,
     max_length: int = 2048,
     limit: int | None = None,
+    region_float: bool = False,
     allow_eu_fallback: bool = False,
     name_suffix: str = "",
     task_filter: str | None = None,
@@ -295,8 +402,13 @@ def submit_one(
 ) -> str:
     """Submit one CheckpointPlan as an Iris TPU job. Returns the iris job id.
 
-    Region is HARD-pinned to the checkpoint's region (plan.region) so the eval
-    reads model weights from the local bucket only (no cross-region egress).
+    By default the child is HARD-pinned to the region its checkpoint was trained
+    in (plan.region) so the eval reads model weights from the local bucket only:
+    zero cross-region egress, and no exposure to rigging's cumulative
+    mirror-budget failures on large (d>=2432, ~15GB) checkpoints. Set
+    `region_float=True` to relax this to a SOFT preference that lets iris migrate
+    a job to any region with capacity (primary region still preferred first) —
+    use that only for end-of-run stragglers stuck pending in a contested home.
 
     The child runs `run_dclm_core_eval.py` with the resolved HF step subdir and
     writes the result JSON directly to plan.output_json_path (gs://).
@@ -313,11 +425,18 @@ def submit_one(
         hf_step_dir,
         "--output-json",
         plan.output_json_path,
+        "--summary-json",
+        plan.scores_json_path,
         "--run-name",
         plan.run_name,
         "--max-length",
         str(max_length),
     ]
+    # Point the child at the byte-identical dataset cache in ITS OWN region's
+    # bucket (the same bucket the checkpoint lives in) so task loading reads
+    # locally, never the HF Hub. hf_step_dir = gs://<bucket>/checkpoints/... .
+    ckpt_bucket = hf_step_dir.split("/")[2]
+    cmd_args += ["--dataset-cache-gcs", f"gs://{ckpt_bucket}/eval_datasets/dclm_core_hf_cache/"]
     if log_samples:
         cmd_args += ["--log-samples"]
     if task_filter is not None:
@@ -330,6 +449,15 @@ def submit_one(
         "HF_TOKEN": hf_token,
         "HF_DATASETS_TRUST_REMOTE_CODE": "1",
         "PYTHONUNBUFFERED": "1",
+        # NOTE: do NOT set HF_HUB_OFFLINE/TRANSFORMERS_OFFLINE here. The eval
+        # datasets run offline via the in-region GCS cache (HF_DATASETS_OFFLINE,
+        # set in run_dclm_core_eval), but the model load still needs the *base*
+        # model's config/tokenizer via _name_or_path, which isn't in the local
+        # hub cache — forcing hub-offline makes transformers hard-error
+        # ("run the library in offline mode") on every job. The Hub cold-start
+        # rate limit ("We had to rate limit you", 1000 req/5min) is instead
+        # ridden out by the in-process retry in run_dclm_core_eval
+        # (_load_hf_with_retry) plus iris job retries — it is transient, not fatal.
         # WandB init occasionally stalls past the 90s default on TPU egress.
         "WANDB_INIT_TIMEOUT": "300",
         # Default rigging cap is 10GB and the largest curation checkpoints
@@ -339,29 +467,34 @@ def submit_one(
         "MARIN_MIRROR_BUDGET_GB": "25",
     }
 
-    # Region strategy: SOFT preference (mode=PREFERRED) for cheap regions, never
-    # a hard pin. This is how `launch_curation_sweep.submit_one` schedules its
-    # training children, and they land smoothly while my earlier HARD-pin
-    # version would sit pending for hours when home was contested. iris's
-    # scheduler treats PREFERRED as a tiebreaker — it'll go cross-region if
-    # necessary, but won't time out waiting.
+    # Region strategy: HARD-pin to the checkpoint's training region by default so
+    # the eval reads weights from the local bucket only — no cross-region egress,
+    # and no cumulative mirror-budget failures on the largest (d>=2432, ~15GB)
+    # checkpoints. `region_float=True` relaxes this to a SOFT preference for
+    # end-of-run stragglers: iris keeps the training region first but may migrate
+    # a job to any region with capacity rather than sit pending.
     #
-    # Cost note: if iris lands a job in europe-west4 to read a us-east5
-    # checkpoint, that's ~$0.40 cross-region egress for a 4-8GB checkpoint.
-    # At 20 evals it's bounded under $10 worst case. Tradeoff accepted vs
-    # losing the whole overnight to pending.
-    ALL_REGIONS = ["us-east5", "us-central1", "us-central2", "us-east1", "us-west4", "europe-west4"]
-    preferred = [plan.region] + [r for r in ALL_REGIONS if r != plan.region]
-    if not allow_eu_fallback:
-        # Even SOFT mode can let iris land in EU; drop it from the list when
-        # the caller doesn't want trans-Atlantic egress at scale.
-        preferred = [r for r in preferred if r != "europe-west4"]
-    region_constraint = Constraint.create(
-        key=WellKnownAttribute.REGION,
-        op=ConstraintOp.IN,
-        values=preferred,
-        mode=1,  # CONSTRAINT_MODE_PREFERRED (soft)
-    )
+    # Cost note (float mode only): if iris lands a job in europe-west4 to read a
+    # us-east5 checkpoint, that's ~$0.40 cross-region egress for a 4-8GB
+    # checkpoint. EU is dropped from the candidate list unless allow_eu_fallback.
+    if region_float:
+        ALL_REGIONS = ["us-east5", "us-central1", "us-central2", "us-east1", "us-west4", "europe-west4"]
+        preferred = [plan.region] + [r for r in ALL_REGIONS if r != plan.region]
+        if not allow_eu_fallback:
+            preferred = [r for r in preferred if r != "europe-west4"]
+        region_constraint = Constraint.create(
+            key=WellKnownAttribute.REGION,
+            op=ConstraintOp.IN,
+            values=preferred,
+            mode=job_pb2.CONSTRAINT_MODE_PREFERRED,
+        )
+    else:
+        region_constraint = Constraint.create(
+            key=WellKnownAttribute.REGION,
+            op=ConstraintOp.IN,
+            values=[plan.region],
+            mode=job_pb2.CONSTRAINT_MODE_REQUIRED,
+        )
 
     constraints = [
         preemptible_constraint(preemptible),
@@ -455,10 +588,41 @@ def main():
         "--priority-methods", action="store_true", help="All budgets for the 4 priority methods in the FM sweep."
     )
     scope.add_argument("--all-fm", action="store_true", help="All FM sweep runs (no method filter).")
+    scope.add_argument(
+        "--methods",
+        nargs="+",
+        default=None,
+        metavar="METHOD",
+        help="Explicit method names to eval (exact plan.method_name match), e.g. the 3000-scale "
+        "biased+random comparison set: dclm nemotron_full_bos_fixed high_quality_3000 "
+        "resiliparse_dedup fineweb_edu med_quality_3000 dclm_random_3000 "
+        "nemotron_full_random_3000 resiliparse_random_dedup_3000.",
+    )
     ap.add_argument(
         "--top-n", type=int, default=1, help="With --pilot: top N highest-budget runs per priority method (default 1)."
     )
     ap.add_argument("--summaries-prefix", default=FM_SUMMARIES_PREFIX, help="GCS prefix containing summary JSONs.")
+    ap.add_argument(
+        "--results-prefix",
+        default=CORE_RESULTS_PREFIX,
+        help="PERMANENT GCS prefix where the small scores-only summaries land (default: the "
+        "3000-WARC FM prefix). Point at a dedicated prefix (e.g. data_curation_10k_core_results/) "
+        "to keep a sweep's scores in their own namespace.",
+    )
+    ap.add_argument(
+        "--samples-prefix",
+        default=None,
+        help="GCS prefix where the sample-heavy full finals + per-task partials land (defaults to "
+        "--results-prefix). Point at a ttl= prefix (e.g. gs://marin-us-central1/tmp/ttl=30d/dclm_10k_core/) "
+        "so the ~360GB of --log-samples output auto-expires while the scores summaries persist forever.",
+    )
+    ap.add_argument(
+        "--dedup-cells",
+        action="store_true",
+        help="Drop re-run / variance variants (seed sweeps, pcache re-exports, retries) when a "
+        "plain run exists at the same cell, while keeping distinct batch-size configs (B64 and "
+        "B128 are both kept). Logs every drop. For the 10k sweep this takes 250 summaries → 246.",
+    )
     mode = ap.add_mutually_exclusive_group(required=True)
     mode.add_argument("--dry-run", action="store_true", help="Print plans only, don't launch.")
     mode.add_argument(
@@ -486,11 +650,19 @@ def main():
         help="Use non-preemptible TPU pool. Default uses preemptible (cheaper, often more capacity).",
     )
     ap.add_argument(
+        "--region-float",
+        action="store_true",
+        help="Relax child region pinning from HARD (train region only) to a SOFT "
+        "preference that lets iris migrate a job to any region with capacity. "
+        "Default OFF: each eval runs in the region its checkpoint was trained in "
+        "(no cross-region egress). Turn on for end-of-run stragglers stuck pending.",
+    )
+    ap.add_argument(
         "--allow-eu-fallback",
         action="store_true",
-        help="Allow children to land on europe-west4 v6e-4 if their primary region is saturated. "
-        "Each child then pays ~$0.32-0.64 cross-region read for the checkpoint. "
-        "OK at pilot scale, costly at 100x+ — opt in deliberately.",
+        help="With --region-float, also allow children to land on europe-west4 v6e-4 "
+        "if their primary region is saturated. Each child then pays ~$0.32-0.64 "
+        "cross-region read for the checkpoint. No effect without --region-float.",
     )
     ap.add_argument(
         "--name-suffix",
@@ -499,19 +671,91 @@ def main():
         "Use to dodge JobAlreadyExists after a kill+resubmit cycle, "
         "since iris kills are async and the old name may linger.",
     )
+    ap.add_argument(
+        "--wave-size",
+        type=int,
+        default=0,
+        help="Throttle submission: after this many launches, pause --wave-delay before continuing. "
+        "0 = submit all at once. Use ~40 to keep cold-start HF requests under the Hub's 1000-req/5min "
+        "API limit when launching a large fleet.",
+    )
+    ap.add_argument(
+        "--wave-delay",
+        type=float,
+        default=330.0,
+        help="Seconds to pause between waves (should exceed HF's 5-min rate window). Default 330.",
+    )
     ap.add_argument("--max-length", type=int, default=2048, help="Max sequence length for eval. DCLM uses 2048.")
     ap.add_argument(
         "--limit", type=int, default=None, help="Cap each task to N examples (smoke testing). None = full eval."
     )
+    ap.add_argument(
+        "--no-log-samples",
+        dest="log_samples",
+        action="store_false",
+        default=True,
+        help="Don't persist per-example prompts/generations in the partials/finals. Scores only. "
+        "Use when you only need the Core_v2 numbers (smaller output, no large cross-region sample writes).",
+    )
+    ap.add_argument(
+        "--no-keepalive",
+        dest="keepalive",
+        action="store_false",
+        default=True,
+        help="Submit-and-exit instead of blocking until children finish. Children submitted from "
+        "inside a parent iris job are lifecycle-bound descendants and get reaped if the parent "
+        "exits early, so keep-alive is ON by default. Only safe to disable in direct-laptop mode.",
+    )
+    ap.add_argument(
+        "--keepalive-poll", type=float, default=180.0, help="Keep-alive: seconds between scores-count polls."
+    )
+    ap.add_argument(
+        "--keepalive-max",
+        type=float,
+        default=6 * 3600.0,
+        help="Keep-alive: max seconds to block before exiting even if children remain (default 6h).",
+    )
+    ap.add_argument(
+        "--hidden-sizes",
+        type=int,
+        nargs="+",
+        default=None,
+        metavar="WIDTH",
+        help="Keep only plans at these model widths (hidden_dim), e.g. 512 to eval only the 157M "
+        "checkpoints. Combine with --region-float to float just the small (cheap-egress) models "
+        "out of a capacity-locked region while leaving the big ones region-pinned.",
+    )
+    ap.add_argument(
+        "--cells",
+        nargs="+",
+        default=None,
+        metavar="BUDGET:WIDTH",
+        help="Keep only plans at these exact (budget, width) cells, e.g. '9e+20:2432 2e+19:2432'. "
+        "Matches the run-name substring '-<budget>-d<width>-' so it's exact and float-safe. Use to "
+        "relaunch a specific handful of straggler cells.",
+    )
     args = ap.parse_args()
 
     method_filter: set[str] | None
-    if args.pilot or args.priority_methods:
+    if args.methods:
+        method_filter = set(args.methods)
+    elif args.pilot or args.priority_methods:
         method_filter = set(PRIORITY_METHODS)
     else:
         method_filter = None
 
-    plans = enumerate_plans(args.summaries_prefix, method_filter)
+    plans = enumerate_plans(
+        args.summaries_prefix, method_filter, results_prefix=args.results_prefix, samples_prefix=args.samples_prefix
+    )
+    if args.dedup_cells:
+        plans = drop_rerun_variants(plans)
+    if args.cells:
+        plans = filter_to_cells(plans, args.cells)
+    if args.hidden_sizes:
+        keep = set(args.hidden_sizes)
+        before = len(plans)
+        plans = [p for p in plans if p.hidden_dim in keep]
+        logger.info("Width filter %s: %d plans -> %d", sorted(keep), before, len(plans))
     if args.pilot:
         plans = select_pilot(plans, top_n=args.top_n)
     logger.info("Selected %d plans", len(plans))
@@ -533,7 +777,7 @@ def main():
     incomplete: list[str] = []
 
     for i, plan in enumerate(plans):
-        if args.skip_existing and _gcs_exists(plan.output_json_path):
+        if args.skip_existing and _gcs_exists(plan.scores_json_path):
             logger.info("[%2d] SKIP (exists): %s", i, plan.run_name)
             skipped.append(plan.run_name)
             continue
@@ -572,8 +816,10 @@ def main():
                 preemptible=not args.non_preemptible,
                 max_length=args.max_length,
                 limit=args.limit,
+                region_float=args.region_float,
                 allow_eu_fallback=args.allow_eu_fallback,
                 name_suffix=args.name_suffix,
+                log_samples=args.log_samples,
             )
         except Exception as e:
             # JobAlreadyExists or transient submit failures: log and continue so
@@ -585,12 +831,52 @@ def main():
         submitted.append((plan.run_name, job_id))
         logger.info("[%2d] LAUNCHED %s -> iris job %s (region=%s)", i, plan.run_name, job_id, plan.region)
 
+        # Throttle: HF's Hub API caps at 1000 requests / 5 min per token, and each
+        # eval makes several HF calls at cold-start (AutoConfig resolution + the
+        # model-type probe's tokenizer fetch). Submitting the whole fleet at once
+        # blows the cap and jobs die with "We had to rate limit you". Pausing
+        # between waves keeps concurrent startups — and thus the HF request rate —
+        # under the limit.
+        if args.wave_size and len(submitted) % args.wave_size == 0:
+            logger.info(
+                "Wave of %d launched; pausing %.0fs to stay under HF rate limit...", args.wave_size, args.wave_delay
+            )
+            time.sleep(args.wave_delay)
+
     if args.launch:
         logger.info("Summary: submitted=%d skipped=%d incomplete=%d", len(submitted), len(skipped), len(incomplete))
         if submitted:
             logger.info("Job IDs:")
             for run_name, job_id in submitted:
                 logger.info("  %s -> %s", job_id, run_name)
+
+        # Keep-alive: children submitted via IrisClient from inside a parent job are
+        # named as descendants of the parent (`/user/parent/child`) and are bound to
+        # the parent's lifecycle — if this launcher returns while children are still
+        # running, the controller reaps them as orphans. So block here until every
+        # selected plan has produced its scores summary (or --keepalive-max elapses),
+        # polling the results prefix. Set --no-keepalive to submit-and-exit (only safe
+        # when children are top-level, e.g. direct-laptop mode).
+        if args.keepalive:
+            expected = {p.scores_json_path for p in plans}
+            deadline = time.time() + args.keepalive_max
+            logger.info(
+                "Keep-alive: waiting for %d scores under %s (poll=%.0fs, max=%.0fs)",
+                len(expected),
+                args.results_prefix,
+                args.keepalive_poll,
+                args.keepalive_max,
+            )
+            while time.time() < deadline:
+                present = {p for p in _gcs_ls(args.results_prefix) if p in expected}
+                done = len(present)
+                logger.info("Keep-alive: %d / %d scores present", done, len(expected))
+                if done >= len(expected):
+                    logger.info("Keep-alive: all scores present — exiting cleanly.")
+                    break
+                time.sleep(args.keepalive_poll)
+            else:
+                logger.warning("Keep-alive: deadline reached with %d / %d done — exiting.", done, len(expected))
 
 
 if __name__ == "__main__":

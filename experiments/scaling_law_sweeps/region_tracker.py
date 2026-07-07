@@ -23,10 +23,19 @@ import json
 import logging
 import os
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 import fsspec
 
 logger = logging.getLogger(__name__)
+
+
+# A region claim counts as "live" (its run still actively writing in that region)
+# if the region's checkpoint dir was modified within this window. Must comfortably
+# exceed the child's rolling-checkpoint interval (15 min) so a live-but-mid-step run
+# is never mistaken for dead — see run_curation_train_standalone's
+# CheckpointerConfig(save_interval=timedelta(minutes=15)).
+STALE_CLAIM_SECONDS: float = 45 * 60
 
 
 # Where the tracker files live. A single shared prefix so any cluster can
@@ -210,6 +219,65 @@ def claim_or_read_region(
     return RegionClaim(run_key=run_key, region=local_region, was_first_claim=True)
 
 
+def _latest_mtime_seconds_ago(fs, dir_urlpath: str) -> float | None:
+    """Seconds since the most recently-modified object under `dir_urlpath`.
+
+    Returns None when the dir is empty/absent (no checkpoint written yet) or when
+    no entry carries a usable timestamp. Tolerates gcsfs (`mtime` datetime /
+    `updated` ISO string) and local fs (`mtime` epoch float) detail formats.
+    """
+    try:
+        entries = fs.ls(dir_urlpath, detail=True)
+    except FileNotFoundError:
+        return None
+
+    times: list[datetime] = []
+    for e in entries:
+        raw = e.get("mtime") or e.get("updated") or e.get("timeCreated")
+        if raw is None:
+            continue
+        if isinstance(raw, (int, float)):
+            t = datetime.fromtimestamp(raw, tz=timezone.utc)
+        elif isinstance(raw, str):
+            t = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        elif isinstance(raw, datetime):
+            t = raw
+        else:
+            continue
+        if t.tzinfo is None:
+            t = t.replace(tzinfo=timezone.utc)
+        times.append(t)
+
+    if not times:
+        return None
+    return (datetime.now(timezone.utc) - max(times)).total_seconds()
+
+
+def _claim_is_live(checkpoint_dir: str, staleness_seconds: float) -> bool:
+    """True if `checkpoint_dir` shows a recent write — i.e. a run still active there.
+
+    Conservative on read errors: returns True (treat as live → don't migrate → never
+    risk a concurrent duplicate). Returns False only when we positively confirm no
+    recent activity (empty dir, or newest object older than `staleness_seconds`).
+    """
+    try:
+        fs, urlpath = fsspec.core.url_to_fs(checkpoint_dir, skip_instance_cache=True)
+    except Exception:
+        logger.warning("liveness: could not open fs for %s; treating claim as live", checkpoint_dir)
+        return True
+    try:
+        ago = _latest_mtime_seconds_ago(fs, urlpath)
+    except Exception:
+        logger.warning("liveness: listing failed for %s; treating claim as live", checkpoint_dir)
+        return True
+    if ago is None:
+        # No checkpoint written yet → not (yet) a live run with durable progress.
+        # The atomic first-claim guards simultaneous starts; the residual window is
+        # the run's first ~15 min before its first checkpoint lands.
+        return False
+    return ago < staleness_seconds
+
+
 def resolve_checkpoint_prefix(
     method_name: str,
     experiment_tag: str,
@@ -218,6 +286,8 @@ def resolve_checkpoint_prefix(
     local_region: str | None = None,
     tracker_prefix: str = DEFAULT_TRACKER_PREFIX,
     allow_region_migration: bool = True,
+    checkpoint_rel_path: str | None = None,
+    live_staleness_seconds: float = STALE_CLAIM_SECONDS,
 ) -> str:
     """Return the correct GCS checkpoint prefix for this run, respecting the region lock.
 
@@ -233,6 +303,15 @@ def resolve_checkpoint_prefix(
     iris doesn't support per-task region affinity on retry; a mismatch
     usually means iris re-scheduled a preempted child in a different region,
     and refusing to proceed leads to terminal task failure.
+
+    LIVENESS GATE: when `checkpoint_rel_path` is given, a mismatch does NOT
+    migrate blindly. We first stat the *claimed* region's checkpoint dir
+    (`{claimed_bucket}/{checkpoint_rel_path}`); if it was written within
+    `live_staleness_seconds` the original run is still alive there, so we raise
+    `RegionMismatch` rather than spawning a concurrent duplicate in this region.
+    Migration only proceeds when the claimed region's checkpoint is stale/absent
+    (the original was preempted or died). Without `checkpoint_rel_path` the old
+    always-migrate behavior is preserved (backward compatible for other callers).
 
     When `allow_region_migration=False` (strict mode): raises `RegionMismatch`.
     Use only when cross-region data availability is uncertain.
@@ -258,6 +337,20 @@ def resolve_checkpoint_prefix(
                 f"is in {local_region!r}. Iris should have placed this worker in "
                 f"{claim.region!r}; re-schedule the job there instead of migrating."
             )
+        # Liveness gate: don't migrate over a still-running claim, or we'd spawn a
+        # concurrent duplicate in this region. Only migrate when the claimed region's
+        # checkpoint is stale/absent (original preempted or dead).
+        if checkpoint_rel_path:
+            claimed_bucket = REGION_TO_BUCKET.get(claim.region)
+            if claimed_bucket is not None:
+                checkpoint_dir = f"{claimed_bucket.rstrip('/')}/{checkpoint_rel_path.lstrip('/')}"
+                if _claim_is_live(checkpoint_dir, live_staleness_seconds):
+                    raise RegionMismatch(
+                        f"Run {key!r} is region-locked to {claim.region!r} and that region's "
+                        f"checkpoint was written < {live_staleness_seconds:.0f}s ago (still live). "
+                        f"Refusing to migrate to {local_region!r} to avoid a concurrent duplicate; "
+                        f"iris should re-schedule this worker in {claim.region!r}."
+                    )
         # Migration allowed: overwrite tracker with new region. Old checkpoints
         # are orphaned (stay in gs://marin-{old_region}/...), training restarts
         # from step 0 in the new region's bucket.

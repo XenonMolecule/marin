@@ -32,6 +32,12 @@ def local_gpt2_tokenizer(tmp_path_factory):
 
 
 @pytest.fixture(scope="session")
+def local_gpt2_tokenizer_path(tmp_path_factory) -> str:
+    """Local directory holding the GPT-2 tokenizer files (path form, for use as a tokenizer ref)."""
+    return str(_gpt2_tokenizer_dir(tmp_path_factory))
+
+
+@pytest.fixture(scope="session")
 def local_gpt2_marin_tokenizer(tmp_path_factory) -> HfMarinTokenizer:
     """Load a GPT2 MarinTokenizer from a local JSON file to avoid network downloads."""
     from tokenizers import Tokenizer as HfBaseTokenizer

@@ -42,6 +42,7 @@ from experiments.scaling_law_sweeps.plot_curation_isoflop import (
     COMPARE_COLORS,
     DEFAULT_METRIC,
     _compute_paloma_macro_loss,
+    _compute_uncheatable_macro_loss,
     _fit_loss_vs_x,
     load_summaries,
 )
@@ -65,8 +66,13 @@ class FixedModelRecord:
 
 
 def _extract_metric(eval_metrics: dict, metric_key: str) -> float | None:
+    # paloma/uncheatable macro losses are aggregated from per-dataset keys
+    # (or the precomputed `eval/.../macro_loss`), not stored under their short
+    # metric name -- reuse the canonical aggregators from plot_curation_isoflop.
     if metric_key == "paloma_macro_loss":
         return _compute_paloma_macro_loss(eval_metrics)
+    if metric_key == "uncheatable_macro_loss":
+        return _compute_uncheatable_macro_loss(eval_metrics)
     val = eval_metrics.get(metric_key)
     return float(val) if val is not None else None
 
@@ -145,8 +151,26 @@ def _clean_params_label(params: int) -> str:
     return f"{round(params / 1e6)}M"
 
 
-# Line style per hidden_dim so the three model sizes are visually distinct.
-HIDDEN_DIM_DASH = {512: "solid", 1536: "dash", 3584: "dot"}
+# Line style per hidden_dim so the model sizes are visually distinct. Covers
+# both the 3k fixed-model widths (512/1536/2432) and the two extra 10k-natural
+# widths (1024/3584) so the 10k variant renders all five distinctly.
+HIDDEN_DIM_DASH = {512: "solid", 1024: "dashdot", 1536: "dash", 2432: "longdash", 3584: "dot"}
+
+# 10k-natural method names (launch_10k_natural.METHOD_NAMES) → their base method
+# name, so the `_10k` runs reuse the base colors/labels in COMPARE_COLORS and
+# sit on the same legend as the 3k methods. Mirrors
+# plot_warc_scaling_sweep._FM_METHOD_MAP's 10k entries (note nemotron_10k maps to
+# nemotron_full, not "nemotron"); kept local to avoid importing that heavy module.
+TENK_METHOD_MAP: dict[str, str] = {
+    "dclm_10k": "dclm",
+    "nemotron_10k": "nemotron_full",
+    "high_quality_10k": "high_quality",
+    "fineweb_cc_10k": "fineweb_cc",
+    "fineweb_edu_10k": "fineweb_edu",
+    # resiliparse_10k is fuzzy-deduped (extract → dedup_resiliparse_warc_scaling
+    # --n 10364 → decontaminate), so it's the 10k analog of resiliparse_dedup.
+    "resiliparse_10k": "resiliparse_dedup",
+}
 
 
 def plot_lc_per_model(
@@ -155,12 +179,16 @@ def plot_lc_per_model(
     output_dir: Path,
     mode: str = "projections",
     clean_titles: bool = False,
+    hidden_sizes: tuple[int, ...] = TARGET_HIDDEN_SIZES,
 ) -> None:
     """One figure per method: L(C) curves for each hidden_size.
 
     mode="projections": overlay the power-law fit trace (dashed, faint).
     mode="one_epoch": overlay a dashed vertical line per model size at the
         compute budget where tokens_trained equals D_obs (one epoch).
+
+    ``hidden_sizes`` controls which model widths are drawn and in what order
+    (the 10k-natural variant passes its five widths; default is the 3k triplet).
     """
     import plotly.graph_objects as go
 
@@ -176,7 +204,7 @@ def plot_lc_per_model(
         by_hidden: dict[int, list[FixedModelRecord]] = {}
         for r in method_records:
             by_hidden.setdefault(r.hidden_dim, []).append(r)
-        for hidden_dim in TARGET_HIDDEN_SIZES:
+        for hidden_dim in hidden_sizes:
             pts = sorted(by_hidden.get(hidden_dim, []), key=lambda r: r.flops)
             if not pts:
                 continue
@@ -557,6 +585,8 @@ def plot_method_comparison_per_model(
     x_axis: str = "flops",
     mode: str = "projections",
     clean_titles: bool = False,
+    hidden_sizes: tuple[int, ...] = TARGET_HIDDEN_SIZES,
+    warc_count: int = 3000,
 ) -> None:
     """One figure per model size: all methods compared along x_axis (flops or tokens).
 
@@ -566,6 +596,9 @@ def plot_method_comparison_per_model(
     mode="projections": overlay dashed forecast extending past the last data point.
     mode="one_epoch": overlay a dashed vertical line per method at the x where
         tokens_trained equals D_obs (1 epoch).
+
+    ``hidden_sizes`` selects which model widths get a figure (and their order).
+    ``warc_count`` is the WARC-pool size shown in the clean-title text.
     """
     import plotly.graph_objects as go
 
@@ -576,7 +609,7 @@ def plot_method_comparison_per_model(
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    for hidden_dim in TARGET_HIDDEN_SIZES:
+    for hidden_dim in hidden_sizes:
         hidden_records = by_hidden.get(hidden_dim, [])
         if not hidden_records:
             continue
@@ -598,7 +631,7 @@ def plot_method_comparison_per_model(
             else ""
         )
         if clean_titles:
-            title = f"Training {_clean_params_label(params)} model on data from 3000 WARC files"
+            title = f"Training {_clean_params_label(params)} model on data from {warc_count} WARC files"
             yaxis_title = _clean_metric_label(metric_key)
         else:
             title = f"Method comparison at {label} vs {x_axis}{mode_tag} -- expFM_natural{fit_subtitle}"
@@ -632,6 +665,7 @@ def plot_method_comparison_side_by_side(
     mode: str = "all_epochs",
     clean_titles: bool = False,
     hidden_sizes: tuple[int, ...] = DEFAULT_SIDE_BY_SIDE_HIDDEN_SIZES,
+    warc_count: int = 3000,
 ) -> None:
     """Combined figure: one method-comparison panel per model size, left to right.
 
@@ -661,7 +695,7 @@ def plot_method_comparison_side_by_side(
 
     subplot_titles = [
         (
-            f"Training {_clean_params_label(recs[0].params)} model on data from 3000 WARC files"
+            f"Training {_clean_params_label(recs[0].params)} model on data from {warc_count} WARC files"
             if clean_titles
             else _params_label(hd, recs[0].params)
         )
@@ -795,6 +829,16 @@ def main(argv: list[str] | None = None) -> None:
         ),
     )
     parser.add_argument(
+        "--warc-count",
+        type=int,
+        default=3000,
+        help=(
+            "WARC-pool size shown in the clean-title text ('...data from N WARC "
+            "files'). The 3k fixed-model sweep is 3000; the 10k-natural sweep is "
+            "10364. Display-only -- does not affect which summaries are loaded."
+        ),
+    )
+    parser.add_argument(
         "--side-by-side-hidden-sizes",
         nargs="+",
         type=int,
@@ -845,6 +889,21 @@ def main(argv: list[str] | None = None) -> None:
             before - len(summaries),
             renames,
         )
+
+    # Rename 10k-natural method names (dclm_10k, ..., resiliparse_10k) to their
+    # base method so they reuse the base colors/labels in COMPARE_COLORS and sit
+    # on the same legend as the 3k methods. Runs AFTER prefer_bos_fixed so the
+    # rename of nemotron_10k -> nemotron_full doesn't get caught by that block's
+    # drop of pre-fix nemotron_full runs. No-op for the 3k sweep (no _10k names).
+    tenk_renames = 0
+    for s in summaries:
+        mn = s.get("plan", {}).get("method_name", "")
+        base = TENK_METHOD_MAP.get(mn)
+        if base is not None:
+            s["plan"]["method_name"] = base
+            tenk_renames += 1
+    if tenk_renames:
+        logger.info("Renamed %d 10k-natural method names to their base method", tenk_renames)
 
     # Merge LIMA sidecar data into each summary's `eval` dict so LIMA metrics
     # become plottable through the standard summary_to_record pipeline.
@@ -961,15 +1020,31 @@ def main(argv: list[str] | None = None) -> None:
         if args.csv_only:
             continue
 
+        # Draw every model width present in the data (sorted), so the 10k-natural
+        # variant shows all five widths while the 3k sweep shows its triplet --
+        # without hardcoding either set here.
+        present_hidden_sizes = tuple(sorted({r.hidden_dim for r in records}))
+
         for mode in ("projections", "one_epoch", "all_epochs"):
-            plot_lc_per_model(records, metric_key, metric_dir, mode=mode, clean_titles=args.clean_titles)
-            plot_method_comparison_per_model(
-                records, metric_key, metric_dir, x_axis="flops", mode=mode, clean_titles=args.clean_titles
-            )
-            plot_method_comparison_per_model(
-                records, metric_key, metric_dir, x_axis="tokens", mode=mode, clean_titles=args.clean_titles
+            plot_lc_per_model(
+                records,
+                metric_key,
+                metric_dir,
+                mode=mode,
+                clean_titles=args.clean_titles,
+                hidden_sizes=present_hidden_sizes,
             )
             for x_axis in ("flops", "tokens"):
+                plot_method_comparison_per_model(
+                    records,
+                    metric_key,
+                    metric_dir,
+                    x_axis=x_axis,
+                    mode=mode,
+                    clean_titles=args.clean_titles,
+                    hidden_sizes=present_hidden_sizes,
+                    warc_count=args.warc_count,
+                )
                 plot_method_comparison_side_by_side(
                     records,
                     metric_key,
@@ -978,6 +1053,7 @@ def main(argv: list[str] | None = None) -> None:
                     mode=mode,
                     clean_titles=args.clean_titles,
                     hidden_sizes=tuple(args.side_by_side_hidden_sizes),
+                    warc_count=args.warc_count,
                 )
 
 

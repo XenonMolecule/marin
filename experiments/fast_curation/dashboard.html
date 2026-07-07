@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<!-- Copyright The Marin Authors. SPDX-License-Identifier: Apache-2.0 -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Fast-Curation Cascade</title>
+<style>
+:root{
+  --bg:#0d1117; --panel:#161b22; --panel2:#1c2330; --border:#30363d;
+  --text:#e6edf3; --dim:#8b949e; --accent:#58a6ff;
+  --a:#3fb950; --b:#bc8cff; --c:#f0883e; --warn:#d29922; --bad:#f85149; --good:#3fb950;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;font-size:13px}
+header{display:flex;align-items:center;gap:16px;padding:12px 20px;border-bottom:1px solid var(--border);background:var(--panel);position:sticky;top:0;z-index:5}
+header h1{margin:0;font-size:17px;font-weight:600}
+.muted{color:var(--dim)}
+.spacer{flex:1}
+.tabs{display:flex;gap:2px;padding:0 20px;border-bottom:1px solid var(--border);background:var(--panel);position:sticky;top:49px;z-index:5}
+.tab{padding:9px 16px;cursor:pointer;color:var(--dim);border-bottom:2px solid transparent;font-weight:500}
+.tab:hover{color:var(--text)}
+.tab.active{color:var(--text);border-bottom-color:var(--accent)}
+.content{display:none;padding:18px 20px}
+.content.active{display:block}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:middle}
+.dot.live{background:var(--good);box-shadow:0 0 6px var(--good);animation:pulse 2s infinite}
+.dot.stale{background:var(--dim)}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+
+.run{background:var(--panel);border:1px solid var(--border);border-radius:10px;margin-bottom:22px;overflow:hidden}
+.run-head{display:flex;align-items:center;gap:22px;padding:14px 18px;background:var(--panel2);border-bottom:1px solid var(--border);flex-wrap:wrap}
+.run-id{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:14px;font-weight:600}
+.run-id .ver{color:var(--dim);font-weight:400}
+.kpi{display:flex;flex-direction:column;line-height:1.2}
+.kpi .v{font-size:20px;font-weight:700}
+.kpi .l{font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--dim)}
+.kpi.big .v{font-size:28px}
+.eta .v{color:var(--accent)}
+.conf{font-size:9px;padding:1px 6px;border:1px solid;border-radius:8px;text-transform:uppercase;letter-spacing:.04em;margin-left:6px;vertical-align:middle}
+
+/* funnel */
+.funnel-viz{padding:12px 18px;border-bottom:1px solid var(--border);background:var(--panel)}
+.ftitle{font-size:10px;text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px}
+.fstage{display:flex;align-items:center;gap:12px;margin:5px 0}
+.fbar{height:16px;border-radius:3px;min-width:3px;transition:width .4s}
+.flabel{font-size:12px;white-space:nowrap}
+.flabel b{font-variant-numeric:tabular-nums}
+
+.phases{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--border)}
+.phase{background:var(--panel);padding:14px 16px;position:relative}
+.phase.bottleneck{background:linear-gradient(180deg,#d2992215,transparent 60%)}
+.phase.bottleneck::after{content:"⚠ gating ETA";position:absolute;top:12px;right:14px;font-size:10px;color:var(--warn);font-weight:600}
+.phase h3{margin:0 0 10px;font-size:13px;display:flex;align-items:center;gap:8px}
+.badge{font-size:10px;padding:1px 7px;border-radius:10px;font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+.badge.cpu{background:#1f6feb33;color:#79c0ff;border:1px solid #1f6feb55}
+.badge.tpu{background:#bc8cff22;color:#d2a8ff;border:1px solid #bc8cff55}
+.pa h3 .tag{color:var(--a)} .pb h3 .tag{color:var(--b)} .pc h3 .tag{color:var(--c)}
+.bar{height:10px;background:var(--panel2);border-radius:5px;overflow:hidden;margin:8px 0 4px}
+.bar > i{display:block;height:100%;border-radius:5px;transition:width .5s}
+.pa .bar > i{background:var(--a)} .pb .bar > i{background:var(--b)} .pc .bar > i{background:var(--c)}
+.row{display:flex;justify-content:space-between;margin:3px 0;align-items:center}
+.row .k{color:var(--dim)}
+.big-eta{font-size:15px;font-weight:700;color:var(--accent)}
+.spark{margin:8px 0 2px}
+.funnel{display:flex;align-items:center;gap:6px;font-family:ui-monospace,monospace;font-size:11px;color:var(--dim);margin-top:8px}
+.funnel b{color:var(--text)}
+.regions{margin-top:10px;border-top:1px solid var(--border);padding-top:8px}
+.rrow{display:flex;justify-content:space-between;font-size:11px;margin:3px 0;align-items:center}
+.rrow .rn{color:var(--dim)}
+.chip{font-size:10px;padding:0 6px;border-radius:8px;background:var(--panel2);border:1px solid var(--border)}
+.compute{font-size:10px;color:var(--dim);margin-top:6px;font-family:ui-monospace,monospace}
+
+table{width:100%;border-collapse:collapse;font-size:12px}
+th,td{text-align:left;padding:6px 10px;border-bottom:1px solid var(--border)}
+th{color:var(--dim);font-weight:500;font-size:11px;text-transform:uppercase}
+.num{text-align:right;font-variant-numeric:tabular-nums}
+button{background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 12px;cursor:pointer;font-size:12px}
+button:hover{border-color:var(--accent)}
+.empty{color:var(--dim);padding:30px;text-align:center}
+</style>
+</head>
+<body>
+<header>
+  <h1>🪶 Fast-Curation Cascade</h1>
+  <span class="muted" id="manifest"></span>
+  <div class="spacer"></div>
+  <span class="muted" id="status">connecting…</span>
+  <label class="muted"><input type="checkbox" id="auto" checked> auto</label>
+</header>
+<div class="tabs">
+  <div class="tab active" data-tab="runs" onclick="switchTab('runs')">Runs</div>
+  <div class="tab" data-tab="cluster" onclick="switchTab('cluster')">Cluster</div>
+  <div class="tab" data-tab="jobs" onclick="switchTab('jobs')">Jobs</div>
+</div>
+
+<div id="tab-runs" class="content active"><div id="runs"><div class="empty">Loading…</div></div></div>
+<div id="tab-cluster" class="content">
+  <button onclick="loadCluster()">Refresh cluster</button> <span class="muted" id="cluster-ts"></span>
+  <div id="cluster" style="margin-top:12px"></div>
+</div>
+<div id="tab-jobs" class="content">
+  <button onclick="loadJobs()">Refresh jobs</button> <span class="muted" id="jobs-ts"></span>
+  <div id="jobs" style="margin-top:12px"></div>
+</div>
+
+<script>
+const PC={a:'pa',b:'pb',c:'pc'}, PCOL={a:'#3fb950',b:'#bc8cff',c:'#f0883e'};
+function fmtN(n){ if(n==null) return '—'; if(n>=1e9) return (n/1e9).toFixed(2)+'B'; if(n>=1e6) return (n/1e6).toFixed(2)+'M'; if(n>=1e3) return (n/1e3).toFixed(1)+'k'; return ''+n; }
+function fmtEta(h){ if(h==null) return '—'; if(h<1) return Math.round(h*60)+'m'; if(h<48) return h.toFixed(1)+'h'; return (h/24).toFixed(1)+'d'; }
+function fmtEtaDate(h){ if(h==null) return ''; const d=new Date(Date.now()+h*3600*1000); return d.toLocaleString(undefined,{weekday:'short',hour:'2-digit',minute:'2-digit'}); }
+function ago(ts){ const s=Date.now()/1000-ts; if(s<60) return Math.round(s)+'s ago'; if(s<3600) return Math.round(s/60)+'m ago'; return Math.round(s/3600)+'h ago'; }
+function confBadge(c){ const m={stable:'#3fb950',settling:'#d29922',warming:'#8b949e',idle:'#8b949e'}; const t={stable:'stable',settling:'settling',warming:'warming',idle:'idle'}; const col=m[c]||'#8b949e'; return c?`<span class="conf" style="color:${col};border-color:${col}66">${t[c]||c}</span>`:''; }
+function switchTab(n){ document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active',t.dataset.tab===n)); document.querySelectorAll('.content').forEach(c=>c.classList.remove('active')); document.getElementById('tab-'+n).classList.add('active'); if(n==='cluster') loadCluster(); if(n==='jobs') loadJobs(); }
+
+function sparkline(pts,color){
+  if(!pts||pts.length<2) return '<span class="muted" style="font-size:10px">building…</span>';
+  const xs=pts.map(p=>p[0]),ys=pts.map(p=>p[1]);
+  const x0=Math.min(...xs),x1=Math.max(...xs),y0=Math.min(...ys),y1=Math.max(...ys);
+  const W=150,H=30, sx=x=>x1>x0?(x-x0)/(x1-x0)*W:0, sy=y=>y1>y0?H-2-(y-y0)/(y1-y0)*(H-4):H-2;
+  const d=pts.map((p,i)=>(i?'L':'M')+sx(p[0]).toFixed(1)+' '+sy(p[1]).toFixed(1)).join(' ');
+  const area=d+` L${W} ${H} L0 ${H} Z`;
+  return `<svg class="spark" width="${W}" height="${H}"><path d="${area}" fill="${color}22"/><path d="${d}" fill="none" stroke="${color}" stroke-width="1.6"/></svg>`;
+}
+
+function funnelHtml(f){
+  if(!f||!f.stages) return '';
+  const COL={a:'#3fb950',b:'#bc8cff',c:'#f0883e'};
+  return `<div class="funnel-viz"><div class="ftitle muted">per-phase retention (docs in→out, over each phase's own completed WARCs)</div>`+f.stages.map(s=>{
+    const w=s.retention!=null?Math.max(2,s.retention):2;
+    return `<div class="fstage"><div class="fbar" style="width:${w}%;background:${COL[s.phase]}"></div>
+      <div class="flabel"><b>${s.label}</b> · ${s.retention!=null?s.retention+'% kept':'—'} <span class="muted">(${fmtN(s.in)} → ${fmtN(s.out)})</span></div></div>`;
+  }).join('')+`</div>`;
+}
+
+function phaseHtml(p){
+  const kind=p.kind?`<span class="badge ${p.kind}">${p.kind}</span>`:'';
+  let regions=Object.entries(p.regions||{}).map(([r,v])=>
+    `<div class="rrow"><span class="rn">${r}</span><span><span class="chip">${v.active}/${v.workers}</span> ${v.rate_per_hour!=null?fmtN(v.rate_per_hour)+'/h':''} · ${fmtN(v.done)}</span></div>`).join('');
+  if(!regions) regions=`<div class="rrow muted">no workers yet</div>`;
+  const compute=Object.entries(p.compute_seconds||{}).map(([k,v])=>`${k} ${fmtN(Math.round(v))}s`).join(' · ');
+  return `<div class="phase ${PC[p.phase]} ${p.is_bottleneck?'bottleneck':''}">
+    <h3><span class="tag">●</span> ${p.label} ${kind}</h3>
+    <div class="bar"><i style="width:${Math.min(100,p.pct)}%"></i></div>
+    <div class="row"><span class="k">${fmtN(p.done)} / ${fmtN(p.total)} WARCs</span><span>${p.pct}%</span></div>
+    <div class="row"><span class="k">rate ${confBadge(p.rate_confidence)}</span><span>${p.rate_per_hour!=null?fmtN(p.rate_per_hour)+' /h':'—'}</span></div>
+    <div class="row"><span class="k">ETA</span><span class="big-eta">${fmtEta(p.eta_hours)}</span></div>
+    ${sparkline(p.sparkline,PCOL[p.phase])}
+    <div class="row"><span class="k">workers</span><span>${p.active_workers}/${p.total_workers} live</span></div>
+    <div class="funnel">in <b>${fmtN(p.docs_in)}</b> → out <b>${fmtN(p.docs_out)}</b> docs</div>
+    ${compute?`<div class="compute">${compute}</div>`:''}
+    <div class="regions">${regions}</div>
+  </div>`;
+}
+
+function runHtml(r){
+  const dot=r.stale?'<span class="dot stale"></span>':'<span class="dot live"></span>';
+  const conf=(r.phases.find(p=>p.is_bottleneck)||{}).rate_confidence;
+  return `<div class="run">
+    <div class="run-head">
+      <div class="run-id">${dot}${r.spec_id} <span class="ver">${r.version}</span></div>
+      <div class="kpi big"><span class="v">${r.run_pct}%</span><span class="l">complete (kept)</span></div>
+      <div class="kpi eta big"><span class="v">${fmtEta(r.run_eta_hours)}${confBadge(conf)}</span><span class="l">ETA · ${fmtEtaDate(r.run_eta_hours)||'settling'}</span></div>
+      <div class="kpi"><span class="v">${fmtN(r.run_done)}</span><span class="l">/ ${fmtN(r.total)} kept</span></div>
+      <div class="kpi"><span class="v">${r.active_workers}</span><span class="l">workers live</span></div>
+      <div class="spacer"></div>
+      <span class="muted">updated ${ago(r.last_update)}${r.bottleneck?` · bottleneck: phase ${r.bottleneck.toUpperCase()}`:''}</span>
+    </div>
+    ${funnelHtml(r.funnel)}
+    <div class="phases">${r.phases.map(phaseHtml).join('')}</div>
+  </div>`;
+}
+
+async function loadRuns(){
+  try{
+    const d=await(await fetch('/api/runs')).json();
+    if(!d.ok){ document.getElementById('status').textContent='error: '+d.error; return; }
+    document.getElementById('manifest').textContent=`pool: ${fmtN(d.manifest_total)} WARCs`;
+    const el=document.getElementById('runs');
+    el.innerHTML=d.runs.length?d.runs.map(runHtml).join(''):'<div class="empty">No runs with heartbeats yet — workers may still be booting.</div>';
+    document.getElementById('status').innerHTML=`<span class="dot live"></span>updated ${new Date().toLocaleTimeString()}`;
+  }catch(e){ document.getElementById('status').textContent='fetch failed: '+e; }
+}
+
+async function loadCluster(){
+  const el=document.getElementById('cluster'); if(!el.innerHTML.includes('<table')) el.innerHTML='<div class="empty">Loading…</div>';
+  try{
+    const d=await(await fetch('/api/cluster')).json();
+    if(!d.ok){ el.innerHTML='<div class="empty">'+d.error+'</div>'; return; }
+    document.getElementById('cluster-ts').textContent='ready '+d.data.total_ready+' · demand '+d.data.total_demand+' · idle '+d.data.total_idle;
+    el.innerHTML=`<table><thead><tr><th>group</th><th class="num">ready</th><th class="num">booting</th><th class="num">demand</th><th class="num">idle</th><th class="num">failed</th></tr></thead><tbody>${
+      d.data.groups.map(g=>`<tr><td>${g.name}</td><td class="num" style="color:var(--good)">${g.ready}</td><td class="num">${g.booting}</td><td class="num">${g.demand}</td><td class="num">${g.idle}</td><td class="num" style="color:${g.failed?'var(--bad)':'inherit'}">${g.failed}</td></tr>`).join('')}</tbody></table>`;
+  }catch(e){ el.innerHTML='<div class="empty">'+e+'</div>'; }
+}
+
+async function loadJobs(){
+  const el=document.getElementById('jobs'); if(!el.innerHTML.includes('<table')) el.innerHTML='<div class="empty">Loading…</div>';
+  try{
+    const d=await(await fetch('/api/jobs')).json();
+    if(!d.ok){ el.innerHTML='<div class="empty">'+d.error+'</div>'; return; }
+    const T=d.data.totals||{};
+    document.getElementById('jobs-ts').textContent=`${d.data.total} jobs · ${T.running||0} running · ${T.pending||0} pending · ${T.preemptions||0} preemptions`;
+    const ph={a:'A · CPU',tpu:'B · TPU',c:'C · CPU'};
+    const rows=Object.entries(d.data.by_phase).map(([p,c])=>
+      `<tr><td>${ph[p]||p}</td><td class="num" style="color:var(--good)">${c.running||0}</td><td class="num" style="color:var(--warn)">${c.pending||0}</td><td class="num">${c.building||0}</td><td class="num" style="color:${c.failed?'var(--bad)':'inherit'}">${c.failed||0}</td><td class="num">${c.preemptions||0}</td></tr>`).join('');
+    el.innerHTML=`<table><thead><tr><th>phase</th><th class="num">running</th><th class="num">pending</th><th class="num">building</th><th class="num">failed</th><th class="num">preemptions</th></tr></thead><tbody>${rows}</tbody></table>`;
+  }catch(e){ el.innerHTML='<div class="empty">'+e+'</div>'; }
+}
+
+loadRuns();
+setInterval(()=>{ if(document.getElementById('auto').checked) loadRuns(); }, 8000);
+</script>
+</body>
+</html>

@@ -19,6 +19,7 @@ from enum import StrEnum, auto
 import draccus
 import dupekit
 import msgspec
+from fray import ResourceConfig
 from rigging.filesystem import url_to_fs
 from rigging.log_setup import configure_logging
 from zephyr import Dataset, ZephyrContext
@@ -84,6 +85,12 @@ class DeconConfig:
     mode: DeconMode = DeconMode.DECONTAMINATE
     decontaminate_source: str | None = None
     text_field: str = "text"
+    # Zephyr worker resources for the bloom-build and mark stages. The zephyr
+    # default (1 GB) OOM-kills the build worker once the bloom is ~100 MB plus
+    # its save_bytes() copy, so size for the bloom plus headroom.
+    worker_cpu: float = 2.0
+    worker_ram: str = "8g"
+    worker_disk: str = "10g"
 
 
 def _bloom_hash(x: str) -> int:
@@ -158,7 +165,10 @@ def build_filter(
             merged_bloom.update(shard_bloom)
         yield merged_bloom.save_bytes()
 
-    ctx = ZephyrContext(name="decon-build")
+    ctx = ZephyrContext(
+        name="decon-build",
+        resources=ResourceConfig(cpu=config.worker_cpu, ram=config.worker_ram, disk=config.worker_disk),
+    )
     # Build bloom filters for all shards in parallel
     shard_blooms_data = ctx.execute(
         Dataset.from_iterable(all_files)
@@ -248,7 +258,10 @@ def mark_duplicates_bloom(
             }
 
     # Use write_jsonl with callable output pattern
-    zephyr_ctx = ZephyrContext(name="decon-mark")
+    zephyr_ctx = ZephyrContext(
+        name="decon-mark",
+        resources=ResourceConfig(cpu=config.worker_cpu, ram=config.worker_ram, disk=config.worker_disk),
+    )
     return zephyr_ctx.execute(
         Dataset.from_iterable(all_files)
         .flat_map(load_file)

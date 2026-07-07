@@ -141,7 +141,14 @@ FM_LIMA_SIDECAR_PREFIX = "gs://marin-us-central1/metadata/data_curation_fixed_mo
 TENK_RESULTS_PREFIX = "gs://marin-us-central1/metadata/data_curation_10k_natural_results/"
 TENK_N = 10364
 TENK_WIDTHS = (512, 1024, 1536, 2432, 3584)  # = launch_10k_natural.WIDTHS
-TENK_METHOD_KEYS = ("dclm_10k", "nemotron_10k")
+TENK_METHOD_KEYS = (
+    "dclm_10k",
+    "nemotron_10k",
+    "high_quality_10k",
+    "fineweb_cc_10k",
+    "fineweb_edu_10k",
+    "resiliparse_10k",
+)
 
 # Map fixed-model method_name → warc-scaling base name. BOS-fixed versions are
 # preferred since the WARC subsamples use the BOS-fixed caches; the older
@@ -182,8 +189,20 @@ _FM_METHOD_MAP: dict[str, str] = {
     # nemotron_10k is the full Nemotron-CC corpus -> the "nemotron_full" base.
     "dclm_10k": "dclm",
     "nemotron_10k": "nemotron_full",
-    # Intentionally excluded: "fineweb_edu" (dropped from sweep),
-    # "nemotron_full" / "llm_curated" (non-BOS-fixed, superseded).
+    # New 10k methods (2026-06-12): high_quality LLM-extraction lands on the
+    # existing high_quality curve; fineweb_cc (full HF FineWeb for our WARCs)
+    # and fineweb_edu (FineWeb-Edu) get their own curves. Each contributes a
+    # single N=10364 grid-row point (the bottom row).
+    "high_quality_10k": "high_quality",
+    "fineweb_cc_10k": "fineweb_cc",
+    "fineweb_edu_10k": "fineweb_edu",
+    # resiliparse_10k's cache (resiliparse_decon_10364warcs) is extract → fuzzy
+    # dedup (dedup_resiliparse_warc_scaling --n 10364) → decontaminate, i.e. the
+    # 10k analog of the resiliparse_dedup curve — so its N=10364 point lands on
+    # that curve alongside resiliparse_dedup_500/1000/2000 and the 3k anchor.
+    "resiliparse_10k": "resiliparse_dedup",
+    # Intentionally excluded: "nemotron_full" / "llm_curated" (non-BOS-fixed,
+    # superseded).
 }
 
 logger = logging.getLogger(__name__)

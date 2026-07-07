@@ -30,6 +30,7 @@ from experiments.scaling_law_sweeps.completed_adamh import (
 )
 from experiments.scaling_law_sweeps.data_curation_math import (
     CurationMethod,
+    ReweightedCurationMethod,
     implicit_target_exp_a,
     load_d_obs_from_stats,
     slice_tokens_for,
@@ -70,7 +71,7 @@ def pick_v6e_type_single_vm(estimated_memory_bytes: int) -> str | None:
     return None  # too big — v6e-16+ has vm_count!=1, can't mix with v4/v5p
 
 
-import math  # re-import for pick_v6e; python allows this
+import math  # noqa: E402  # re-import for pick_v6e; python allows this
 
 # --- Compute budgets ----------------------------------------------------------
 # Matches delphi's `completed_adamh` defaults (7 log-spaced FLOP points).
@@ -150,10 +151,28 @@ _D_OBS_DEFAULTS: dict[str, int] = {
     # the corresponding `_method(...)` call below.
     "dclm_400m_1x_10k_dclm-3df0ba": 7331583927,
     "dclm_400m_1x_10k_nemotron_full-3dcb75": 10130086896,
-    # FineWeb-Edu 10k — done but parked. Kept commented because fineweb_edu was
-    # dropped from ExpC (strictly worse per upstream review). Uncomment if a
-    # future experiment needs the 10k FineWeb-Edu cache.
-    # "dclm_400m_1x_10k_fineweb_edu-0a3143": 2346934380,
+    # FineWeb-Edu 10k — us-central2 only (not mirrored). pin_region enforces it.
+    "dclm_400m_1x_10k_fineweb_edu-0a3143": 2346934380,
+    # high_quality (LLM-extracted) 10k: dedup + CORE-v2 decontam (n=15/DF<=10),
+    # tokenized us-central1 only (not mirrored). d_obs from train/.stats.json.
+    "high_quality_decon_10364warcs-6451c8": 21296896949,
+    # hq dilution-ablation variants (us-central1 only; built by build_hq_variants.py
+    # from the hq HF export docs). dense = fact-bearing expository partition (upweight
+    # component for hq_reweight); epoch_sub344 = uniform 34.4% subsample matching
+    # DCLM's token count (7.332B) for the epoch-control ablation.
+    "hq_dense-7024eb": 2588921892,
+    "hq_epoch_sub344-f4dcd4": 7329749552,
+    # FineWeb-CC 10k: full HF FineWeb for our WARCs (HF dedup trusted; no extra
+    # dedup/decontam). Tokenized us-central2 only (not mirrored).
+    "fineweb_cc_10364warcs-ddfeda": 28004233781,
+    # resiliparse (raw HTML->text) 10k: dedup + CORE-v2 decontam (n=15/DF<=10),
+    # same full treatment as high_quality. Tokenized us-central2 only (not mirrored).
+    "resiliparse_decon_10364warcs-beaaf5": 339971302028,
+    # System-prompt-conditioned DCLM 400m-1x: [S][D] sequences (Qwen3-30B-A3B
+    # system prompts prepended to each DCLM doc), tokenized from the
+    # conditioned_text field. us-east5 ONLY (cache not mirrored). total_tokens
+    # from train/.stats.json (5,918,974 docs).
+    "sysprompt_dclm_qfull1-0ba2ee": 7818175437,
     # --- WARC-scaling sweep subsamples (N ∈ {100, 500, 1000, 2000}) ---
     # Read 2026-04-29 from {bucket}/tokenized/{key}/train/.stats.json.
     # dclm: source us-central2; mirrored to us-central1.
@@ -235,6 +254,12 @@ _D_OBS_DEFAULTS: dict[str, int] = {
     "med_quality_2000warcs-37ac75": 18_079_574_033,
     "med_quality_3000warcs-73cd32": 26_931_419_795,
     "med_low_quality_100warcs-03c59e": 1_445_631_560,
+    # fastpipe_v3 modernBERT-thresholded bands (keep top 100/80/60/40/20% by score), 10,364 WARCs.
+    "fastpipe_v3_decon_10364warcs-77ee7f": 45_370_000_845,
+    "fastpipe_v3_80_decon_10364warcs-143ee0": 37_966_939_668,
+    "fastpipe_v3_60_decon_10364warcs-1f0b9a": 28_559_342_931,
+    "fastpipe_v3_40_decon_10364warcs-54c951": 18_129_129_360,
+    "fastpipe_v3_20_decon_10364warcs-141620": 8_658_430_656,
 }
 _SOURCE_BUCKET: str = "gs://marin-us-central2"
 # BOS-fixed rebuilds were only tokenized on us-central1 (see rebuild_bos_fixed.py)
@@ -348,13 +373,67 @@ METHODS: dict[str, CurationMethod] = {
         "dclm_400m_1x_10k_nemotron_full-3dcb75",
         sampled_warcs=EXPC_SAMPLED_WARCS,
     ),
-    # FineWeb-Edu 10k — wired but commented out (excluded from ExpC). To enable,
-    # uncomment the entry above in _D_OBS_DEFAULTS first.
-    # "fineweb_edu_10k": _method(
-    #     "fineweb_edu_10k",
-    #     "dclm_400m_1x_10k_fineweb_edu-0a3143",
-    #     sampled_warcs=EXPC_SAMPLED_WARCS,
-    # ),
+    # 10k natural-epoch methods. fineweb_edu_10k + fineweb_cc_10k are mirrored to all
+    # 6 regions; high_quality_10k is mirrored to all EXCEPT us-central2 (2026-06-12).
+    # So NO pin_region -> children float for capacity. high_quality lacks us-central2,
+    # so the launcher MUST hard-constrain to the shared set via --allowed-regions
+    # us-central1 us-east1 us-east5 us-west4 eu-west4 (see launch_10k_natural.py).
+    "fineweb_edu_10k": _method(
+        "fineweb_edu_10k",
+        "dclm_400m_1x_10k_fineweb_edu-0a3143",
+        sampled_warcs=EXPC_SAMPLED_WARCS,
+    ),
+    "high_quality_10k": _method(
+        "high_quality_10k",
+        "high_quality_decon_10364warcs-6451c8",
+        sampled_warcs=EXPC_SAMPLED_WARCS,
+    ),
+    # --- Dilution-ablation variants of high_quality ---
+    # Base hq cache + both variant caches (hq_dense, hq_epoch_sub344) exist in BOTH
+    # us-central1 and us-east5, so pin_region=None lets runs float across those two
+    # (hard-constrained via --allowed-regions us-central1 us-east5 at launch — the
+    # variant caches exist ONLY in those two regions). output_path is region-local
+    # (run_curation_train_standalone.py:808), so no cross-region checkpoint egress.
+    # hq_epoch: uniform subsample to DCLM's token count (composition unchanged) —
+    # isolates the "fewer unique tokens / more epochs" confound.
+    "hq_epoch": _method(
+        "hq_epoch",
+        "hq_epoch_sub344-f4dcd4",
+        sampled_warcs=EXPC_SAMPLED_WARCS,
+    ),
+    # hq_reweight: full hq cache upweighted with the dense expository partition so
+    # dense char-share goes 12.3%→25% (=DCLM), at fixed token budget. Tests whether
+    # concentrating fact-dense content closes the knowledge gap.
+    "hq_reweight": ReweightedCurationMethod(
+        name="hq_reweight",
+        tokenized_rel_path="tokenized/high_quality_decon_10364warcs-6451c8/",
+        d_obs_tokens=_D_OBS_DEFAULTS["high_quality_decon_10364warcs-6451c8"],
+        sampled_warcs=EXPC_SAMPLED_WARCS,
+        dense_rel_path="tokenized/hq_dense-7024eb/",
+        dense_weight=0.144,
+    ),
+    "fineweb_cc_10k": _method(
+        "fineweb_cc_10k",
+        "fineweb_cc_10364warcs-ddfeda",
+        sampled_warcs=EXPC_SAMPLED_WARCS,
+    ),
+    # resiliparse_10k: tokenized in us-central2; lean copy (input_ids+ledger only,
+    # no part-* build dirs) mirrored to us-east5 (2026-06-12, ~$12.6). NO pin ->
+    # launch with --allowed-regions us-east5 us-central2 (the two it lives in).
+    "resiliparse_10k": _method(
+        "resiliparse_10k",
+        "resiliparse_decon_10364warcs-beaaf5",
+        sampled_warcs=EXPC_SAMPLED_WARCS,
+    ),
+    # System-prompt-conditioned DCLM: [S][D] sequences trained as conditional
+    # pretraining (p(D | S)). Cache lives ONLY in us-east5 (not mirrored), so
+    # pin_region enforces us-east5 scheduling. Same 10k DCLM corpus underneath.
+    "sysprompt_dclm": _method(
+        "sysprompt_dclm",
+        "sysprompt_dclm_qfull1-0ba2ee",
+        sampled_warcs=EXPC_SAMPLED_WARCS,
+        pin_region="us-east5",
+    ),
     # --- Random 3000-WARC sample (independent from the head-biased 3000-WARC
     #     methods; uniform draw seed 0, manifest baseline_warcs_3000_random.txt).
     #     Distinct IDs + cache hashes so these never collide with the existing
@@ -509,6 +588,34 @@ METHODS: dict[str, CurationMethod] = {
     "med_quality_2000": _method("med_quality_2000", "med_quality_2000warcs-37ac75", sampled_warcs=2000),
     "med_quality_3000": _method("med_quality_3000", "med_quality_3000warcs-73cd32", sampled_warcs=3000),
     "med_low_quality_100": _method("med_low_quality_100", "med_low_quality_100warcs-03c59e", sampled_warcs=100),
+    # fastpipe_v3 modernBERT-thresholded bands (keep top X% of docs by score). Caches reconstructed
+    # (byte-identical) in both us-east5 and us-central1, so no pin_region -> they float; restrict the
+    # launch with --allowed-regions us-central1 us-east5. Natural epoching like dclm_10k etc.
+    "fastpipe_v3_100": _method(
+        "fastpipe_v3_100",
+        "fastpipe_v3_decon_10364warcs-77ee7f",
+        sampled_warcs=EXPC_SAMPLED_WARCS,
+    ),
+    "fastpipe_v3_80": _method(
+        "fastpipe_v3_80",
+        "fastpipe_v3_80_decon_10364warcs-143ee0",
+        sampled_warcs=EXPC_SAMPLED_WARCS,
+    ),
+    "fastpipe_v3_60": _method(
+        "fastpipe_v3_60",
+        "fastpipe_v3_60_decon_10364warcs-1f0b9a",
+        sampled_warcs=EXPC_SAMPLED_WARCS,
+    ),
+    "fastpipe_v3_40": _method(
+        "fastpipe_v3_40",
+        "fastpipe_v3_40_decon_10364warcs-54c951",
+        sampled_warcs=EXPC_SAMPLED_WARCS,
+    ),
+    "fastpipe_v3_20": _method(
+        "fastpipe_v3_20",
+        "fastpipe_v3_20_decon_10364warcs-141620",
+        sampled_warcs=EXPC_SAMPLED_WARCS,
+    ),
 }
 
 
@@ -772,7 +879,7 @@ def _planned_run_from_candidate(
 
     # v5p alternative: pick_v5p_type chooses the smallest v5p that fits the model's
     # memory. For large v4 plans (v4-32/v4-64), that v5p is often much smaller
-    # (v5p-16/v5p-32) because v5p has 3× more HBM per chip. But the vm_count filter
+    # (v5p-16/v5p-32) because v5p has 3x more HBM per chip. But the vm_count filter
     # in submit_one drops alternatives with mismatched vm_count — leaving multi-host
     # plans with NO fallback when v4 capacity is exhausted.
     #
@@ -844,7 +951,7 @@ def enumerate_plans(
     min_slice_tokens: float = MIN_SLICE_TOKENS_DEFAULT,
     seq_len: int = SEQ_LEN,
 ) -> list[PlannedRun]:
-    """Build the full list of `PlannedRun`s for the cartesian product of methods × experiments.
+    """Build the full list of `PlannedRun`s for the cartesian product of methods x experiments.
 
     `experiments` accepts mixed legacy and ExpC forms — see `_normalize_experiment_spec`.
     For ExpC, `_iter_valid_candidates` is invoked with the data-rich-aware

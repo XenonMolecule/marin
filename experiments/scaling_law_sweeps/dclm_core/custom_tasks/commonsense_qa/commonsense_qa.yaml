@@ -1,0 +1,31 @@
+# Custom lm-eval task for DCLM CORE's `commonsense_qa` (4-choice DCLM variant).
+#
+# Why custom: stock lm-eval `commonsense_qa` pulls tau/commonsense_qa with FIVE
+# choices (A-E, random baseline 20%). DCLM CoreV2 uses MosaicML llm-foundry's
+# FOUR-choice reduction (baseline 25%, per eval_meta_data.csv "1,221 four-choice").
+# The 5-vs-4 mismatch makes our score non-comparable to DCLM's. This task uses
+# DCLM's 4-choice gauntlet jsonl (letter-MCQ: query embeds A-D, choices=[A,B,C,D]).
+# Distinct task name avoids colliding with lm-eval's built-in `commonsense_qa`.
+#
+# Source: mosaicml/llm-foundry scripts/eval/local_data/commonsense_reasoning/commonsense_qa.jsonl (1221 rows)
+# DCLM eval_meta_data row: commonsense_qa,commonsense reasoning,multiple choice,10,1221,40.3
+task: commonsense_qa_dclm4
+dataset_path: json
+dataset_kwargs:
+  data_files: commonsense_qa.jsonl
+test_split: train
+output_type: multiple_choice
+doc_to_text: "{{query}}"
+doc_to_target: "{{gold}}"
+doc_to_choice: "{{choices}}"
+metric_list:
+  - metric: acc
+    aggregation: mean
+    higher_is_better: true
+  - metric: acc_norm
+    aggregation: mean
+    higher_is_better: true
+metadata:
+  version: 1.0
+  source: mosaicml/llm-foundry eval gauntlet (4-choice CommonsenseQA)
+  dclm_meta_row: "commonsense_qa,commonsense reasoning,multiple choice,10,1221,40.3"

@@ -25,7 +25,6 @@ Usage (from inside an iris parent job, normally launched as):
 from __future__ import annotations
 
 import argparse
-import json
 import logging
 import os
 import time
@@ -99,6 +98,7 @@ def submit_one(
     wandb_mode: str = "auto",
     force_primary_tpu: str | None = None,
     results_prefix: str | None = None,
+    seed: int = 0,
 ) -> str:
     """Submit one PlannedRun as an iris TPU job. Returns the iris job id.
 
@@ -154,6 +154,7 @@ def submit_one(
         "--wandb-mode",
         wandb_mode,
         *(("--run-suffix", run_suffix) if run_suffix else ()),
+        *(("--seed", str(seed)) if seed else ()),
         "--wandb-project",
         wandb_project,
         "--wandb-entity",
@@ -247,7 +248,7 @@ def submit_one(
         submit_kwargs["coscheduling"] = CoschedulingConfig(group_by="tpu-name")
     job = client.submit(
         entrypoint=Entrypoint.from_command(*cmd_args),
-        name=f"curation-{plan.run_name_core}"[:200],
+        name=f"curation-{plan.run_name_core}{('-' + run_suffix) if run_suffix else ''}"[:200],
         resources=ResourceSpec(
             cpu=plan.cpu,
             memory=f"{plan.memory_gb}GB",
@@ -348,53 +349,37 @@ def is_expc_data_rich_plan(plan: curation_plan.PlannedRun) -> bool:
 
 def is_run_already_complete(
     plan: curation_plan.PlannedRun,
-    tracker_prefix: str,
     run_suffix: str = "",
 ) -> bool:
-    """Check if a run has already completed (done marker written by prior child).
+    """True if this run completed in ANY region (a `.data_curation_DONE` marker exists).
 
-    Flow:
-      1. Read the region tracker to find which region this run claimed.
-         If no claim exists, the run never started — not done.
-      2. Compute the checkpoint output_path in that region's bucket.
-      3. Check for `.data_curation_DONE` marker. Return True only if present.
+    Checked region-agnostically — we scan every region bucket for the marker rather
+    than trusting the per-run region tracker. These methods FLOAT across regions, and
+    the tracker (`{run_key}.region`) is a single mutable file that a later float/recovery
+    child can overwrite to a region different from where the run actually completed.
+    Trusting the tracker's region then misses the marker and re-submits an already-done
+    cell — spawning a duplicate re-run that can overwrite the cell's result JSON with a
+    worse (preempted/under-converged) value, producing outliers on the scaling curve.
 
-    Both tracker key and output_path use `run_name_core + "-" + suffix` when
-    a suffix is set (matches what the child writes in main()), so
-    skip-if-done catches runs completed under the same suffix — not runs
-    from a DIFFERENT suffix.
+    `run_name` uses `run_name_core + "-" + suffix` when a suffix is set (matches what the
+    child writes in main()), so skip-if-done only matches the same suffix.
 
-    Safe (no false positives): we only skip when we can PROVE the run
-    completed — any filesystem/network hiccup returns False → re-submit,
-    and the child's own region-lock check prevents duplicate work.
+    Safe (no false positives): we only skip when a marker is actually found; an FS hiccup
+    on any bucket is treated as "not found there" and we keep scanning, defaulting to
+    re-submit (and the child's own region-lock still guards against duplicate work).
     """
-    # Reconstruct the effective run_name and tracker key using the suffix —
-    # the child's main() does the same: `run_name = plan.run_name_core + "-" + suffix`.
     suffix = run_suffix.strip()
     run_name = plan.run_name_core + (f"-{suffix}" if suffix else "")
-    run_key = f"{plan.method_name}__{plan.experiment_tag}__{run_name}.region"
-    tracker_path = f"{tracker_prefix.rstrip('/')}/{run_key}"
-    try:
-        fs, urlpath = fsspec.core.url_to_fs(tracker_path)
-        if not fs.exists(urlpath):
-            return False  # never claimed → never ran → not done
-        with fs.open(urlpath, "rb") as f:
-            obj = json.loads(f.read().decode())
-        region = obj.get("region")
-        if region not in region_tracker.REGION_TO_BUCKET:
-            return False
-    except Exception as e:
-        logger.debug("Tracker read failed for %s: %s", run_name, e)
-        return False
-
-    bucket = region_tracker.REGION_TO_BUCKET[region]
-    done_marker = f"{bucket}/checkpoints/isoflop-curation/{run_name}/.data_curation_DONE"
-    try:
-        fs, urlpath = fsspec.core.url_to_fs(done_marker)
-        return fs.exists(urlpath)
-    except Exception as e:
-        logger.debug("Done-marker check failed for %s: %s", plan.run_name_core, e)
-        return False
+    for bucket in region_tracker.REGION_TO_BUCKET.values():
+        done_marker = f"{bucket}/checkpoints/isoflop-curation/{run_name}/.data_curation_DONE"
+        try:
+            fs, urlpath = fsspec.core.url_to_fs(done_marker)
+            if fs.exists(urlpath):
+                return True
+        except Exception as e:
+            logger.debug("Done-marker check failed for %s in %s: %s", run_name, bucket, e)
+            continue
+    return False
 
 
 def submit_all(
@@ -416,7 +401,7 @@ def submit_all(
     skipped: list[curation_plan.PlannedRun] = []
     run_suffix = submit_kwargs.get("run_suffix", "")
     for i, plan in enumerate(plans):
-        if skip_if_done and is_run_already_complete(plan, tracker_prefix, run_suffix=run_suffix):
+        if skip_if_done and is_run_already_complete(plan, run_suffix=run_suffix):
             skipped.append(plan)
             logger.info("[%d/%d] SKIP (already done): %s", i + 1, len(plans), plan.run_name_core)
             continue
