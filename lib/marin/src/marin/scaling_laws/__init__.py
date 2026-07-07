@@ -25,11 +25,15 @@ from marin.scaling_laws.scaling_plots import (
 )
 from marin.scaling_laws.tpu_utils import (
     V4_SPEC,
+    V5E_SPEC,
     V5P_SPEC,
+    V6E_SPEC,
     TpuSpec,
     pick_tpu_type,
     pick_v4_type,
+    pick_v5e_type,
     pick_v5p_type,
+    pick_v6e_type,
 )
 
 __all__ = [
@@ -37,7 +41,9 @@ __all__ = [
     "DEFAULT_EVAL_METRIC_KEY",
     "DEFAULT_SEQ_LEN",
     "V4_SPEC",
+    "V5E_SPEC",
     "V5P_SPEC",
+    "V6E_SPEC",
     "CandidateConfig",
     "FitScalingLawsResult",
     "IsoFlopRecord",
@@ -52,7 +58,9 @@ __all__ = [
     "fit_scaling_laws",
     "pick_tpu_type",
     "pick_v4_type",
+    "pick_v5e_type",
     "pick_v5p_type",
+    "pick_v6e_type",
     "predict_optimal_config",
     "round_flops_to_bucket",
     "save_plots",

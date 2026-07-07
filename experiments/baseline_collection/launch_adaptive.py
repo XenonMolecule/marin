@@ -76,15 +76,18 @@ def submit_chunk(
     chunk_size: int,
     manifest: str,
     spec: str | None = None,
+    model: str | None = None,
+    region: str | None = None,
     child_priority_band: int = job_pb2.PRIORITY_BAND_UNSPECIFIED,
 ) -> list[str]:
     """Submit a chunk of jobs. Returns list of submitted job names.
 
-    If ``spec`` is set, child jobs run with ``--spec {spec}`` and
-    ``run_extract_standalone.py`` derives ``output_subdir`` and the prompt
-    from the spec registry — ``output_subdir`` here is ignored. The two
-    code paths (``--spec`` set vs unset) are mutually exclusive on the
-    child side; there is no silent fallback.
+    If ``spec`` is set, child jobs run with ``--spec {spec}`` and the prompt
+    comes from the spec registry. ``output_subdir`` is passed through only when
+    it is non-None: with a spec that redirects output + the skip-registry to a
+    benchmark namespace (keeping the spec's prompt); without a spec it is the
+    legacy namespace. ``model``, when set, overrides the child's default
+    checkpoint (e.g. to benchmark a smaller model on the same spec).
     """
     is_multihost = tpu_type in MULTIHOST_TYPES
     env_vars = dict(MULTIHOST_ENV) if is_multihost else {}
@@ -107,13 +110,15 @@ def submit_chunk(
             *tp_args,
         ]
         if spec:
-            # When --spec is set, run_extract_standalone.py overrides
-            # output_subdir + prompt from the registry. Don't pass
-            # --output-subdir — would be ignored anyway, but cleaner to
-            # eliminate any chance of confusion.
             cmd_args.extend(["--spec", spec])
+            # Pass --output-subdir alongside --spec only as an explicit benchmark
+            # override; without it the child uses the spec's canonical namespace.
+            if output_subdir is not None:
+                cmd_args.extend(["--output-subdir", output_subdir])
         else:
             cmd_args.extend(["--output-subdir", output_subdir])
+        if model:
+            cmd_args.extend(["--model", model])
         if start > 0:
             cmd_args.extend(["--start", str(start)])
         if end is not None:
@@ -144,11 +149,15 @@ def submit_chunk(
                 # no attribute 'to_proto'`` if you pass raw strings.
                 constraints=[
                     preemptible_constraint(True),
+                    # Default: SOFT preference over all regions (prevents parent
+                    # region inheritance without restricting the autoscaler). When
+                    # ``region`` is set (e.g. the model checkpoint lives in only one
+                    # region), HARD-pin children there so the model read stays local.
                     Constraint.create(
                         key=WellKnownAttribute.REGION,
                         op=ConstraintOp.IN,
-                        values=ALL_REGIONS,
-                        mode=1,  # CONSTRAINT_MODE_PREFERRED (soft)
+                        values=[region] if region else ALL_REGIONS,
+                        mode=job_pb2.CONSTRAINT_MODE_REQUIRED if region else job_pb2.CONSTRAINT_MODE_PREFERRED,
                     ),
                 ],
                 max_retries_preemption=100,
@@ -201,6 +210,8 @@ def run_adaptive(
     end: int | None,
     manifest: str,
     spec: str | None = None,
+    model: str | None = None,
+    region: str | None = None,
     child_priority_band: int = job_pb2.PRIORITY_BAND_UNSPECIFIED,
 ):
     """Adaptive scaling loop. Only submits more when ALL previous jobs are running."""
@@ -231,6 +242,8 @@ def run_adaptive(
             count,
             manifest=manifest,
             spec=spec,
+            model=model,
+            region=region,
             child_priority_band=child_priority_band,
         )
 
@@ -349,11 +362,21 @@ def main():
     parser.add_argument("--patience", type=int, default=3, help="Stall cycles before stopping")
     parser.add_argument(
         "--output-subdir",
-        default="documents/baseline_llm_extraction",
+        default=None,
         help=(
-            "Legacy output subdir, used only when --spec is NOT supplied. "
-            "When --spec is set, ``run_extract_standalone.py`` derives the "
-            "output subdir from the spec registry and ignores this flag."
+            "Output subdir for children. Without --spec it is the legacy namespace "
+            "(default: documents/baseline_llm_extraction). With --spec, leave unset to "
+            "use the spec's canonical namespace, or set it to redirect output + the "
+            "skip-registry to a benchmark namespace while keeping the spec's prompt."
+        ),
+    )
+    parser.add_argument(
+        "--model",
+        default=None,
+        help=(
+            "Override the child extraction model checkpoint (gs:// HF dir vLLM can "
+            "load). Default (unset): children resolve the 8B rephraser from the local "
+            "region. Set this to benchmark a different model on the same spec."
         ),
     )
     parser.add_argument(
@@ -369,6 +392,15 @@ def main():
             "jobs run with ``--spec`` and use that spec's prompt + namespace "
             "(no fallback to the legacy hardcoded prompt). If unset, children "
             "use the legacy prompt and write to --output-subdir."
+        ),
+    )
+    parser.add_argument(
+        "--child-region",
+        default=None,
+        help=(
+            "Hard-pin child jobs to this region (e.g. us-east5). Use when the model "
+            "checkpoint exists in only one region so the model read stays local. "
+            "Default (unset): soft preference across all regions."
         ),
     )
     parser.add_argument("--start", type=int, default=0)
@@ -394,6 +426,13 @@ def main():
         spec_obj = get_spec(args.spec)  # raises ValueError on miss
         logger.info("Using spec=%s — %s", args.spec, spec_obj.description or "(no description)")
 
+    # Without a spec, children need the legacy namespace default. With a spec,
+    # None means "use the spec's canonical namespace" and a value is a benchmark
+    # override — both are passed through to children as-is.
+    output_subdir = args.output_subdir
+    if args.spec is None and output_subdir is None:
+        output_subdir = "documents/baseline_llm_extraction"
+
     child_priority_band = PRIORITY_BAND_MAP[args.child_priority]
 
     controller_address = os.environ.get("IRIS_CONTROLLER_ADDRESS")
@@ -405,7 +444,7 @@ def main():
     run_adaptive(
         client,
         tpu_type=args.tpu_type,
-        output_subdir=args.output_subdir,
+        output_subdir=output_subdir,
         max_count=args.max_count,
         initial_batch=args.initial_batch,
         chunk_size=args.chunk_size,
@@ -415,6 +454,8 @@ def main():
         end=args.end,
         manifest=args.manifest,
         spec=args.spec,
+        model=args.model,
+        region=args.child_region,
         child_priority_band=child_priority_band,
     )
 

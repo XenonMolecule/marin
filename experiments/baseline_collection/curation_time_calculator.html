@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Curation Time Calculator</title>
+<style>
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    background: #f8f8f5;
+    color: #1a1a1a;
+    margin: 0;
+    padding: 32px 20px;
+    line-height: 1.5;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; }
+  h1 { font-size: 24px; margin: 0 0 4px; }
+  .lead { color: #555; margin: 0 0 28px; font-size: 14px; }
+  .lead strong { color: #1a1a1a; }
+
+  .controls {
+    background: white;
+    border: 1px solid #e3e3dc;
+    border-radius: 10px;
+    padding: 24px;
+    margin-bottom: 20px;
+  }
+  .ctrl { margin-bottom: 22px; }
+  .ctrl:last-child { margin-bottom: 0; }
+  .ctrl label {
+    display: block;
+    font-weight: 600;
+    font-size: 14px;
+    margin-bottom: 4px;
+  }
+  .hint { font-size: 12px; color: #888; margin-bottom: 10px; }
+  .row { display: flex; align-items: center; gap: 12px; }
+  input[type=range] { flex: 1; accent-color: #2563eb; }
+  #warcsLog { accent-color: #2563eb; }
+  #chipsSlider { accent-color: #ea580c; }
+  #coresSlider { accent-color: #2563eb; }
+  .val { font-variant-numeric: tabular-nums; font-weight: 600; min-width: 110px; text-align: right; }
+  .val.tpu { color: #ea580c; }
+  .val.cpu { color: #2563eb; }
+  input[type=number] {
+    width: 140px; padding: 6px 8px; border: 1px solid #ccc;
+    border-radius: 5px; font-size: 14px; font-variant-numeric: tabular-nums;
+  }
+  .presets { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+  .presets button {
+    font-size: 12px; padding: 5px 10px;
+    border: 1px solid #d0d0c8; background: white; border-radius: 4px;
+    cursor: pointer; color: #555;
+  }
+  .presets button:hover { background: #ecf0fc; border-color: #2563eb; color: #2563eb; }
+
+  .toggle { display: flex; align-items: center; gap: 10px; cursor: pointer; }
+  .toggle input { width: 17px; height: 17px; accent-color: #16a34a; }
+  .toggle label { margin: 0; font-weight: 600; cursor: pointer; }
+
+  .result {
+    background: white;
+    border: 1px solid #e3e3dc;
+    border-radius: 10px;
+    padding: 28px 24px;
+    text-align: center;
+    margin-bottom: 20px;
+  }
+  .time-label { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: #888; }
+  .time-big {
+    font-size: 50px; font-weight: 700; font-variant-numeric: tabular-nums;
+    color: #16a34a; line-height: 1.05; margin: 6px 0 4px;
+  }
+  .time-sub { font-size: 14px; color: #555; font-variant-numeric: tabular-nums; }
+  .legs { display: flex; gap: 14px; justify-content: center; margin-top: 22px; flex-wrap: wrap; }
+  .leg {
+    background: #faf9f5; border: 1px solid #ececDF; border-radius: 9px;
+    padding: 12px 18px; min-width: 200px;
+  }
+  .leg .k { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: #888; }
+  .leg .v { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; margin-top: 3px; }
+  .leg.cpu .v { color: #2563eb; }
+  .leg.tpu .v { color: #ea580c; }
+  .leg.bottleneck { box-shadow: 0 0 0 2px #ea580c inset; border-color: #ea580c; }
+  .leg.bottleneck.cpu { box-shadow: 0 0 0 2px #2563eb inset; border-color: #2563eb; }
+
+  .compare {
+    background: white;
+    border: 1px solid #e3e3dc;
+    border-radius: 10px;
+    padding: 20px 24px;
+  }
+  .compare h2 {
+    font-size: 13px; text-transform: uppercase; letter-spacing: .08em;
+    color: #888; margin: 0 0 12px; font-weight: 600;
+  }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td {
+    text-align: right; padding: 8px 6px;
+    font-variant-numeric: tabular-nums;
+    border-bottom: 1px solid #f0f0e9;
+  }
+  th { color: #888; font-weight: 500; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+  td:first-child, th:first-child { text-align: left; }
+  .tag { display: inline-block; font-size: 10px; padding: 1px 7px; border-radius: 10px; font-weight: 700; }
+  .tag.CPU { background: #e7eefc; color: #2563eb; }
+  .tag.TPU { background: #fdecdf; color: #ea580c; }
+  .barcell { width: 120px; }
+  .bar { height: 8px; border-radius: 4px; background: #eee; overflow: hidden; }
+  .bar > i { display: block; height: 100%; }
+  tfoot td { font-weight: 700; border-top: 2px solid #e3e3dc; border-bottom: none; }
+
+  .footnote {
+    font-size: 11.5px; color: #888;
+    margin-top: 24px; line-height: 1.55;
+  }
+  .footnote code { background: #f0f0e9; padding: 1px 4px; border-radius: 3px; }
+  .footnote b { color: #b45309; }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+  <h1>Curation Time Calculator</h1>
+  <p class="lead">
+    Wall-clock estimate for the Marin curation pipeline. Throughputs from the timing slide; funnel from the
+    177,208-doc reference run. Full Common Crawl = <strong>7,925,398 WARCs ≈ 420B raw docs</strong>.
+  </p>
+
+  <!-- KNOBS -->
+  <div class="controls">
+
+    <div class="ctrl">
+      <label for="warcs">Workload (fixed)</label>
+      <div class="hint">Full Common Crawl: 7,925,398 WARCs → 420B raw docs (≈53K docs/WARC).</div>
+      <div class="row">
+        <input type="number" id="warcs" min="1" step="1000" value="7925398">
+        <span class="val" id="docsTotal"></span>
+      </div>
+      <input type="hidden" id="dpw" value="52994">
+    </div>
+
+    <div class="ctrl">
+      <label for="chips">TPU chips</label>
+      <div class="hint">Runs the BERT filter (10.7 docs/s/chip) and 1.7B extractor (0.9 docs/s/chip).</div>
+      <div class="row">
+        <input type="range" id="chipsSlider" min="0" max="8000" step="8" value="1000">
+        <input type="number" id="chips" min="0" step="1" value="1000">
+        <span class="val tpu" id="chipsVal"></span>
+      </div>
+      <div class="presets">
+        <button data-chips="256">256</button>
+        <button data-chips="512">512</button>
+        <button data-chips="1000">1000</button>
+        <button data-chips="2000">2000</button>
+        <button data-chips="4000">4000</button>
+      </div>
+    </div>
+
+    <div class="ctrl">
+      <label for="cores">CPU cores</label>
+      <div class="hint">Runs rule filters, fastText filter/router, and jusText extraction.</div>
+      <div class="row">
+        <input type="range" id="coresSlider" min="0" max="200000" step="100" value="20000">
+        <input type="number" id="cores" min="0" step="1" value="20000">
+        <span class="val cpu" id="coresVal"></span>
+      </div>
+      <div class="presets">
+        <button data-cores="1000">1K</button>
+        <button data-cores="5000">5K</button>
+        <button data-cores="20000">20K</button>
+        <button data-cores="50000">50K</button>
+        <button data-cores="100000">100K</button>
+      </div>
+    </div>
+
+    <div class="ctrl toggle">
+      <input type="checkbox" id="parallel" checked>
+      <label for="parallel">CPU &amp; TPU run in parallel (pipelined) — bottleneck is the slower one</label>
+    </div>
+
+  </div>
+
+  <!-- RESULT -->
+  <div class="result">
+    <div class="time-label">Estimated wall-clock time</div>
+    <div class="time-big" id="timeBig">—</div>
+    <div class="time-sub" id="timeSub"></div>
+
+    <div class="legs">
+      <div class="leg cpu" id="cpuLeg">
+        <div class="k">CPU stages ÷ cores</div>
+        <div class="v" id="cpuTime">—</div>
+      </div>
+      <div class="leg tpu" id="tpuLeg">
+        <div class="k">TPU stages ÷ chips</div>
+        <div class="v" id="tpuTime">—</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- PER-STAGE TABLE -->
+  <div class="compare">
+    <h2>Per-stage breakdown</h2>
+    <table>
+      <thead>
+        <tr><th>Stage</th><th>Res</th><th>Rate</th><th>Docs</th><th>Time</th><th class="barcell">Share</th></tr>
+      </thead>
+      <tbody id="rows"></tbody>
+      <tfoot id="foot"></tfoot>
+    </table>
+  </div>
+
+  <p class="footnote">
+    Model: stage work = docs ÷ rate (core- or chip-seconds); wall-clock = work ÷ (cores or chips), the
+    throughput-bound estimate assuming work load-balances across units. Funnel (% reaching each stage) from the
+    177,208-doc reference run; rates from the timing slide.
+    <b>TPU is the structural bottleneck</b> — the 0.9 docs/s/chip 1.7B extractor dominates by ~58× per hardware unit.
+    gpt-oss-120b (&gt;32k-token docs, 1.6% of corpus) has no measured rate and is excluded.
+    Sources: <code>experiments/baseline_collection/</code> timing slide; WARC count from
+    <code>experiments/scaling_law_sweeps/data_curation_math.py</code>.
+  </p>
+
+</div>
+
+<script>
+"use strict";
+
+const REF_RAW = 177208;
+// Docs reaching each stage in the reference run (each stage processes only its survivors).
+const STAGES = [
+  { name: "Rule-Based Filters",       res: "CPU", rate: 1800, inCount: 177208 },
+  { name: "FastText Filter",          res: "CPU", rate: 593,  inCount: 137973 },
+  { name: "BERT Filter (ModernBERT)", res: "TPU", rate: 10.7, inCount: 67186  },
+  { name: "FastText Router",          res: "CPU", rate: 541,  inCount: 41245  },
+  { name: "jusText route",            res: "CPU", rate: 9,    inCount: 3381   },
+  { name: "1.7B Extractor",           res: "TPU", rate: 0.9,  inCount: 35001  },
+];
+
+const $ = id => document.getElementById(id);
+
+function fmtTime(s) {
+  if (!isFinite(s)) return "∞";
+  if (s <= 0) return "0";
+  const days = s / 86400;
+  if (days >= 365) return `${(days/365).toFixed(2)} yr`;
+  if (days >= 1) {
+    const d = Math.floor(days), h = Math.round((s - d*86400)/3600);
+    return `${d}d ${h}h`;
+  }
+  const h = Math.floor(s/3600), m = Math.floor((s%3600)/60), sec = Math.round(s%60);
+  if (h) return `${h}h ${m}m`;
+  if (m) return `${m}m ${sec}s`;
+  return `${sec}s`;
+}
+function fmtBig(n) {
+  if (n >= 1e9) return `${(n/1e9).toFixed(1)}B`;
+  if (n >= 1e6) return `${(n/1e6).toFixed(1)}M`;
+  if (n >= 1e3) return `${(n/1e3).toFixed(0)}K`;
+  return Math.round(n).toLocaleString();
+}
+function fmtDays(s) {
+  if (!isFinite(s) || s <= 0) return "";
+  const days = s / 86400;
+  if (days >= 1) return `${days.toLocaleString(undefined,{maximumFractionDigits:0})} days · ${(s).toLocaleString(undefined,{maximumFractionDigits:0})} s`;
+  return `${s.toLocaleString(undefined,{maximumFractionDigits:0})} s`;
+}
+
+function render() {
+  const warcs = Math.max(0, parseFloat($("warcs").value) || 0);
+  const dpw = Math.max(0, parseFloat($("dpw").value) || 0);
+  const chips = Math.max(0, parseFloat($("chips").value) || 0);
+  const cores = Math.max(0, parseFloat($("cores").value) || 0);
+  const parallel = $("parallel").checked;
+  const rawDocs = warcs * dpw;
+
+  $("docsTotal").textContent = `${fmtBig(rawDocs)} docs`;
+  $("chipsVal").textContent = chips.toLocaleString();
+  $("coresVal").textContent = cores.toLocaleString();
+
+  let cpuTime = 0, tpuTime = 0;
+  const rows = STAGES.map(st => {
+    const docs = rawDocs * (st.inCount / REF_RAW);
+    const work = docs / st.rate;                          // resource-seconds
+    const units = st.res === "CPU" ? cores : chips;
+    const wall = units > 0 ? work / units : Infinity;
+    if (st.res === "CPU") cpuTime += wall; else tpuTime += wall;
+    return { ...st, docs, wall };
+  });
+
+  const grand = parallel ? Math.max(cpuTime, tpuTime) : cpuTime + tpuTime;
+
+  $("cpuTime").textContent = fmtTime(cpuTime);
+  $("tpuTime").textContent = fmtTime(tpuTime);
+  $("timeBig").textContent = fmtTime(grand);
+  $("timeSub").textContent = parallel
+    ? `${fmtDays(grand)} · parallel, bottleneck = ${tpuTime >= cpuTime ? "TPU" : "CPU"}`
+    : `${fmtDays(grand)} · sequential (CPU + TPU)`;
+
+  $("cpuLeg").classList.toggle("bottleneck", parallel && cpuTime > tpuTime);
+  $("tpuLeg").classList.toggle("bottleneck", parallel && tpuTime >= cpuTime);
+
+  const maxWall = Math.max(...rows.map(r => isFinite(r.wall) ? r.wall : 0), 1e-9);
+  $("rows").innerHTML = rows.map(r => {
+    const pct = isFinite(r.wall) ? (r.wall / maxWall * 100) : 100;
+    const color = r.res === "CPU" ? "#2563eb" : "#ea580c";
+    const rateTxt = r.rate + (r.res === "CPU" ? " /core" : " /chip");
+    return `<tr>
+      <td>${r.name}</td>
+      <td><span class="tag ${r.res}">${r.res}</span></td>
+      <td>${rateTxt}</td>
+      <td>${fmtBig(r.docs)}</td>
+      <td>${fmtTime(r.wall)}</td>
+      <td class="barcell"><div class="bar"><i style="width:${pct}%;background:${color}"></i></div></td>
+    </tr>`;
+  }).join("");
+
+  $("foot").innerHTML = `<tr>
+    <td>Total</td><td></td><td></td>
+    <td>${fmtBig(rawDocs)}</td>
+    <td>${fmtTime(grand)}</td><td></td>
+  </tr>`;
+}
+
+// --- slider/number sync ---
+function pairLog(slider, num, max) {
+  $(slider).addEventListener("input", () => {
+    $(num).value = Math.min(max, Math.round(parseFloat($(slider).value) || 0));
+    render();
+  });
+  $(num).addEventListener("input", () => {
+    $(slider).value = Math.min(max, parseFloat($(num).value) || 0);
+    render();
+  });
+}
+
+$("warcs").addEventListener("input", render);
+$("parallel").addEventListener("change", render);
+pairLog("chipsSlider", "chips", 8000);
+pairLog("coresSlider", "cores", 200000);
+
+document.querySelectorAll("[data-chips]").forEach(b =>
+  b.addEventListener("click", () => { $("chips").value = b.dataset.chips; $("chipsSlider").value = b.dataset.chips; render(); }));
+document.querySelectorAll("[data-cores]").forEach(b =>
+  b.addEventListener("click", () => { $("cores").value = b.dataset.cores; $("coresSlider").value = b.dataset.cores; render(); }));
+
+render();
+</script>
+
+</body>
+</html>

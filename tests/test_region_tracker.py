@@ -10,6 +10,8 @@ filesystem (via `tmp_path`) rather than GCS — the logic is the same.
 
 from __future__ import annotations
 
+import os
+
 import pytest
 
 from experiments.scaling_law_sweeps import region_tracker as rt
@@ -40,7 +42,7 @@ def test_detect_region_prefers_explicit_over_prefix():
 
 
 def test_detect_region_no_signals_raises():
-    with pytest.raises(ValueError, match="MARIN_PREFIX|MARIN_REGION"):
+    with pytest.raises(ValueError, match=r"MARIN_PREFIX|MARIN_REGION"):
         rt.detect_current_region({})
 
 
@@ -225,6 +227,116 @@ def test_resolve_checkpoint_prefix_uses_detect_when_local_region_none(tracker_di
         tracker_prefix=tracker_dir,
     )
     assert prefix == "gs://marin-us-central1"
+
+
+# =============================================================================
+# Liveness gate — _claim_is_live / _latest_mtime_seconds_ago
+# =============================================================================
+
+
+def test_claim_is_live_true_for_recent_write(tmp_path):
+    """A checkpoint dir with a freshly-written object reads as live."""
+    ckpt = tmp_path / "ckpt"
+    ckpt.mkdir()
+    (ckpt / "step-100.bin").write_bytes(b"x")  # mtime ~= now
+    assert rt._claim_is_live(f"file://{ckpt}", staleness_seconds=rt.STALE_CLAIM_SECONDS) is True
+
+
+def test_claim_is_live_false_for_stale_write(tmp_path):
+    """A checkpoint dir whose newest object is older than the window reads as dead."""
+    ckpt = tmp_path / "ckpt"
+    ckpt.mkdir()
+    f = ckpt / "step-100.bin"
+    f.write_bytes(b"x")
+    old = os.stat(f).st_mtime - (rt.STALE_CLAIM_SECONDS + 600)
+    os.utime(f, (old, old))
+    assert rt._claim_is_live(f"file://{ckpt}", staleness_seconds=rt.STALE_CLAIM_SECONDS) is False
+
+
+def test_claim_is_live_false_for_empty_dir(tmp_path):
+    """No checkpoint written yet → not (yet) a live run with durable progress."""
+    ckpt = tmp_path / "ckpt"
+    ckpt.mkdir()
+    assert rt._claim_is_live(f"file://{ckpt}", staleness_seconds=rt.STALE_CLAIM_SECONDS) is False
+
+
+def test_claim_is_live_false_for_missing_dir(tmp_path):
+    """A checkpoint dir that doesn't exist reads as not-live (safe to migrate)."""
+    missing = tmp_path / "does-not-exist"
+    assert rt._claim_is_live(f"file://{missing}", staleness_seconds=rt.STALE_CLAIM_SECONDS) is False
+
+
+def test_resolve_migration_blocked_when_claim_is_live(tracker_dir, monkeypatch):
+    """A region mismatch must NOT migrate while the claimed region is still live —
+    that would spawn a concurrent duplicate. Raises RegionMismatch instead."""
+    rt.resolve_checkpoint_prefix(
+        "dclm",
+        "expB_T20T",
+        "run-live",
+        local_region="us-central1",
+        tracker_prefix=tracker_dir,
+        checkpoint_rel_path="checkpoints/isoflop-curation/run-live",
+    )
+    monkeypatch.setattr(rt, "_claim_is_live", lambda *a, **k: True)
+    with pytest.raises(rt.RegionMismatch, match="still live"):
+        rt.resolve_checkpoint_prefix(
+            "dclm",
+            "expB_T20T",
+            "run-live",
+            local_region="us-east5",
+            tracker_prefix=tracker_dir,
+            checkpoint_rel_path="checkpoints/isoflop-curation/run-live",
+        )
+    # Tracker must be untouched — the original claim still owns it.
+    claim = rt.claim_or_read_region(
+        rt.run_key_for("dclm", "expB_T20T", "run-live"),
+        "us-east5",
+        tracker_prefix=tracker_dir,
+    )
+    assert claim.region == "us-central1"
+
+
+def test_resolve_migration_proceeds_when_claim_is_dead(tracker_dir, monkeypatch):
+    """A region mismatch DOES migrate when the claimed region's checkpoint is
+    stale/absent (original preempted or dead)."""
+    rt.resolve_checkpoint_prefix(
+        "dclm",
+        "expB_T20T",
+        "run-dead",
+        local_region="us-central1",
+        tracker_prefix=tracker_dir,
+        checkpoint_rel_path="checkpoints/isoflop-curation/run-dead",
+    )
+    monkeypatch.setattr(rt, "_claim_is_live", lambda *a, **k: False)
+    new_bucket = rt.resolve_checkpoint_prefix(
+        "dclm",
+        "expB_T20T",
+        "run-dead",
+        local_region="us-east5",
+        tracker_prefix=tracker_dir,
+        checkpoint_rel_path="checkpoints/isoflop-curation/run-dead",
+    )
+    assert new_bucket == "gs://marin-us-east5"
+
+
+def test_resolve_migration_unconditional_without_checkpoint_rel_path(tracker_dir):
+    """Backward compat: without checkpoint_rel_path, mismatch migrates as before
+    (no liveness check), so other callers are unaffected."""
+    rt.resolve_checkpoint_prefix(
+        "dclm",
+        "expB_T20T",
+        "run-nocrp",
+        local_region="us-central1",
+        tracker_prefix=tracker_dir,
+    )
+    new_bucket = rt.resolve_checkpoint_prefix(
+        "dclm",
+        "expB_T20T",
+        "run-nocrp",
+        local_region="us-east5",
+        tracker_prefix=tracker_dir,
+    )
+    assert new_bucket == "gs://marin-us-east5"
 
 
 def test_resolve_checkpoint_prefix_raises_without_env(tracker_dir, monkeypatch):

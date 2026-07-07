@@ -226,11 +226,26 @@ safety = [
     "detoxify",        # local Perspective-analog classifier for RTP-style toxicity eval
 ]
 
+# Open-source HTML->text extractors compared against the 8B extractor in the
+# extraction-router bake-off (experiments/baseline_collection/extractor_bakeoff.py).
+# All CPU, pure-Python(+lxml), permissively licensed. resiliparse + beautifulsoup4
+# are already core deps; rapidfuzz powers the token-ROUGE-L LCS in extraction_similarity.
+extraction-bakeoff = [
+    "trafilatura>=2.0.0",       # balanced heuristics + fallbacks (Apache-2.0)
+    "justext[fasttext]",        # XenonMolecule fork v4.2.0 (learned classifier; fastText tier) — see [tool.uv.sources]
+    "readability-lxml>=0.8.1",  # Arc90 reader-mode DOM scoring; import as `readability` (Apache-2.0)
+    "goose3>=3.1.20",           # article extractor (Apache-2.0)
+    "boilerpy3>=1.0.7",         # boilerpipe shallow-text decision trees (Apache-2.0)
+    "inscriptis>=2.6.0",        # layout-preserving HTML->text, strong on tables (Apache-2.0)
+    "rapidfuzz>=3.0.0",         # C++ LCSseq for fast token ROUGE-L
+]
+
 [[tool.uv.index]]
 name = "marin-resiliparse"
 url = "https://marin-community.github.io/chatnoir-resiliparse/simple"
 
 [tool.uv.sources]
+justext = { git = "https://github.com/XenonMolecule/jusText", tag = "v4.2.0" }
 torchvision = [
     # Default to the CPU index for TPU/CPU/vLLM builds
     { index = "pytorch-cpu", extra = "cpu" },

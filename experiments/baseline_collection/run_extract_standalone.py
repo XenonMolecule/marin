@@ -1068,8 +1068,14 @@ def main():
     )
     parser.add_argument(
         "--output-subdir",
-        default="documents/baseline_llm_extraction_test",
-        help="Legacy output subdir. Ignored when --spec is set.",
+        default=None,
+        help=(
+            "Output subdir. Without --spec, this is the legacy namespace "
+            "(default: documents/baseline_llm_extraction_test). With --spec, leave "
+            "unset to use the spec's canonical namespace; set it to redirect output + "
+            "the skip-registry to a separate namespace while keeping the spec's prompt "
+            "(e.g. benchmarking a different model on the same spec)."
+        ),
     )
     parser.add_argument("--model", default=None, help="Model path (auto-resolves from region if not set)")
     parser.add_argument("--tp", type=int, default=None, help="Tensor parallel size (auto-detect from JAX)")
@@ -1095,16 +1101,22 @@ def main():
         from experiments.baseline_collection.extraction_specs import LEGACY_SPEC_ID, get_spec
 
         spec_obj = get_spec(args.spec)
-        # The legacy spec maps to the unprefixed GCS path so it shares the
-        # namespace with pre-registry data. All other specs nest under their id.
-        if spec_obj.spec_id == LEGACY_SPEC_ID:
+        if args.output_subdir is not None:
+            # Explicit override: keep the spec's prompt but redirect output + the
+            # skip-registry to a separate namespace. Used to benchmark a different
+            # model on the same spec without skipping (the canonical namespace is
+            # already complete) or polluting the canonical dataset.
+            output_subdir = args.output_subdir
+        elif spec_obj.spec_id == LEGACY_SPEC_ID:
+            # The legacy spec maps to the unprefixed GCS path so it shares the
+            # namespace with pre-registry data. All other specs nest under their id.
             output_subdir = "documents/baseline_llm_extraction"
         else:
             output_subdir = f"documents/baseline_llm_extraction/{spec_obj.spec_id}"
         registry_prefix = _registry_prefix_for(output_subdir)
         logger.info("Spec: %s — %s", spec_obj.spec_id, spec_obj.description or "(no description)")
     else:
-        output_subdir = args.output_subdir
+        output_subdir = args.output_subdir or "documents/baseline_llm_extraction_test"
         registry_prefix = DEFAULT_COMPLETED_REGISTRY_PREFIX
     logger.info("Registry prefix: %s", registry_prefix)
 

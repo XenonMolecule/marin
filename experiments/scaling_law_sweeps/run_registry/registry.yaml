@@ -69,11 +69,11 @@ runs:
   iris_job: null
   supervisor: null
   last_checked: null
-  last_synced: '2026-05-29T21:15:29+00:00'
+  last_synced: '2026-06-22T21:06:59+00:00'
   notes: seeded 2026-05-29 audit; status=complete means ran+produced results (not re-verified vs planner
     total)
   created: '2026-05-29T21:15:29+00:00'
-  updated: '2026-05-29T21:15:29+00:00'
+  updated: '2026-06-22T21:06:59+00:00'
 - id: high_quality__canon-1000w
   method: high_quality
   sample: canon-1000w
@@ -87,11 +87,11 @@ runs:
   iris_job: null
   supervisor: null
   last_checked: null
-  last_synced: '2026-05-29T21:15:29+00:00'
+  last_synced: '2026-06-22T21:07:00+00:00'
   notes: seeded 2026-05-29 audit; status=complete means ran+produced results (not re-verified vs planner
     total)
   created: '2026-05-29T21:15:29+00:00'
-  updated: '2026-05-29T21:15:29+00:00'
+  updated: '2026-06-22T21:07:00+00:00'
 - id: llm_curated__canon-1000w
   method: llm_curated
   sample: canon-1000w
@@ -105,11 +105,11 @@ runs:
   iris_job: null
   supervisor: null
   last_checked: null
-  last_synced: '2026-05-29T21:15:29+00:00'
+  last_synced: '2026-06-22T21:07:01+00:00'
   notes: seeded 2026-05-29 audit; status=complete means ran+produced results (not re-verified vs planner
     total)
   created: '2026-05-29T21:15:29+00:00'
-  updated: '2026-05-29T21:15:29+00:00'
+  updated: '2026-06-22T21:07:01+00:00'
 - id: low_quality__canon-1000w
   method: low_quality
   sample: canon-1000w
@@ -123,11 +123,11 @@ runs:
   iris_job: null
   supervisor: null
   last_checked: null
-  last_synced: '2026-05-29T21:15:29+00:00'
+  last_synced: '2026-06-22T21:07:01+00:00'
   notes: seeded 2026-05-29 audit; status=complete means ran+produced results (not re-verified vs planner
     total)
   created: '2026-05-29T21:15:29+00:00'
-  updated: '2026-05-29T21:15:29+00:00'
+  updated: '2026-06-22T21:07:01+00:00'
 - id: med_quality__canon-1000w
   method: med_quality
   sample: canon-1000w
@@ -141,11 +141,11 @@ runs:
   iris_job: null
   supervisor: null
   last_checked: null
-  last_synced: '2026-05-29T21:15:29+00:00'
+  last_synced: '2026-06-22T21:07:02+00:00'
   notes: seeded 2026-05-29 audit; status=complete means ran+produced results (not re-verified vs planner
     total)
   created: '2026-05-29T21:15:29+00:00'
-  updated: '2026-05-29T21:15:29+00:00'
+  updated: '2026-06-22T21:07:02+00:00'
 - id: nemotron_full__canon-1000w
   method: nemotron_full
   sample: canon-1000w
@@ -159,11 +159,11 @@ runs:
   iris_job: null
   supervisor: null
   last_checked: null
-  last_synced: '2026-05-29T21:15:29+00:00'
+  last_synced: '2026-06-22T21:07:03+00:00'
   notes: seeded 2026-05-29 audit; status=complete means ran+produced results (not re-verified vs planner
     total)
   created: '2026-05-29T21:15:29+00:00'
-  updated: '2026-05-29T21:15:29+00:00'
+  updated: '2026-06-22T21:07:03+00:00'
 - id: resiliparse__canon-1000w
   method: resiliparse
   sample: canon-1000w
@@ -177,11 +177,11 @@ runs:
   iris_job: null
   supervisor: null
   last_checked: null
-  last_synced: '2026-05-29T21:15:29+00:00'
+  last_synced: '2026-06-22T21:07:04+00:00'
   notes: seeded 2026-05-29 audit; status=complete means ran+produced results (not re-verified vs planner
     total)
   created: '2026-05-29T21:15:29+00:00'
-  updated: '2026-05-29T21:15:29+00:00'
+  updated: '2026-06-22T21:07:04+00:00'
 - id: resiliparse_dedup__canon-1000w
   method: resiliparse_dedup
   sample: canon-1000w
@@ -195,11 +195,11 @@ runs:
   iris_job: null
   supervisor: null
   last_checked: null
-  last_synced: '2026-05-29T21:15:29+00:00'
+  last_synced: '2026-06-22T21:07:05+00:00'
   notes: seeded 2026-05-29 audit; status=complete means ran+produced results (not re-verified vs planner
     total)
   created: '2026-05-29T21:15:29+00:00'
-  updated: '2026-05-29T21:15:29+00:00'
+  updated: '2026-06-22T21:07:05+00:00'
 - id: dclm__canon-100w
   method: dclm
   sample: canon-100w
@@ -213,11 +213,11 @@ runs:
   iris_job: null
   supervisor: null
   last_checked: null
-  last_synced: '2026-05-29T21:15:29+00:00'
+  last_synced: '2026-06-22T21:07:06+00:00'
   notes: seeded 2026-05-29 audit; status=complete means ran+produced results (not re-verified vs planner
     total)
   created: '2026-05-29T21:15:29+00:00'
-  updated: '2026-05-29T21:15:29+00:00'
+  updated: '2026-06-22T21:07:06+00:00'
 - id: high_quality__canon-100w
   method: high_quality
   sample: canon-100w
@@ -231,11 +231,11 @@ runs:
   iris_job: null
   supervisor: null
   last_checked: null
-  last_synced: '2026-05-29T21:15:29+00:00'
+  last_synced: '2026-06-22T21:07:07+00:00'
   notes: seeded 2026-05-29 audit; status=complete means ran+produced results (not re-verified vs planner
     total)
   created: '2026-05-29T21:15:29+00:00'
-  updated: '2026-05-29T21:15:29+00:00'
+  updated: '2026-06-22T21:07:07+00:00'
 - id: llm_curated__canon-100w
   method: llm_curated
   sample: canon-100w
@@ -249,11 +249,11 @@ runs:
   iris_job: null
   supervisor: null
   last_checked: null
-  last_synced: '2026-05-29T21:15:29+00:00'
+  last_synced: '2026-06-22T21:07:08+00:00'
   notes: seeded 2026-05-29 audit; status=complete means ran+produced results (not re-verified vs planner
     total)
   created: '2026-05-29T21:15:29+00:00'
-  updated: '2026-05-29T21:15:29+00:00'
+  updated: '2026-06-22T21:07:08+00:00'
 - id: llm_curated_dclm_filtered__canon-100w
   method: llm_curated_dclm_filtered
   sample: canon-100w
@@ -267,11 +267,11 @@ runs:
   iris_job: null
   supervisor: null
   last_checked: null
-  last_synced: '2026-05-29T21:15:29+00:00'
+  last_synced: '2026-06-22T21:07:08+00:00'
   notes: seeded 2026-05-29 audit; status=complete means ran+produced results (not re-verified vs planner
     total)
   created: '2026-05-29T21:15:29+00:00'
-  updated: '2026-05-29T21:15:29+00:00'
+  updated: '2026-06-22T21:07:08+00:00'
 - id: low_quality__canon-100w
   method: low_quality
   sample: canon-100w
@@ -285,11 +285,11 @@ runs:
   iris_job: null
   supervisor: null
   last_checked: null
-  last_synced: '2026-05-29T21:15:29+00:00'
+  last_synced: '2026-06-22T21:07:09+00:00'
   notes: seeded 2026-05-29 audit; status=complete means ran+produced results (not re-verified vs planner
     total)
   created: '2026-05-29T21:15:29+00:00'
-  updated: '2026-05-29T21:15:29+00:00'
+  updated: '2026-06-22T21:07:09+00:00'
 - id: med_low_quality__canon-100w
   method: med_low_quality
   sample: canon-100w
@@ -303,11 +303,11 @@ runs:
   iris_job: null
   supervisor: null
   last_checked: null
-  last_synced: '2026-05-29T21:15:29+00:00'
+  last_synced: '2026-06-22T21:07:10+00:00'
   notes: seeded 2026-05-29 audit; status=complete means ran+produced results (not re-verified vs planner
     total)
   created: '2026-05-29T21:15:29+00:00'
-  updated: '2026-05-29T21:15:29+00:00'
+  updated: '2026-06-22T21:07:10+00:00'
 - id: med_quality__canon-100w
   method: med_quality
   sample: canon-100w
@@ -321,11 +321,11 @@ runs:
   iris_job: null
   supervisor: null
   last_checked: null
-  last_synced: '2026-05-29T21:15:29+00:00'
+  last_synced: '2026-06-22T21:07:11+00:00'
   notes: seeded 2026-05-29 audit; status=complete means ran+produced results (not re-verified vs planner
     total)
   created: '2026-05-29T21:15:29+00:00'
-  updated: '2026-05-29T21:15:29+00:00'
+  updated: '2026-06-22T21:07:11+00:00'
 - id: nemotron_full__canon-100w
   method: nemotron_full
   sample: canon-100w
@@ -339,11 +339,11 @@ runs:
   iris_job: null
   supervisor: null
   last_checked: null
-  last_synced: '2026-05-29T21:15:29+00:00'
+  last_synced: '2026-06-22T21:07:12+00:00'
   notes: seeded 2026-05-29 audit; status=complete means ran+produced results (not re-verified vs planner
     total)
   created: '2026-05-29T21:15:29+00:00'
-  updated: '2026-05-29T21:15:29+00:00'
+  updated: '2026-06-22T21:07:12+00:00'
 - id: nemotron_qhigh__canon-100w
   method: nemotron_qhigh
   sample: canon-100w
@@ -357,11 +357,11 @@ runs:
   iris_job: null
   supervisor: null
   last_checked: null
-  last_synced: '2026-05-29T21:15:29+00:00'
+  last_synced: '2026-06-22T21:07:13+00:00'
   notes: seeded 2026-05-29 audit; status=complete means ran+produced results (not re-verified vs planner
     total)
   created: '2026-05-29T21:15:29+00:00'
-  updated: '2026-05-29T21:15:29+00:00'
+  updated: '2026-06-22T21:07:13+00:00'
 - id: resiliparse__canon-100w
   method: resiliparse
   sample: canon-100w
@@ -375,29 +375,30 @@ runs:
   iris_job: null
   supervisor: null
   last_checked: null
-  last_synced: '2026-05-29T21:15:29+00:00'
+  last_synced: '2026-06-22T21:07:13+00:00'
   notes: seeded 2026-05-29 audit; status=complete means ran+produced results (not re-verified vs planner
     total)
   created: '2026-05-29T21:15:29+00:00'
-  updated: '2026-05-29T21:15:29+00:00'
+  updated: '2026-06-22T21:07:13+00:00'
 - id: resiliparse_dedup__canon-100w
   method: resiliparse_dedup
   sample: canon-100w
   regime: natural
-  status: running
-  cells_done: 21
-  cells_total: 39
+  status: complete
+  cells_done: 34
+  cells_total: 34
   wandb: https://wandb.ai/marin-community/marin/groups/data-curation-warc-scaling
   results_glob: gs://marin-us-central1/metadata/data_curation_warc_scaling_results/curation-resiliparse_dedup_100-expWARC_natural-*.json
   checkpoint_dir: null
-  iris_job: /michaelryan/warc-resi-dedup-100-fill
-  supervisor: claude-6329ae0a
+  iris_job: /michaelryan/warc100-resiliparse-dedup-match-lowq
+  supervisor: null
   last_checked: '2026-05-31T23:42:57+00:00'
-  last_synced: '2026-06-01T20:25:21+00:00'
-  notes: 'status review for user ~19:15Z: healthy, 0 failures. resiliparse fill 21/39 (wound down, rescues
-    running). 10k 8 done, yielding to interactive random-3k (train% 16-19%).'
+  last_synced: '2026-06-22T21:07:14+00:00'
+  notes: "2026-06-25 (claude-1e425d94): 34/34 COMPLETE. Last cell (3e+19-d256-L3-B512) was OOM-killing\
+    \ at 89% (exit137, d256+large-cache prefetch); relaunched with --force-memory-gb 64 (warc100-resi-d256-oom-fix)\
+    \ \u2192 SUCCEEDED. Matches low_quality_100 coverage."
   created: '2026-05-29T21:15:29+00:00'
-  updated: '2026-06-01T20:25:46+00:00'
+  updated: '2026-06-25T04:42:13+00:00'
   pct_complete: 67.2
   last_progress_synced: '2026-06-01T20:25:46+00:00'
 - id: dclm__canon-2000w
@@ -413,11 +414,11 @@ runs:
   iris_job: null
   supervisor: null
   last_checked: null
-  last_synced: '2026-05-29T21:15:29+00:00'
+  last_synced: '2026-06-22T21:07:16+00:00'
   notes: seeded 2026-05-29 audit; status=complete means ran+produced results (not re-verified vs planner
     total)
   created: '2026-05-29T21:15:29+00:00'
-  updated: '2026-05-29T21:15:29+00:00'
+  updated: '2026-06-22T21:07:16+00:00'
 - id: high_quality__canon-2000w
   method: high_quality
   sample: canon-2000w
@@ -431,11 +432,11 @@ runs:
   iris_job: null
   supervisor: null
   last_checked: null
-  last_synced: '2026-05-29T21:15:29+00:00'
+  last_synced: '2026-06-22T21:07:16+00:00'
   notes: seeded 2026-05-29 audit; status=complete means ran+produced results (not re-verified vs planner
     total)
   created: '2026-05-29T21:15:29+00:00'
-  updated: '2026-05-29T21:15:29+00:00'
+  updated: '2026-06-22T21:07:16+00:00'
 - id: llm_curated__canon-2000w
   method: llm_curated
   sample: canon-2000w
@@ -449,11 +450,11 @@ runs:
   iris_job: null
   supervisor: null
   last_checked: null
-  last_synced: '2026-05-29T21:15:29+00:00'
+  last_synced: '2026-06-22T21:07:17+00:00'
   notes: seeded 2026-05-29 audit; status=complete means ran+produced results (not re-verified vs planner
     total)
   created: '2026-05-29T21:15:29+00:00'
-  updated: '2026-05-29T21:15:29+00:00'
+  updated: '2026-06-22T21:07:17+00:00'
 - id: low_quality__canon-2000w
   method: low_quality
   sample: canon-2000w
@@ -467,11 +468,11 @@ runs:
   iris_job: null
   supervisor: null
   last_checked: null
-  last_synced: '2026-05-29T21:15:29+00:00'
+  last_synced: '2026-06-22T21:07:18+00:00'
   notes: seeded 2026-05-29 audit; status=complete means ran+produced results (not re-verified vs planner
     total)
   created: '2026-05-29T21:15:29+00:00'
-  updated: '2026-05-29T21:15:29+00:00'
+  updated: '2026-06-22T21:07:18+00:00'
 - id: med_quality__canon-2000w
   method: med_quality
   sample: canon-2000w
@@ -485,11 +486,11 @@ runs:
   iris_job: null
   supervisor: null
   last_checked: null
-  last_synced: '2026-05-29T21:15:29+00:00'
+  last_synced: '2026-06-22T21:07:19+00:00'
   notes: seeded 2026-05-29 audit; status=complete means ran+produced results (not re-verified vs planner
     total)
   created: '2026-05-29T21:15:29+00:00'
-  updated: '2026-05-29T21:15:29+00:00'
+  updated: '2026-06-22T21:07:19+00:00'
 - id: nemotron_full__canon-2000w
   method: nemotron_full
   sample: canon-2000w
@@ -503,11 +504,11 @@ runs:
   iris_job: null
   supervisor: null
   last_checked: null
-  last_synced: '2026-05-29T21:15:29+00:00'
+  last_synced: '2026-06-22T21:07:20+00:00'
   notes: seeded 2026-05-29 audit; status=complete means ran+produced results (not re-verified vs planner
     total)
   created: '2026-05-29T21:15:29+00:00'
-  updated: '2026-05-29T21:15:29+00:00'
+  updated: '2026-06-22T21:07:20+00:00'
 - id: resiliparse__canon-2000w
   method: resiliparse
   sample: canon-2000w
@@ -521,11 +522,11 @@ runs:
   iris_job: null
   supervisor: null
   last_checked: null
-  last_synced: '2026-05-29T21:15:29+00:00'
+  last_synced: '2026-06-22T21:07:21+00:00'
   notes: seeded 2026-05-29 audit; status=complete means ran+produced results (not re-verified vs planner
     total)
   created: '2026-05-29T21:15:29+00:00'
-  updated: '2026-05-29T21:15:29+00:00'
+  updated: '2026-06-22T21:07:21+00:00'
 - id: resiliparse_dedup__canon-2000w
   method: resiliparse_dedup
   sample: canon-2000w
@@ -539,11 +540,11 @@ runs:
   iris_job: null
   supervisor: null
   last_checked: null
-  last_synced: '2026-05-29T21:15:29+00:00'
+  last_synced: '2026-06-22T21:07:22+00:00'
   notes: seeded 2026-05-29 audit; status=complete means ran+produced results (not re-verified vs planner
     total)
   created: '2026-05-29T21:15:29+00:00'
-  updated: '2026-05-29T21:17:22+00:00'
+  updated: '2026-06-22T21:07:22+00:00'
 - id: dclm__canon-3000w
   method: dclm
   sample: canon-3000w
@@ -557,11 +558,11 @@ runs:
   iris_job: null
   supervisor: null
   last_checked: null
-  last_synced: '2026-05-29T21:15:29+00:00'
+  last_synced: '2026-06-22T21:07:22+00:00'
   notes: seeded 2026-05-29 audit; status=complete means ran+produced results (not re-verified vs planner
     total)
   created: '2026-05-29T21:15:29+00:00'
-  updated: '2026-05-29T21:15:29+00:00'
+  updated: '2026-06-22T21:07:22+00:00'
 - id: fineweb_edu__canon-3000w
   method: fineweb_edu
   sample: canon-3000w
@@ -575,11 +576,11 @@ runs:
   iris_job: null
   supervisor: null
   last_checked: null
-  last_synced: '2026-05-29T21:15:29+00:00'
+  last_synced: '2026-06-22T21:07:23+00:00'
   notes: seeded 2026-05-29 audit; status=complete means ran+produced results (not re-verified vs planner
     total)
   created: '2026-05-29T21:15:29+00:00'
-  updated: '2026-05-29T21:15:29+00:00'
+  updated: '2026-06-22T21:07:23+00:00'
 - id: high_quality__canon-3000w
   method: high_quality
   sample: canon-3000w
@@ -593,11 +594,11 @@ runs:
   iris_job: null
   supervisor: null
   last_checked: null
-  last_synced: '2026-05-29T21:15:29+00:00'
+  last_synced: '2026-06-22T21:07:24+00:00'
   notes: seeded 2026-05-29 audit; status=complete means ran+produced results (not re-verified vs planner
     total)
   created: '2026-05-29T21:15:29+00:00'
-  updated: '2026-05-29T21:15:29+00:00'
+  updated: '2026-06-22T21:07:24+00:00'
 - id: llm_curated__canon-3000w
   method: llm_curated
   sample: canon-3000w
@@ -611,11 +612,11 @@ runs:
   iris_job: null
   supervisor: null
   last_checked: null
-  last_synced: '2026-05-29T21:15:29+00:00'
+  last_synced: '2026-06-22T21:07:25+00:00'
   notes: seeded 2026-05-29 audit; status=complete means ran+produced results (not re-verified vs planner
     total)
   created: '2026-05-29T21:15:29+00:00'
-  updated: '2026-05-29T21:15:29+00:00'
+  updated: '2026-06-22T21:07:25+00:00'
 - id: llm_curated_dclm_filtered__canon-3000w
   method: llm_curated_dclm_filtered
   sample: canon-3000w
@@ -629,11 +630,11 @@ runs:
   iris_job: null
   supervisor: null
   last_checked: null
-  last_synced: '2026-05-29T21:15:29+00:00'
+  last_synced: '2026-06-22T21:07:26+00:00'
   notes: seeded 2026-05-29 audit; status=complete means ran+produced results (not re-verified vs planner
     total)
   created: '2026-05-29T21:15:29+00:00'
-  updated: '2026-05-29T21:15:29+00:00'
+  updated: '2026-06-22T21:07:26+00:00'
 - id: llm_curated_dedup__canon-3000w
   method: llm_curated_dedup
   sample: canon-3000w
@@ -647,11 +648,11 @@ runs:
   iris_job: null
   supervisor: null
   last_checked: null
-  last_synced: '2026-05-29T21:15:29+00:00'
+  last_synced: '2026-06-22T21:07:27+00:00'
   notes: seeded 2026-05-29 audit; status=complete means ran+produced results (not re-verified vs planner
     total)
   created: '2026-05-29T21:15:29+00:00'
-  updated: '2026-05-29T21:15:29+00:00'
+  updated: '2026-06-22T21:07:27+00:00'
 - id: med_quality__canon-3000w
   method: med_quality
   sample: canon-3000w
@@ -665,11 +666,11 @@ runs:
   iris_job: null
   supervisor: null
   last_checked: null
-  last_synced: '2026-05-29T21:15:29+00:00'
+  last_synced: '2026-06-22T21:07:27+00:00'
   notes: seeded 2026-05-29 audit; status=complete means ran+produced results (not re-verified vs planner
     total)
   created: '2026-05-29T21:15:29+00:00'
-  updated: '2026-05-29T21:15:29+00:00'
+  updated: '2026-06-22T21:07:27+00:00'
 - id: nemotron_full__canon-3000w
   method: nemotron_full
   sample: canon-3000w
@@ -683,11 +684,11 @@ runs:
   iris_job: null
   supervisor: null
   last_checked: null
-  last_synced: '2026-05-29T21:15:29+00:00'
+  last_synced: '2026-06-22T21:07:28+00:00'
   notes: seeded 2026-05-29 audit; status=complete means ran+produced results (not re-verified vs planner
     total)
   created: '2026-05-29T21:15:29+00:00'
-  updated: '2026-05-29T21:15:29+00:00'
+  updated: '2026-06-22T21:07:28+00:00'
 - id: resiliparse__canon-3000w
   method: resiliparse
   sample: canon-3000w
@@ -701,11 +702,11 @@ runs:
   iris_job: null
   supervisor: null
   last_checked: null
-  last_synced: '2026-05-29T21:15:29+00:00'
+  last_synced: '2026-06-22T21:07:29+00:00'
   notes: seeded 2026-05-29 audit; status=complete means ran+produced results (not re-verified vs planner
     total)
   created: '2026-05-29T21:15:29+00:00'
-  updated: '2026-05-29T21:15:29+00:00'
+  updated: '2026-06-22T21:07:29+00:00'
 - id: resiliparse_dedup__canon-3000w
   method: resiliparse_dedup
   sample: canon-3000w
@@ -719,11 +720,11 @@ runs:
   iris_job: null
   supervisor: null
   last_checked: null
-  last_synced: '2026-05-29T21:15:29+00:00'
+  last_synced: '2026-06-22T21:07:30+00:00'
   notes: seeded 2026-05-29 audit; status=complete means ran+produced results (not re-verified vs planner
     total)
   created: '2026-05-29T21:15:29+00:00'
-  updated: '2026-05-29T21:15:29+00:00'
+  updated: '2026-06-22T21:07:30+00:00'
 - id: dclm__canon-500w
   method: dclm
   sample: canon-500w
@@ -737,11 +738,11 @@ runs:
   iris_job: null
   supervisor: null
   last_checked: null
-  last_synced: '2026-05-29T21:15:29+00:00'
+  last_synced: '2026-06-22T21:07:31+00:00'
   notes: seeded 2026-05-29 audit; status=complete means ran+produced results (not re-verified vs planner
     total)
   created: '2026-05-29T21:15:29+00:00'
-  updated: '2026-05-29T21:15:29+00:00'
+  updated: '2026-06-22T21:07:31+00:00'
 - id: high_quality__canon-500w
   method: high_quality
   sample: canon-500w
@@ -755,11 +756,11 @@ runs:
   iris_job: null
   supervisor: null
   last_checked: null
-  last_synced: '2026-05-29T21:15:29+00:00'
+  last_synced: '2026-06-22T21:07:32+00:00'
   notes: seeded 2026-05-29 audit; status=complete means ran+produced results (not re-verified vs planner
     total)
   created: '2026-05-29T21:15:29+00:00'
-  updated: '2026-05-29T21:15:29+00:00'
+  updated: '2026-06-22T21:07:32+00:00'
 - id: llm_curated__canon-500w
   method: llm_curated
   sample: canon-500w
@@ -773,11 +774,11 @@ runs:
   iris_job: null
   supervisor: null
   last_checked: null
-  last_synced: '2026-05-29T21:15:29+00:00'
+  last_synced: '2026-06-22T21:07:33+00:00'
   notes: seeded 2026-05-29 audit; status=complete means ran+produced results (not re-verified vs planner
     total)
   created: '2026-05-29T21:15:29+00:00'
-  updated: '2026-05-29T21:15:29+00:00'
+  updated: '2026-06-22T21:07:33+00:00'
 - id: low_quality__canon-500w
   method: low_quality
   sample: canon-500w
@@ -791,11 +792,11 @@ runs:
   iris_job: null
   supervisor: null
   last_checked: null
-  last_synced: '2026-05-29T21:15:29+00:00'
+  last_synced: '2026-06-22T21:07:34+00:00'
   notes: seeded 2026-05-29 audit; status=complete means ran+produced results (not re-verified vs planner
     total)
   created: '2026-05-29T21:15:29+00:00'
-  updated: '2026-05-29T21:15:29+00:00'
+  updated: '2026-06-22T21:07:34+00:00'
 - id: med_quality__canon-500w
   method: med_quality
   sample: canon-500w
@@ -809,11 +810,11 @@ runs:
   iris_job: null
   supervisor: null
   last_checked: null
-  last_synced: '2026-05-29T21:15:29+00:00'
+  last_synced: '2026-06-22T21:07:35+00:00'
   notes: seeded 2026-05-29 audit; status=complete means ran+produced results (not re-verified vs planner
     total)
   created: '2026-05-29T21:15:29+00:00'
-  updated: '2026-05-29T21:15:29+00:00'
+  updated: '2026-06-22T21:07:35+00:00'
 - id: nemotron_full__canon-500w
   method: nemotron_full
   sample: canon-500w
@@ -827,11 +828,11 @@ runs:
   iris_job: null
   supervisor: null
   last_checked: null
-  last_synced: '2026-05-29T21:15:29+00:00'
+  last_synced: '2026-06-22T21:07:36+00:00'
   notes: seeded 2026-05-29 audit; status=complete means ran+produced results (not re-verified vs planner
     total)
   created: '2026-05-29T21:15:29+00:00'
-  updated: '2026-05-29T21:15:29+00:00'
+  updated: '2026-06-22T21:07:36+00:00'
 - id: nemotron_qhigh__canon-500w
   method: nemotron_qhigh
   sample: canon-500w
@@ -845,11 +846,11 @@ runs:
   iris_job: null
   supervisor: null
   last_checked: null
-  last_synced: '2026-05-29T21:15:29+00:00'
+  last_synced: '2026-06-22T21:07:37+00:00'
   notes: seeded 2026-05-29 audit; status=complete means ran+produced results (not re-verified vs planner
     total)
   created: '2026-05-29T21:15:29+00:00'
-  updated: '2026-05-29T21:15:29+00:00'
+  updated: '2026-06-22T21:07:37+00:00'
 - id: resiliparse__canon-500w
   method: resiliparse
   sample: canon-500w
@@ -863,11 +864,11 @@ runs:
   iris_job: null
   supervisor: null
   last_checked: null
-  last_synced: '2026-05-29T21:15:29+00:00'
+  last_synced: '2026-06-22T21:07:38+00:00'
   notes: seeded 2026-05-29 audit; status=complete means ran+produced results (not re-verified vs planner
     total)
   created: '2026-05-29T21:15:29+00:00'
-  updated: '2026-05-29T21:15:29+00:00'
+  updated: '2026-06-22T21:07:38+00:00'
 - id: resiliparse_dedup__canon-500w
   method: resiliparse_dedup
   sample: canon-500w
@@ -881,57 +882,135 @@ runs:
   iris_job: null
   supervisor: null
   last_checked: null
-  last_synced: '2026-05-29T21:15:29+00:00'
+  last_synced: '2026-06-22T21:07:39+00:00'
   notes: seeded 2026-05-29 audit; status=complete means ran+produced results (not re-verified vs planner
     total)
   created: '2026-05-29T21:15:29+00:00'
-  updated: '2026-05-29T21:15:29+00:00'
+  updated: '2026-06-22T21:07:39+00:00'
 - id: dclm_10k__pool-10000w
   method: dclm_10k
   sample: pool-10000w
   regime: natural
-  status: partial
-  cells_done: 6
+  status: running
+  cells_done: 38
   cells_total: 38
   wandb: https://wandb.ai/marin-community/marin/groups/data-curation-10k-natural
   results_glob: gs://marin-us-central1/metadata/data_curation_10k_natural_results/curation-dclm_10k-expFM_natural-*.json
   checkpoint_dir: null
-  iris_job: /michaelryan/10k-natural-interactive
-  supervisor: claude-6329ae0a
-  last_checked: '2026-06-02T00:10:33+00:00'
-  last_synced: '2026-06-02T00:10:14+00:00'
-  notes: '2026-06-02 ~08:10Z PURGE for higher-pri launch: killed all <=85% cells, kept >85%. See run_registry/purges/purge_2026-06-02.yaml.
-    Coords alive; relaunch via launchers (skip-done).'
+  iris_job: /michaelryan/10k-natural-dclm-r7
+  supervisor: claude-1e425d94
+  last_checked: '2026-06-15T09:11:49+00:00'
+  last_synced: '2026-06-22T21:07:40+00:00'
+  notes: '~02:10: 130/228 (fwcc 22, hq 22), 6 coords alive, 98 running/0 failed. healthy'
   created: '2026-05-29T23:43:28+00:00'
-  updated: '2026-06-02T08:03:48+00:00'
+  updated: '2026-06-22T21:07:40+00:00'
   pct_complete: 15.9
   last_progress_synced: '2026-06-01T20:25:53+00:00'
+- id: fineweb_cc_10k__pool-10000w
+  method: fineweb_cc_10k
+  sample: pool-10000w
+  regime: natural
+  status: running
+  cells_done: 37
+  cells_total: 38
+  wandb: null
+  results_glob: gs://marin-us-central1/metadata/data_curation_10k_natural_results/curation-fineweb_cc_10k-expFM_natural-*.json
+  checkpoint_dir: null
+  iris_job: /michaelryan/10k-natural-fineweb-cc-r6
+  supervisor: claude-1e425d94
+  last_checked: '2026-06-14T10:18:38+00:00'
+  last_synced: '2026-06-22T21:07:41+00:00'
+  pct_complete: null
+  last_progress_synced: null
+  notes: 121/228 ~03:17; 6 coords alive, RUNNING 24->54 (strong ramp), 0 FAILED. completions lag (rollout
+    reset in-flight cells; resume+recompile). healthy
+  created: '2026-06-13T00:42:59+00:00'
+  updated: '2026-06-22T21:07:41+00:00'
+- id: fineweb_edu_10k__pool-10000w
+  method: fineweb_edu_10k
+  sample: pool-10000w
+  regime: natural
+  status: running
+  cells_done: 37
+  cells_total: 38
+  wandb: null
+  results_glob: gs://marin-us-central1/metadata/data_curation_10k_natural_results/curation-fineweb_edu_10k-expFM_natural-*.json
+  checkpoint_dir: null
+  iris_job: /michaelryan/10k-natural-fineweb-edu-r7
+  supervisor: claude-1e425d94
+  last_checked: '2026-06-14T17:35:37+00:00'
+  last_synced: '2026-06-22T21:07:41+00:00'
+  pct_complete: null
+  last_progress_synced: null
+  notes: '~10:34: 6 coords alive, 106 running/0 failed, 122/228 stable (limiter#2 churn). no new problems
+    overnight'
+  created: '2026-06-13T00:43:31+00:00'
+  updated: '2026-06-22T21:07:41+00:00'
+- id: high_quality_10k__pool-10000w
+  method: high_quality_10k
+  sample: pool-10000w
+  regime: natural
+  status: running
+  cells_done: 39
+  cells_total: 38
+  wandb: null
+  results_glob: gs://marin-us-central1/metadata/data_curation_10k_natural_results/curation-high_quality_10k-expFM_natural-*.json
+  checkpoint_dir: null
+  iris_job: /michaelryan/10k-natural-high-quality-r7
+  supervisor: claude-1e425d94
+  last_checked: '2026-06-15T08:23:53+00:00'
+  last_synced: '2026-06-22T21:07:42+00:00'
+  pct_complete: null
+  last_progress_synced: null
+  notes: '~01:22: 128/228 (hq->21), 6 coords alive, 101 running/0 failed. healthy, no problems'
+  created: '2026-06-13T00:40:52+00:00'
+  updated: '2026-06-22T21:07:42+00:00'
 - id: nemotron_10k__pool-10000w
   method: nemotron_10k
   sample: pool-10000w
   regime: natural
-  status: partial
-  cells_done: 6
+  status: running
+  cells_done: 38
   cells_total: 38
   wandb: https://wandb.ai/marin-community/marin/groups/data-curation-10k-natural
   results_glob: gs://marin-us-central1/metadata/data_curation_10k_natural_results/curation-nemotron_10k-expFM_natural-*.json
   checkpoint_dir: null
-  iris_job: /michaelryan/10k-natural-interactive
-  supervisor: claude-6329ae0a
-  last_checked: '2026-06-02T00:10:33+00:00'
-  last_synced: '2026-06-02T00:10:15+00:00'
-  notes: '2026-06-02 ~08:10Z PURGE for higher-pri launch: killed all <=85% cells, kept >85%. See run_registry/purges/purge_2026-06-02.yaml.
-    Coords alive; relaunch via launchers (skip-done).'
+  iris_job: /michaelryan/10k-natural-nemotron-r7
+  supervisor: claude-1e425d94
+  last_checked: '2026-06-15T11:17:19+00:00'
+  last_synced: '2026-06-22T21:07:43+00:00'
+  notes: '~04:10: 130/228 steady, 6 coords alive, 98 running/0 failed. no new problems'
   created: '2026-05-29T23:43:28+00:00'
-  updated: '2026-06-02T08:03:48+00:00'
+  updated: '2026-06-22T21:07:43+00:00'
   pct_complete: 19.1
   last_progress_synced: '2026-06-01T20:26:02+00:00'
+- id: resiliparse_10k__pool-10000w
+  method: resiliparse_10k
+  sample: pool-10000w
+  regime: natural
+  status: running
+  cells_done: 36
+  cells_total: 38
+  wandb: null
+  results_glob: gs://marin-us-central1/metadata/data_curation_10k_natural_results/curation-resiliparse_10k-expFM_natural-*.json
+  checkpoint_dir: null
+  iris_job: /michaelryan/10k-natural-resiliparse-r7
+  supervisor: claude-1e425d94
+  last_checked: '2026-06-14T11:07:48+00:00'
+  last_synced: '2026-06-22T21:07:44+00:00'
+  pct_complete: null
+  last_progress_synced: null
+  notes: 'MULTI-HOST PROGRESS CONFIRMED ~04:05: resiliparse d3584/d2432/d1024 cells (impossible pre-fix)
+    checkpointing 31-50min fresh. 68 running/39 pending/0 failed, 6 coords alive. 121/228 (completions
+    lag = preemption-recompile churn limiter#2, slows rate not progress)'
+  created: '2026-06-13T05:43:28+00:00'
+  updated: '2026-06-22T21:07:44+00:00'
 - id: dclm_random_3000__random-3000w
   method: dclm_random_3000
   sample: random-3000w
   regime: natural
   status: partial
-  cells_done: 9
+  cells_done: 10
   cells_total: 21
   wandb: https://wandb.ai/marin-community/marin/groups/data-curation-fixed-model
   results_glob: gs://marin-us-central1/metadata/data_curation_fixed_model_results/curation-dclm_random_3000-expFM_natural-*.json
@@ -939,19 +1018,19 @@ runs:
   iris_job: /michaelryan/curation-fm-random3k-dclm-nem
   supervisor: claude-6329ae0a
   last_checked: '2026-06-01T21:24:31+00:00'
-  last_synced: '2026-06-01T20:57:56+00:00'
+  last_synced: '2026-06-22T21:07:45+00:00'
   pct_complete: 54.2
   last_progress_synced: '2026-06-01T20:26:11+00:00'
   notes: '2026-06-02 ~08:10Z PURGE for higher-pri launch: killed all <=85% cells, kept >85%. See run_registry/purges/purge_2026-06-02.yaml.
     Coords alive; relaunch via launchers (skip-done).'
   created: '2026-05-31T07:25:57+00:00'
-  updated: '2026-06-02T08:03:48+00:00'
+  updated: '2026-06-22T21:07:45+00:00'
 - id: nemotron_full_random_3000__random-3000w
   method: nemotron_full_random_3000
   sample: random-3000w
   regime: natural
   status: partial
-  cells_done: 12
+  cells_done: 13
   cells_total: 21
   wandb: https://wandb.ai/marin-community/marin/groups/data-curation-fixed-model
   results_glob: gs://marin-us-central1/metadata/data_curation_fixed_model_results/curation-nemotron_full_random_3000-expFM_natural-*.json
@@ -959,13 +1038,13 @@ runs:
   iris_job: /michaelryan/curation-fm-random3k-dclm-nem
   supervisor: claude-6329ae0a
   last_checked: '2026-06-01T21:24:31+00:00'
-  last_synced: '2026-06-01T20:57:57+00:00'
+  last_synced: '2026-06-22T21:07:46+00:00'
   pct_complete: 58.3
   last_progress_synced: '2026-06-01T20:26:20+00:00'
   notes: '2026-06-02 ~08:10Z PURGE for higher-pri launch: killed all <=85% cells, kept >85%. See run_registry/purges/purge_2026-06-02.yaml.
     Coords alive; relaunch via launchers (skip-done).'
   created: '2026-05-31T07:25:57+00:00'
-  updated: '2026-06-02T08:03:48+00:00'
+  updated: '2026-06-22T21:07:46+00:00'
 - id: resiliparse_random_dedup_3000__random-3000w
   method: resiliparse_random_dedup_3000
   sample: random-3000w
@@ -979,10 +1058,10 @@ runs:
   iris_job: /michaelryan/curation-fm-random3k-resiliparse
   supervisor: claude-6329ae0a
   last_checked: '2026-06-01T21:24:31+00:00'
-  last_synced: '2026-06-01T20:57:58+00:00'
+  last_synced: '2026-06-22T21:07:47+00:00'
   pct_complete: 29.0
   last_progress_synced: '2026-06-01T20:26:28+00:00'
   notes: '2026-06-02 ~08:10Z PURGE for higher-pri launch: killed all <=85% cells, kept >85%. See run_registry/purges/purge_2026-06-02.yaml.
     Coords alive; relaunch via launchers (skip-done).'
   created: '2026-05-31T07:25:58+00:00'
-  updated: '2026-06-02T08:03:48+00:00'
+  updated: '2026-06-22T21:07:47+00:00'

@@ -1,7 +1,15 @@
 # Copyright The Marin Authors
 # SPDX-License-Identifier: Apache-2.0
 
-"""Per-N Marin fuzzy dedup for the resiliparse extraction.
+"""Per-N Marin fuzzy dedup for a flat-shard `{text}` extraction (resiliparse, etc.).
+
+Despite the name, this is the GENERAL flat-shard dedup driver: it works for any extraction
+that lands as a flat per-WARC/per-shard tree with a `text` field (resiliparse, raw HTML->text,
+the fast_curation cascade, ...). The real dedup engine is the shared `lib/marin` primitives
+(`normalize_step` + `compute_minhash_attrs_step` + `compute_fuzzy_dups_attrs_step`); this file
+and `dedup_extracted.py` are thin wrappers that differ ONLY in their reshape/input-discovery.
+`dedup_extracted.py` is the canonical reference (it reads the consolidated LLM-extraction archive
+via a `resolved_{spec}.jsonl.gz` manifest); this one reads raw flat shards instead.
 
 Mirrors `dedup_extracted.py` (LLM-extracted quality bands) but reads from
 the raw resiliparse output instead of the consolidated LLM-extraction archive.

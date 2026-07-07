@@ -41,5 +41,9 @@ def add_run_env_variables(env: dict[str, str]) -> dict[str, str]:
         env["TPU_STDERR_LOG_LEVEL"] = "2"
     if "JAX_COMPILATION_CACHE_DIR" not in env and (val := os.environ.get("JAX_COMPILATION_CACHE_DIR")):
         env["JAX_COMPILATION_CACHE_DIR"] = val
+    # Forward the slice-portable compile-cache opt-in to the training child so it actually reaches the
+    # process that compiles (the coordinator's env is otherwise not propagated). Read by levanter trainer.
+    if "LEVANTER_PORTABLE_TPU_CACHE" not in env and (val := os.environ.get("LEVANTER_PORTABLE_TPU_CACHE")):
+        env["LEVANTER_PORTABLE_TPU_CACHE"] = val
 
     return env

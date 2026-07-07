@@ -155,6 +155,16 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=DEFAULT_SYNC_PENDING_PATH,
         help="GCS path of the JSONL log listing offline WandB runs that need later sync.",
     )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=0,
+        help="Levanter TrainerConfig.seed. The default 0 is what the whole sweep uses; "
+        "the data-shuffle permutation, model init, and loader keys all split from "
+        "PRNGKey(seed), so a different value gives a fully independent draw (different "
+        "data order AND init). Use with --run-suffix to isolate a seed-noise probe of a "
+        "single cell into a fresh run name / output dir / WandB run.",
+    )
     return parser.parse_args(argv)
 
 
@@ -268,7 +278,7 @@ def _build_tags(plan: PlannedRun, method) -> list[str]:
 
 
 def _build_train_lm_config(
-    plan: PlannedRun, tokenized, tags: list[str], wandb_project: str, wandb_entity: str, wandb_group: str
+    plan: PlannedRun, tokenized, tags: list[str], wandb_project: str, wandb_entity: str, wandb_group: str, seed: int = 0
 ):
     """Build the inner Levanter TrainLmConfig.
 
@@ -291,6 +301,7 @@ def _build_train_lm_config(
                 tags=tags,
             ),
             mp=jmp.get_policy("p=f32,c=bfloat16"),
+            seed=seed,
             train_batch_size=plan.batch_size,
             per_device_parallelism=-1,
             num_train_steps=plan.train_steps,
@@ -500,146 +511,13 @@ def _append_sync_pending_row(row: dict, jsonl_path: str) -> None:
         logger.warning("Failed to append sync-pending row to %s: %s", jsonl_path, e)
 
 
-def _init_jax_distributed_for_multihost_tpu() -> bool:
-    """Explicitly call `jax.distributed.initialize(...)` for multi-host TPU.
-
-    iris's `iris.runtime.jax_init.initialize_jax()` hardcodes a skip for TPU
-    (line 131: "TPU detected; skipping Iris JAX distributed init"). That's
-    correct for SINGLE-host TPU where libtpu alone wires up JAX's device list,
-    but WRONG for multi-host TPU where each VM needs to handshake with the
-    coordinator via `jax.distributed.initialize(coordinator, num_processes,
-    process_id)`. Without that handshake, `jax.process_count() == 1` on each
-    VM, and any collective (e.g. Levanter's `multihost_broadcast_sync`) raises
-    "requires jax distributed client to be initialized".
-
-    This helper replicates iris's multi-host init logic (see
-    lib/iris/src/iris/runtime/jax_init.py:145-163) minus the TPU skip. It
-    pulls the coordinator address / num_processes / process_id from iris's
-    job context, calls `jax.distributed.initialize(...)` ourselves BEFORE
-    Levanter starts. Levanter's subsequent init-via-iris is then a no-op
-    (iris still skips for TPU, but jax.distributed is already initialized).
-
-    Returns True if init was attempted (multi-host), False otherwise.
-    """
-    try:
-        from iris.cluster.client.job_info import get_job_info
-        from iris.runtime.jax_init import _poll_for_coordinator, iris_ctx
-    except Exception as e:
-        logger.warning("Could not import iris job-context helpers: %s. Skipping multi-host init.", e)
-        return False
-
-    job_info = get_job_info()
-    if job_info is None:
-        logger.info("No iris job context; single-process or non-iris run.")
-        return False
-    if job_info.num_tasks <= 1:
-        logger.info("Iris job has num_tasks=%d; single-host TPU -- libtpu handles init.", job_info.num_tasks)
-        return False
-
-    import jax
-
-    ENDPOINT_NAME = "jax.coordinator"
-    DEFAULT_PORT = 8476
-    task_index = job_info.task_index
-    ctx = iris_ctx()
-
-    # Retry wrapper for ALREADY_EXISTS "newer incarnation" errors. Under
-    # heavy preemption, one task's restart creates a new incarnation id; the
-    # surviving peers hold the old coordinator's connection and the new
-    # incarnation's RegisterTask is rejected. Sleep + retry gives iris's
-    # gang-scheduling time to restart all N tasks in sync.
-    import time as _time
-
-    # Default JAX coordinator timeout is 300s (5 min). For 4-VM gang-scheduled
-    # plans (v4-32), VMs often don't boot within that window -- container pull,
-    # venv install, GCS sync can each add minutes. 900s (15 min) covers the
-    # worst-case boot skew we've observed while still failing reasonably fast
-    # on truly broken topologies.
-    INIT_TIMEOUT_SECONDS = 900
-
-    # Transient error patterns we retry on. The `RegisterTask` /
-    # `CoordinationService` family in particular covers the late-worker race
-    # observed on v4-32 / v5p-64: a later-ranked worker's initial gRPC call to
-    # the coordinator fails with an EMPTY CoordinationServiceError (gRPC
-    # channel torn down before the coordinator's accept window opens).
-    # Previously only {ALREADY_EXISTS, newer incarnation, DEADLINE_EXCEEDED}
-    # were classified transient, so the naked RegisterTask failure propagated
-    # to the iris layer which then paid a full image-pull cost for the retry
-    # (~5 min). Catching it at Python level reduces that to ~10-160s per retry
-    # and fits the worst-case worker boot skew (~8-12 min) within one iris
-    # attempt instead of spreading across many.
-    _TRANSIENT_PATTERNS = (
-        "ALREADY_EXISTS",
-        "newer incarnation",
-        "DEADLINE_EXCEEDED",
-        "UNAVAILABLE",
-        "CANCELLED",
-        "/tensorflow.CoordinationService/",  # RegisterTask + friends
-        "CoordinationServiceError",
-        "Connection refused",
-        "failed to connect",
-    )
-
-    def _initialize_with_retry(coordinator: str, num_tasks: int, task_index: int, max_attempts: int = 10) -> None:
-        for attempt in range(max_attempts):
-            try:
-                jax.distributed.initialize(
-                    coordinator,
-                    num_tasks,
-                    task_index,
-                    initialization_timeout=INIT_TIMEOUT_SECONDS,
-                )
-                return
-            except Exception as exc:
-                msg = str(exc)
-                transient = any(p in msg for p in _TRANSIENT_PATTERNS)
-                if not transient or attempt == max_attempts - 1:
-                    raise
-                # Exponential backoff with 300s cap. 10 attempts x capped backoff
-                # totals ~17 min, which covers observed worst-case multi-VM
-                # worker boot skew without burning an iris image-pull retry.
-                backoff = min(300, 10 * (2**attempt))
-                logger.warning(
-                    "jax.distributed.initialize transient error (attempt %d/%d); " "sleeping %ds before retry: %s",
-                    attempt + 1,
-                    max_attempts,
-                    backoff,
-                    msg[:200],
-                )
-                _time.sleep(backoff)
-
-    if task_index == 0:
-        bound_port = job_info.ports.get("jax", DEFAULT_PORT)
-        coordinator = f"{job_info.advertise_host}:{bound_port}"
-        # Task 0 is the coordinator -- register the endpoint so other tasks can
-        # discover us, then call jax.distributed.initialize (blocks until all
-        # num_tasks processes connect).
-        endpoint_id = ctx.registry.register(ENDPOINT_NAME, coordinator)
-        import atexit
-
-        atexit.register(ctx.registry.unregister, endpoint_id)
-        logger.info(
-            "Multi-host TPU init: task 0, coordinator=%s, num_tasks=%d",
-            coordinator,
-            job_info.num_tasks,
-        )
-        _initialize_with_retry(coordinator, job_info.num_tasks, task_index)
-    else:
-        coordinator = _poll_for_coordinator(ctx.resolver, ENDPOINT_NAME, 900, 5.0)
-        logger.info(
-            "Multi-host TPU init: task %d, coordinator=%s (discovered), num_tasks=%d",
-            task_index,
-            coordinator,
-            job_info.num_tasks,
-        )
-        _initialize_with_retry(coordinator, job_info.num_tasks, task_index)
-
-    logger.info(
-        "jax.distributed initialized: jax.process_count()=%d, jax.process_index()=%d",
-        jax.process_count(),
-        jax.process_index(),
-    )
-    return True
+# NOTE: a former `_init_jax_distributed_for_multihost_tpu()` helper lived here.
+# It manually called jax.distributed.initialize() for multi-host TPU because
+# iris's initialize_jax() used to skip TPU. iris now initializes multi-host TPU
+# itself (lib/iris/src/iris/runtime/jax_init.py), and Levanter routes through it,
+# so the manual helper was dead code and is removed. Do NOT reintroduce a manual
+# init in this file: a second initialize() after Levanter's crashes with
+# "jax.distributed.initialize() must be called before any JAX calls ...".
 
 
 # Step slack for sourcing final-eval metrics. Levanter's final eval normally
@@ -919,6 +797,10 @@ def main(argv: list[str] | None = None) -> None:
         run_name,
         local_region=region,
         tracker_prefix=args.tracker_prefix,
+        # Liveness gate: on a region mismatch, refuse to migrate (would spawn a
+        # concurrent duplicate) while the claimed region's checkpoint is still
+        # fresh. Matches the output_path layout computed just below.
+        checkpoint_rel_path=f"checkpoints/isoflop-curation/{run_name}",
     )
     logger.info("Region-locked: %s → %s", run_name, bucket)
 
@@ -1038,6 +920,7 @@ def main(argv: list[str] | None = None) -> None:
         wandb_project=args.wandb_project,
         wandb_entity=args.wandb_entity,
         wandb_group=args.wandb_group,
+        seed=args.seed,
     )
     tpu_type = _detect_local_tpu_type(override=args.tpu_type)
     pod_config = TrainLmOnPodConfig(
@@ -1057,47 +940,20 @@ def main(argv: list[str] | None = None) -> None:
     for k, v in env.items():
         os.environ[k] = v
 
-    # TPU multi-host init: use JAX's built-in auto-detection rather than
-    # constructing our own coordinator address.
-    #
-    # Why not "do nothing" (libtpu alone)?
-    #   libtpu sets up the PJRT device mesh so jax.devices() sees all N chips,
-    #   but it does NOT create the Python `jax.distributed.Client`. Levanter's
-    #   `multihost_broadcast_sync` (used by WandbConfig.init and elsewhere)
-    #   reads that client and raises "requires jax distributed client to be
-    #   initialized" if it's missing.
-    #
-    # Why not our previous custom (coordinator, num_processes, task_index) path?
-    #   We built a coordinator address from iris's registry and passed it
-    #   alongside explicit process topology. That racing libtpu's own
-    #   CoordinationService registration produced "different incarnation" /
-    #   RegisterTask RPC aborts. The failure probability scaled with N-hosts
-    #   (observed: 2-host recovered via iris retries, 4/8-host did not).
-    #
-    # What we do instead:
-    #   Call `jax.distributed.initialize()` with NO args. JAX's BaseTpuCluster
-    #   auto-detector (jax/_src/clusters/cloud_tpu_cluster.py) reads the
-    #   MEGASCALE_COORDINATOR_ADDRESS / MEGASCALE_NUM_SLICES / MEGASCALE_SLICE_ID
-    #   env vars that libtpu has already populated. JAX reuses libtpu's
-    #   coordinator endpoint instead of opening a second one, so no race. The
-    #   call is a no-op when none of those env vars are set (single-host TPU,
-    #   CPU, etc.), so it's safe to invoke unconditionally.
-    try:
-        import jax as _jax
-
-        _jax.distributed.initialize()
-        logger.info(
-            "jax.distributed initialized (process_count=%d, process_index=%d)",
-            _jax.process_count(),
-            _jax.process_index(),
-        )
-    except Exception as exc:  # pragma: no cover - noisy logging on real failure
-        logger.warning(
-            "jax.distributed.initialize() (no-args auto-detect) raised: %s. "
-            "Continuing; Levanter's own initialize() will retry if needed.",
-            exc,
-        )
-
+    # NOTE: we deliberately do NOT call jax.distributed.initialize() here.
+    # Levanter's trainer.initialize() does it for us, via
+    # levanter.distributed.DistributedConfig.initialize() ->
+    # iris.runtime.jax_init.initialize_jax(), which auto-detects the multi-host
+    # TPU pod topology (no-op on single-host). Crucially, Levanter calls it
+    # BEFORE any jax.device_count()/devices() touch and BEFORE the wandb tracker
+    # (trainer.py: distributed.initialize() precedes _validate_and_set_defaults()
+    # and the tracker), so the distributed client exists when WandbConfig.init
+    # needs it. A second manual initialize() here would re-init after the backend
+    # is already up and crash with "jax.distributed.initialize() must be called
+    # before any JAX calls that might initialise the XLA backend" -- which is
+    # exactly what happened once iris's init stopped skipping TPU. Rank-gating for
+    # our own wandb side effects uses TPU_WORKER_ID (`_early_is_process_0`), not
+    # jax, so it does not depend on init order.
     train_lm_module = importlib.import_module("levanter.main.train_lm")
     logger.info("Launching levanter.main.train_lm.main() in-process (no nested submit)")
     try:

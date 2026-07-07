@@ -197,25 +197,30 @@ def _manifest_path_for_spec(spec_id: str) -> str:
 REGISTRY_BUCKET = "marin-us-central1"
 
 
-def _load_done_registry(spec_id: str) -> set[str]:
-    """Hashes marked complete in the central ``_completed`` registry.
+def _load_done_registry(spec_id: str) -> dict[str, float | None]:
+    """Map of hash → completion epoch for the central ``_completed`` registry.
 
     One cheap list (~one blob per finished WARC). The deep scan uses this to
     SKIP per-batch listing of finished WARCs — without it the scan enumerates
     every batch blob ever written (hundreds of thousands), which is why it was
-    pathologically slow. On any failure returns an empty set, degrading to the
+    pathologically slow. On any failure returns an empty dict, degrading to the
     old (correct but slow) behaviour of listing every dir.
+
+    Each marker's ``updated`` timestamp is the WARC's completion time (written
+    once by ``_register_completed_warc``). These timestamps are the authoritative
+    throughput signal — the in-progress batch scan can't see a finished WARC's
+    batches, so completion times are what the headline rate is computed from.
     """
     from google.cloud import storage as gcs_storage
 
     prefix = _bucket_prefix_for_spec(spec_id) + "_completed/"
-    done: set[str] = set()
+    done: dict[str, float | None] = {}
     try:
         client = gcs_storage.Client()
         for blob in client.bucket(REGISTRY_BUCKET).list_blobs(prefix=prefix):
             leaf = blob.name.rsplit("/", 1)[-1]
             if leaf.startswith("data-"):
-                done.add(leaf[len("data-") :])
+                done[leaf[len("data-") :]] = blob.updated.timestamp() if blob.updated else None
     except Exception:
         logger.exception("Failed to load completed registry for %s; deep scan will list all dirs", spec_id)
     return done
@@ -770,18 +775,41 @@ def _scan_progress_deep(spec_id: str) -> dict:
     done_batches = sum(legacy_nb.get(h) or avg_batches_per_warc for h in done_hashes)
     batches_done = done_batches + in_progress_batches
 
-    # Lifetime rate: total_batches / full span
-    if earliest_batch_ts and latest_batch_ts and total_batches > 10:
+    # --- True throughput from the completed-WARC registry --------------------
+    # The in-progress batch scan only sees batches in not-yet-finished dirs, so
+    # it structurally undercounts: a WARC's ~90 batches vanish from the window
+    # the instant it completes and its dir is skipped via the registry. The
+    # registry's per-WARC completion timestamps are the honest signal — in
+    # steady state, batches/hr = WARCs-completed/hr * batches/WARC.
+    completion_times = sorted(t for t in registry_done.values() if t)
+    cutoff = now - recent_window_seconds
+    warcs_per_hour_recent = None
+    warcs_per_hour_lifetime = None
+    run_age_hours = None
+    if completion_times:
+        recent_warcs = sum(1 for t in completion_times if t >= cutoff)
+        warcs_per_hour_recent = recent_warcs / (recent_window_seconds / 3600)
+        if len(completion_times) > 1:
+            run_age_hours = (completion_times[-1] - completion_times[0]) / 3600
+            if run_age_hours > 0.1:
+                warcs_per_hour_lifetime = len(completion_times) / run_age_hours
+
+    # Headline rates: registry-derived true throughput when timestamps are
+    # available, else the in-progress batch-write rate (legacy fallback for
+    # specs whose registry markers predate timestamp capture).
+    if warcs_per_hour_recent is not None:
+        batches_per_hour_recent = warcs_per_hour_recent * avg_batches_per_warc
+    else:
+        # NOW (not latest_batch_ts) so the rate drops to 0 if all workers stop.
+        recent_count = sum(1 for ts in batch_timestamps if ts >= cutoff)
+        batches_per_hour_recent = recent_count / (recent_window_seconds / 3600)
+
+    if warcs_per_hour_lifetime is not None:
+        batches_per_hour = warcs_per_hour_lifetime * avg_batches_per_warc
+    elif earliest_batch_ts and latest_batch_ts and total_batches > 10:
         span_hours = (latest_batch_ts - earliest_batch_ts) / 3600
         if span_hours > 0.1:
             batches_per_hour = total_batches / span_hours
-
-    # Sliding-window rate: count batches in the last 3h from NOW.
-    # Using NOW (not latest_batch_ts) means the rate correctly drops if all
-    # workers stop — no new batches in the window → rate falls to 0.
-    cutoff = now - recent_window_seconds
-    recent_count = sum(1 for ts in batch_timestamps if ts >= cutoff)
-    batches_per_hour_recent = recent_count / (recent_window_seconds / 3600)
 
     # Use the RECENT rate for ETA (it's more representative of current throughput)
     rate_for_eta = batches_per_hour_recent if batches_per_hour_recent > 0 else batches_per_hour
@@ -804,6 +832,9 @@ def _scan_progress_deep(spec_id: str) -> dict:
         "eta_hours": round(eta_hours, 1) if eta_hours else None,
         "batches_per_hour": round(batches_per_hour, 1) if batches_per_hour else None,
         "batches_per_hour_recent": round(batches_per_hour_recent, 1) if batches_per_hour_recent else None,
+        "warcs_per_hour_recent": round(warcs_per_hour_recent, 1) if warcs_per_hour_recent else None,
+        "warcs_per_hour_lifetime": round(warcs_per_hour_lifetime, 1) if warcs_per_hour_lifetime else None,
+        "run_age_hours": round(run_age_hours, 1) if run_age_hours else None,
         "recent_window_hours": recent_window_seconds / 3600,
         "avg_batches_per_warc": avg_batches_per_warc,
         "regions": region_data,
@@ -1258,7 +1289,13 @@ def api_progress_refresh():
                 data["batch_counts"] = deep_data.get("batch_counts")
                 data["latest_activity"] = deep_data.get("latest_activity")
                 data["total_batches"] = deep_data.get("total_batches")
+                data["batches_done"] = deep_data.get("batches_done")
                 data["batches_per_hour"] = deep_data.get("batches_per_hour")
+                data["batches_per_hour_recent"] = deep_data.get("batches_per_hour_recent")
+                data["warcs_per_hour_recent"] = deep_data.get("warcs_per_hour_recent")
+                data["warcs_per_hour_lifetime"] = deep_data.get("warcs_per_hour_lifetime")
+                data["run_age_hours"] = deep_data.get("run_age_hours")
+                data["recent_window_hours"] = deep_data.get("recent_window_hours")
                 data["avg_batches_per_warc"] = deep_data.get("avg_batches_per_warc")
                 data["eta_hours"] = deep_data.get("eta_hours")
                 # Update done counts per region from deep scan

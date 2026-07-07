@@ -218,14 +218,37 @@ def load_canonical_batches() -> list[dict]:
     return out
 
 
-def load_warcs(limit_warcs: int | None) -> list[dict]:
+def _html_dir_warc_hashes() -> set[str]:
+    """WARC hashes whose HTML shard exists in HTML_DIR (``data-<hash>.jsonl.gz``).
+
+    Used to restrict assemble to a specific WARC pool (e.g. the random draw) so the
+    output distill covers exactly that pool — htmljoin would otherwise emit null-HTML
+    rows for WARCs absent from HTML_DIR.
+    """
+    from marin.utils import fsspec_glob
+
+    hashes = set()
+    for f in fsspec_glob(f"{HTML_DIR}/data-*.jsonl.gz"):
+        m = re.search(r"data-([0-9a-f]+)\.jsonl\.gz$", f)
+        if m:
+            hashes.add(m.group(1))
+    if not hashes:
+        raise RuntimeError(f"no data-<hash>.jsonl.gz HTML shards found under {HTML_DIR}")
+    logger.info("HTML_DIR %s has %d WARC shards", HTML_DIR, len(hashes))
+    return hashes
+
+
+def load_warcs(limit_warcs: int | None, restrict_hashes: set[str] | None = None) -> list[dict]:
     """Group canonical batches by WARC: ``[{"warc_hash": h, "paths": [...]}, …]``,
     sorted by hash so Zephyr shard assignment (and thus skip_existing) is stable
-    across reruns."""
+    across reruns. ``restrict_hashes`` keeps only WARCs in that set (e.g. a pool)."""
     by_hash: dict[str, list[str]] = {}
     for b in load_canonical_batches():
         by_hash.setdefault(b["warc_hash"], []).append(b["path"])
     warcs = [{"warc_hash": h, "paths": sorted(paths)} for h, paths in sorted(by_hash.items())]
+    if restrict_hashes is not None:
+        warcs = [w for w in warcs if w["warc_hash"] in restrict_hashes]
+        logger.info("Restricted to %d WARCs present in HTML_DIR", len(warcs))
     if limit_warcs is not None:
         warcs = warcs[:limit_warcs]
     logger.info("Grouped into %d WARCs (one durable output shard each)", len(warcs))
@@ -267,8 +290,9 @@ def _warc_to_metadata(warc: dict) -> Iterator[dict]:
             }
 
 
-def run_assemble(limit_warcs: int | None, tag: str | None) -> None:
-    warcs = load_warcs(limit_warcs)
+def run_assemble(limit_warcs: int | None, tag: str | None, restrict_to_html_dir: bool = False) -> None:
+    restrict = _html_dir_warc_hashes() if restrict_to_html_dir else None
+    warcs = load_warcs(limit_warcs, restrict)
     meta_staging = _meta_staging(tag)
     out_template = f"{meta_staging}/data-{{shard:05d}}-of-{{total:05d}}.jsonl.gz"
     pipeline = Dataset.from_iterable(warcs).flat_map(_warc_to_metadata).write_jsonl(out_template, skip_existing=True)
@@ -594,6 +618,11 @@ def main() -> None:
     p_assemble.add_argument(
         "--limit-warcs", type=int, default=None, help="Smoke test: only process the first N WARC hashes."
     )
+    p_assemble.add_argument(
+        "--restrict-to-html-dir",
+        action="store_true",
+        help="Only assemble WARCs whose HTML shard exists in --html-dir (build a distill for that pool).",
+    )
     p_htmljoin = sub.add_parser("htmljoin", help="Stage 2: join HTML + write parquet (run in us-central2).")
     p_negatives = sub.add_parser(
         "negatives", help="Optional: emit [NO_USEFUL_CONTENT] abstentions to data_no_useful/ (run in us-central2)."
@@ -608,10 +637,20 @@ def main() -> None:
             default=None,
             help="Suffix the output dataset dir (e.g. 'smoke') to isolate test runs from the real dataset.",
         )
+        p.add_argument(
+            "--html-dir",
+            default=None,
+            help="Override HTML_DIR (e.g. the random-draw pool) for the htmljoin lookup + assemble restriction.",
+        )
     args = parser.parse_args()
 
+    if getattr(args, "html_dir", None):
+        global HTML_DIR
+        HTML_DIR = args.html_dir
+        logger.info("HTML_DIR overridden -> %s", HTML_DIR)
+
     if args.stage == "assemble":
-        run_assemble(args.limit_warcs, args.tag)
+        run_assemble(args.limit_warcs, args.tag, getattr(args, "restrict_to_html_dir", False))
     elif args.stage == "htmljoin":
         run_htmljoin(args.tag)
     elif args.stage == "negatives":

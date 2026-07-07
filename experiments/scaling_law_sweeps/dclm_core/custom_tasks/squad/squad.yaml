@@ -1,0 +1,35 @@
+# Custom lm-eval task for DCLM CORE's `squad` (full SQuAD v1.1 dev, DCLM variant).
+#
+# DCLM scores this as icl_task_type=language_modeling → MosaicML's
+# InContextLearningLMAccuracy: teacher-force the gold continuation and score 1 iff
+# EVERY continuation token is the greedy argmax given the prefix (one forward pass).
+# lm-eval reproduces this exactly with output_type=loglikelihood + metric=acc, where
+# for loglikelihood tasks `acc = int(is_greedy)` (see lm_eval/api/task.py). This is
+# both faithful to DCLM (NOT the looser/slower generate_until string match) and fast
+# (one forward pass, like the MC tasks). Precedent: lambada_openai uses the same.
+#
+# The context already ends with "...Question: ...\nAnswer: " (trailing space), so
+# target_delimiter is "" — the space comes from the context, matching MosaicML's joint
+# tokenization. Stock lm-eval `squad_completion` used hazyresearch/based-squad (2984) +
+# lenient `contains`; DCLM uses full 10570. Distinct name avoids colliding with built-ins.
+#
+# Source: mosaicml/llm-foundry scripts/eval/local_data/reading_comprehension/squad.jsonl (10570 rows)
+# DCLM eval_meta_data row: squad,reading comprehension,language modeling,10,10570,0
+task: squad_dclm
+dataset_path: json
+dataset_kwargs:
+  data_files: squad.jsonl
+test_split: train
+output_type: loglikelihood
+doc_to_text: "{{ context | trim }}"
+doc_to_target: " {{continuation}}"
+target_delimiter: ""
+fewshot_delimiter: "\n"
+metric_list:
+  - metric: acc
+    aggregation: mean
+    higher_is_better: true
+metadata:
+  version: 2.0
+  source: mosaicml/llm-foundry eval gauntlet (full SQuAD v1.1 dev)
+  dclm_meta_row: "squad,reading comprehension,language modeling,10,10570,0"

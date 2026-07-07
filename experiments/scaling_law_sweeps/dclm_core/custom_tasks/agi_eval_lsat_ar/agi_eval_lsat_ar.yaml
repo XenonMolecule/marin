@@ -1,0 +1,31 @@
+# Custom lm-eval task for DCLM CORE's `agi_eval_lsat_ar` (4-choice DCLM variant).
+#
+# Why custom: stock lm-eval `agieval_lsat_ar` pulls hails/agieval-lsat-ar with FIVE
+# choices (A-E, baseline 20%). DCLM CoreV2 uses MosaicML llm-foundry's FOUR-choice
+# reduction (baseline 25%, per eval_meta_data.csv "230 four-choice logic puzzles").
+# The 5-vs-4 mismatch makes our score non-comparable. This task uses DCLM's
+# 4-choice gauntlet jsonl (letter-MCQ). Distinct name avoids colliding with the
+# built-in `agieval_lsat_ar`.
+#
+# Source: mosaicml/llm-foundry scripts/eval/local_data/symbolic_problem_solving/agi_eval_lsat_ar.jsonl (230 rows)
+# DCLM eval_meta_data row: agi_eval_lsat_ar,... multiple choice,3,230,25
+task: agi_eval_lsat_ar_dclm4
+dataset_path: json
+dataset_kwargs:
+  data_files: agi_eval_lsat_ar.jsonl
+test_split: train
+output_type: multiple_choice
+doc_to_text: "{{query}}"
+doc_to_target: "{{gold}}"
+doc_to_choice: "{{choices}}"
+metric_list:
+  - metric: acc
+    aggregation: mean
+    higher_is_better: true
+  - metric: acc_norm
+    aggregation: mean
+    higher_is_better: true
+metadata:
+  version: 1.0
+  source: mosaicml/llm-foundry eval gauntlet (4-choice AGIEval LSAT-AR)
+  dclm_meta_row: "agi_eval_lsat_ar,symbolic problem solving,multiple choice,3,230,25"

@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<!-- Copyright The Marin Authors — SPDX-License-Identifier: Apache-2.0 -->
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Cascade Pipeline Planner</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="wrap">
+    <div class="row" style="justify-content: space-between; align-items: baseline;">
+      <h1>Cascade Pipeline Planner</h1>
+      <div class="muted" id="dataset-info">loading…</div>
+    </div>
+    <div class="row" id="toolbar" style="margin-bottom: 10px;"></div>
+    <p class="muted" id="intro">
+      Design a cascaded curation pipeline left→right. Add/disable/reorder classifier stages and swap the terminal
+      extractor; F1 &amp; Levenshtein are vs the 8B gold, projected to <span id="nwarc-lbl"></span> WARCs.
+    </p>
+
+    <div class="panel">
+      <h2>Pipeline</h2>
+      <div class="palette" id="palette"></div>
+      <div id="flow"></div>
+    </div>
+
+    <div class="row">
+      <div class="panel" style="flex: 2; min-width: 360px;">
+        <h2>Results</h2>
+        <div class="metrics" id="metrics"></div>
+      </div>
+      <div class="panel" style="flex: 1; min-width: 280px;" id="stage-config">
+        <h2>Stage config</h2>
+        <div class="muted">Select a stage to configure.</div>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="panel" style="flex: 1; min-width: 360px;">
+        <h2>Compute breakdown</h2>
+        <table id="compute-table"><tbody></tbody></table>
+      </div>
+      <div class="panel" style="flex: 1; min-width: 320px;">
+        <h2>Capacity &amp; projection</h2>
+        <div class="cap-grid" id="capacity"></div>
+      </div>
+    </div>
+    <div class="panel collapsible" id="survivors-panel">
+      <h2>Pipeline survivors</h2>
+      <div id="survivors" class="muted">Click <b>🎲 random survivors</b> (toolbar) to see random docs that pass the <i>entire</i> pipeline, shown with the final extractor's text.</div>
+    </div>
+    <div class="panel collapsible" id="losses-panel">
+      <h2>Pipeline losses — dropped good docs</h2>
+      <div id="losses" class="muted">Click <b>🎲 dropped good docs</b> (toolbar) to see random docs the 8B keeps but this pipeline drops (the recall cost), with where in the cascade each was dropped + how to recover it.</div>
+    </div>
+    <div class="panel collapsible" id="borderline-panel">
+      <h2>Borderline inspector</h2>
+      <div id="borderline" class="muted">Select a classifier stage → "show borderline docs" to see the 3 barely-kept / 3 barely-dropped docs <i>among those reaching that stage</i> (conditioned on upstream filters).</div>
+    </div>
+  </div>
+
+  <script src="engine.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -113,8 +113,12 @@ def initialize_jax(
     initialization is skipped — JAX works correctly without distributed
     init when there is only one process.
 
-    On TPU, JAX handles distributed init natively via the TPU runtime —
-    calling jax.distributed.initialize would conflict, so this is a no-op.
+    On TPU: a single-host job needs no distributed client and is skipped. A
+    MULTI-host TPU job DOES need one -- `jax.distributed.initialize()` with no
+    args auto-detects the pod coordinator/topology, so it is called directly.
+    Call this BEFORE any jax.devices()/device_put touches the backend, and do
+    not also call jax.distributed.initialize() yourself elsewhere -- a second
+    init after the backend is up raises "must be called before any JAX calls".
 
     Args:
         port: Coordinator port. Overridden by IRIS_PORT_jax if allocated.
@@ -126,13 +130,22 @@ def initialize_jax(
     """
     import jax
 
-    # TPU has its own distributed init via the TPU runtime; skip the
-    # coordinator dance entirely to avoid conflicts.
+    job_info = get_job_info()
+
+    # TPU: a single-host job needs no distributed client. A MULTI-host job DOES —
+    # and on TPU jax.distributed.initialize() with no args auto-detects the pod
+    # coordinator/process layout, so call it directly. (The old code skipped TPU
+    # entirely, which left the distributed client uninitialized and made every
+    # multi-host levanter job crash at the first multihost_broadcast_sync with
+    # "requires jax distributed client to be initialized".)
     if os.environ.get("PJRT_DEVICE", "").upper() == "TPU" or os.environ.get("JAX_PLATFORMS", "") == "tpu":
-        logger.info("TPU detected; skipping Iris JAX distributed init (TPU runtime handles it)")
+        if job_info is not None and job_info.num_tasks > 1:
+            logger.info("Multi-host TPU; initializing jax.distributed (auto-detect pod topology).")
+            jax.distributed.initialize()
+        else:
+            logger.info("Single-host TPU; skipping jax.distributed init (not needed).")
         return
 
-    job_info = get_job_info()
     _log_jax_bootstrap_inputs(job_info, port=port, endpoint_name=endpoint_name)
     if job_info is None:
         return

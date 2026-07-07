@@ -150,10 +150,22 @@ _D_OBS_DEFAULTS: dict[str, int] = {
     # the corresponding `_method(...)` call below.
     "dclm_400m_1x_10k_dclm-3df0ba": 7331583927,
     "dclm_400m_1x_10k_nemotron_full-3dcb75": 10130086896,
-    # FineWeb-Edu 10k — done but parked. Kept commented because fineweb_edu was
-    # dropped from ExpC (strictly worse per upstream review). Uncomment if a
-    # future experiment needs the 10k FineWeb-Edu cache.
-    # "dclm_400m_1x_10k_fineweb_edu-0a3143": 2346934380,
+    # FineWeb-Edu 10k — us-central2 only (not mirrored). pin_region enforces it.
+    "dclm_400m_1x_10k_fineweb_edu-0a3143": 2346934380,
+    # high_quality (LLM-extracted) 10k: dedup + CORE-v2 decontam (n=15/DF<=10),
+    # tokenized us-central1 only (not mirrored). d_obs from train/.stats.json.
+    "high_quality_decon_10364warcs-6451c8": 21296896949,
+    # FineWeb-CC 10k: full HF FineWeb for our WARCs (HF dedup trusted; no extra
+    # dedup/decontam). Tokenized us-central2 only (not mirrored).
+    "fineweb_cc_10364warcs-ddfeda": 28004233781,
+    # resiliparse (raw HTML->text) 10k: dedup + CORE-v2 decontam (n=15/DF<=10),
+    # same full treatment as high_quality. Tokenized us-central2 only (not mirrored).
+    "resiliparse_decon_10364warcs-beaaf5": 339971302028,
+    # System-prompt-conditioned DCLM 400m-1x: [S][D] sequences (Qwen3-30B-A3B
+    # system prompts prepended to each DCLM doc), tokenized from the
+    # conditioned_text field. us-east5 ONLY (cache not mirrored). total_tokens
+    # from train/.stats.json (5,918,974 docs).
+    "sysprompt_dclm_qfull1-0ba2ee": 7818175437,
     # --- WARC-scaling sweep subsamples (N ∈ {100, 500, 1000, 2000}) ---
     # Read 2026-04-29 from {bucket}/tokenized/{key}/train/.stats.json.
     # dclm: source us-central2; mirrored to us-central1.
@@ -235,6 +247,12 @@ _D_OBS_DEFAULTS: dict[str, int] = {
     "med_quality_2000warcs-37ac75": 18_079_574_033,
     "med_quality_3000warcs-73cd32": 26_931_419_795,
     "med_low_quality_100warcs-03c59e": 1_445_631_560,
+    # fastpipe_v3 modernBERT-thresholded bands (keep top 100/80/60/40/20% by score), 10,364 WARCs.
+    "fastpipe_v3_decon_10364warcs-77ee7f": 45_370_000_845,
+    "fastpipe_v3_80_decon_10364warcs-143ee0": 37_966_939_668,
+    "fastpipe_v3_60_decon_10364warcs-1f0b9a": 28_559_342_931,
+    "fastpipe_v3_40_decon_10364warcs-54c951": 18_129_129_360,
+    "fastpipe_v3_20_decon_10364warcs-141620": 8_658_430_656,
 }
 _SOURCE_BUCKET: str = "gs://marin-us-central2"
 # BOS-fixed rebuilds were only tokenized on us-central1 (see rebuild_bos_fixed.py)
@@ -348,13 +366,43 @@ METHODS: dict[str, CurationMethod] = {
         "dclm_400m_1x_10k_nemotron_full-3dcb75",
         sampled_warcs=EXPC_SAMPLED_WARCS,
     ),
-    # FineWeb-Edu 10k — wired but commented out (excluded from ExpC). To enable,
-    # uncomment the entry above in _D_OBS_DEFAULTS first.
-    # "fineweb_edu_10k": _method(
-    #     "fineweb_edu_10k",
-    #     "dclm_400m_1x_10k_fineweb_edu-0a3143",
-    #     sampled_warcs=EXPC_SAMPLED_WARCS,
-    # ),
+    # 10k natural-epoch methods. fineweb_edu_10k + fineweb_cc_10k are mirrored to all
+    # 6 regions; high_quality_10k is mirrored to all EXCEPT us-central2 (2026-06-12).
+    # So NO pin_region -> children float for capacity. high_quality lacks us-central2,
+    # so the launcher MUST hard-constrain to the shared set via --allowed-regions
+    # us-central1 us-east1 us-east5 us-west4 eu-west4 (see launch_10k_natural.py).
+    "fineweb_edu_10k": _method(
+        "fineweb_edu_10k",
+        "dclm_400m_1x_10k_fineweb_edu-0a3143",
+        sampled_warcs=EXPC_SAMPLED_WARCS,
+    ),
+    "high_quality_10k": _method(
+        "high_quality_10k",
+        "high_quality_decon_10364warcs-6451c8",
+        sampled_warcs=EXPC_SAMPLED_WARCS,
+    ),
+    "fineweb_cc_10k": _method(
+        "fineweb_cc_10k",
+        "fineweb_cc_10364warcs-ddfeda",
+        sampled_warcs=EXPC_SAMPLED_WARCS,
+    ),
+    # resiliparse_10k: tokenized in us-central2; lean copy (input_ids+ledger only,
+    # no part-* build dirs) mirrored to us-east5 (2026-06-12, ~$12.6). NO pin ->
+    # launch with --allowed-regions us-east5 us-central2 (the two it lives in).
+    "resiliparse_10k": _method(
+        "resiliparse_10k",
+        "resiliparse_decon_10364warcs-beaaf5",
+        sampled_warcs=EXPC_SAMPLED_WARCS,
+    ),
+    # System-prompt-conditioned DCLM: [S][D] sequences trained as conditional
+    # pretraining (p(D | S)). Cache lives ONLY in us-east5 (not mirrored), so
+    # pin_region enforces us-east5 scheduling. Same 10k DCLM corpus underneath.
+    "sysprompt_dclm": _method(
+        "sysprompt_dclm",
+        "sysprompt_dclm_qfull1-0ba2ee",
+        sampled_warcs=EXPC_SAMPLED_WARCS,
+        pin_region="us-east5",
+    ),
     # --- Random 3000-WARC sample (independent from the head-biased 3000-WARC
     #     methods; uniform draw seed 0, manifest baseline_warcs_3000_random.txt).
     #     Distinct IDs + cache hashes so these never collide with the existing
@@ -509,6 +557,34 @@ METHODS: dict[str, CurationMethod] = {
     "med_quality_2000": _method("med_quality_2000", "med_quality_2000warcs-37ac75", sampled_warcs=2000),
     "med_quality_3000": _method("med_quality_3000", "med_quality_3000warcs-73cd32", sampled_warcs=3000),
     "med_low_quality_100": _method("med_low_quality_100", "med_low_quality_100warcs-03c59e", sampled_warcs=100),
+    # fastpipe_v3 modernBERT-thresholded bands (keep top X% of docs by score). Caches reconstructed
+    # (byte-identical) in both us-east5 and us-central1, so no pin_region -> they float; restrict the
+    # launch with --allowed-regions us-central1 us-east5. Natural epoching like dclm_10k etc.
+    "fastpipe_v3_100": _method(
+        "fastpipe_v3_100",
+        "fastpipe_v3_decon_10364warcs-77ee7f",
+        sampled_warcs=EXPC_SAMPLED_WARCS,
+    ),
+    "fastpipe_v3_80": _method(
+        "fastpipe_v3_80",
+        "fastpipe_v3_80_decon_10364warcs-143ee0",
+        sampled_warcs=EXPC_SAMPLED_WARCS,
+    ),
+    "fastpipe_v3_60": _method(
+        "fastpipe_v3_60",
+        "fastpipe_v3_60_decon_10364warcs-1f0b9a",
+        sampled_warcs=EXPC_SAMPLED_WARCS,
+    ),
+    "fastpipe_v3_40": _method(
+        "fastpipe_v3_40",
+        "fastpipe_v3_40_decon_10364warcs-54c951",
+        sampled_warcs=EXPC_SAMPLED_WARCS,
+    ),
+    "fastpipe_v3_20": _method(
+        "fastpipe_v3_20",
+        "fastpipe_v3_20_decon_10364warcs-141620",
+        sampled_warcs=EXPC_SAMPLED_WARCS,
+    ),
 }
 
 

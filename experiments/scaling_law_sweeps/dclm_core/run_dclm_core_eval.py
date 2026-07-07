@@ -35,8 +35,19 @@ import argparse
 import dataclasses
 import json
 import logging
+import os
+import random
+import time
 import typing
 from pathlib import Path
+
+# NOTE: this eval runs the HF Hub ONLINE. A warmed-hub-cache + HF_HUB_OFFLINE=1 path
+# was tried to dodge the cold-start Hub rate limit, but the shared core_tasks_hub_cache
+# only covers the CORE_TASKS datasets, not the DCLM CORE 22-task set, so task loading
+# failed offline ("run the library in offline mode"). The rate limit ("We had to rate
+# limit you") is instead TRANSIENT — ridden out by _load_hf_with_retry (below) plus
+# iris job retries, exactly as the 246-run 10k CORE sweep completed. Do not re-add a
+# blanket offline flag without first warming a hub cache for THIS task set's datasets.
 
 import haliax as hax
 import jmp
@@ -49,6 +60,7 @@ from levanter.tracker.wandb import WandbConfig
 from levanter.trainer import TrainerConfig
 from levanter.utils.tree_utils import inference_mode
 from rigging.filesystem import filesystem as marin_filesystem
+from rigging.timing import ExponentialBackoff, retry_with_backoff
 
 from experiments.scaling_law_sweeps.dclm_core.centering import compute_core
 from experiments.scaling_law_sweeps.dclm_core.task_mapping import CORE_TASK_MAP, TaskMapEntry
@@ -313,6 +325,118 @@ def _merge_lm_eval_outputs(partials: list[dict]) -> dict:
     return merged
 
 
+def _is_retryable_hf_error(exc: Exception) -> bool:
+    """True for the transient HF Hub failures a cold-start herd produces.
+
+    Covers the raw connection errors AND the `expected str, bytes or os.PathLike
+    object, not NoneType` TypeError: levanter's `from_hf` probes every model type
+    to find the match, and building the llama probe fetches a tokenizer from the
+    Hub. Under contention that fetch fails and propagates as None into a path op,
+    surfacing as a TypeError rather than a clean connection error. Both retry
+    cleanly once the herd thins (retry re-runs the whole from_hf).
+    """
+    msg = str(exc).lower()
+    return (
+        "couldn't connect to" in msg
+        or "huggingface.co" in msg
+        or "connection" in msg
+        or "timed out" in msg
+        or "not nonetype" in msg
+        # The 1000-req/5min Hub quota under a cold-start herd. Transient — the
+        # message names the quota explicitly; match it directly rather than lean
+        # on the incidental hf.co URL so a reworded error still retries.
+        or "rate limit" in msg
+        or "you hit the quota" in msg
+        # A rate-limited/failed HF fetch inside from_hf's model-type probe returns
+        # None, which then blows up as a None-attribute error (`… has no attribute
+        # 'endswith'` / `'init'`). Scoped to the wrapped model load, so retrying is
+        # safe. Retry re-runs the whole from_hf once the herd thins.
+        or "nonetype' object has no attribute" in msg
+    )
+
+
+def _load_hf_with_retry(what: str, fn):
+    """Run an HF-touching load, retrying through transient Hub connection errors.
+
+    Many evals cold-starting together overwhelm the HF Hub on config/tokenizer
+    resolution; individual jobs then fail with "couldn't connect to
+    huggingface.co" or the 1000-req/5min rate limit ("We had to rate limit you").
+    Retry with jittered exponential backoff (up to ~40 min) so a large-fleet herd
+    fully thins and each job eventually resolves rather than exhausting retries
+    while the Hub is still throttling. Non-connection errors (a real bad
+    checkpoint) are NOT retried — they re-raise immediately.
+    """
+    return retry_with_backoff(
+        fn,
+        retryable=_is_retryable_hf_error,
+        max_attempts=24,
+        max_elapsed=2400.0,
+        backoff=ExponentialBackoff(initial=5.0, maximum=120.0, factor=2.0, jitter=0.5),
+        on_retry=lambda e, i: logger.warning("HF load %s failed (attempt %d), backing off: %s", what, i, e),
+        operation=what,
+    )
+
+
+_DATASET_CACHE_MARKER = "/eval_datasets/dclm_core_hf_cache/"
+# The warmed HF hub-config cache (gpt2 + the other reference model configs levanter's
+# from_hf model-type probe loads). Shared with the CORE_TASKS eval — the probe is
+# checkpoint-independent (it iterates every registered Levanter model), so the same
+# cache resolves from_hf for any checkpoint. Built by
+# experiments/scaling_law_sweeps/core_tasks/build_core_tasks_dataset_cache.py.
+_HUB_CACHE_MARKER = "/eval_datasets/core_tasks_hub_cache/"
+
+
+def _prepare_hub_cache(gcs_cache: str) -> int:
+    """Sync the warmed HF hub-config cache from in-region GCS into HF_HOME so
+    from_hf's reference-config probe (gpt2, ...) resolves OFFLINE — zero Hub
+    requests, immune to the shared-token rate limit. HF_HUB_OFFLINE/HF_HOME are
+    already set at module import; this only populates HF_HOME/hub before from_hf runs.
+    """
+    local_dir = os.environ.get("HF_HOME", "/tmp/dclm_core_hf_home")
+    base = gcs_cache.rstrip("/")
+    fs = marin_filesystem("gcs")
+    os.makedirs(local_dir, exist_ok=True)
+    n = 0
+    for remote in fs.find(base):  # gcsfs returns scheme-less bucket/key paths
+        key = remote.split(_HUB_CACHE_MARKER, 1)[-1]
+        dest = os.path.join(local_dir, key)
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        src = remote if remote.startswith("gs://") else f"gs://{remote}"
+        with fs.open(src, "rb") as r, open(dest, "wb") as w:
+            w.write(r.read())
+        n += 1
+    logger.info("Synced %d hub-cache files %s -> %s (HF_HOME, offline)", n, base, local_dir)
+    return n
+
+
+def _prepare_offline_dataset_cache(gcs_cache: str, local_dir: str = "/tmp/dclm_core_hf_cache") -> int:
+    """Sync the canonical HF datasets cache from in-region GCS to local disk and
+    switch `datasets` to OFFLINE mode.
+
+    Eval task loading otherwise pulls all 22 CORE datasets from the HF Hub during
+    the run — the dominant, sustained source of HF API requests that trips the
+    1000-req/5min rate limit across a large fleet. Reading from a pre-mirrored,
+    byte-identical in-region cache removes those calls entirely. Must run before
+    any `datasets`/lm-eval import reads the cache env. Returns files synced.
+    """
+    base = gcs_cache.rstrip("/")
+    fs = marin_filesystem("gcs")
+    os.makedirs(local_dir, exist_ok=True)
+    n = 0
+    for remote in fs.find(base):  # gcsfs returns scheme-less bucket/key paths
+        key = remote.split(_DATASET_CACHE_MARKER, 1)[-1]
+        dest = os.path.join(local_dir, key)
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        src = remote if remote.startswith("gs://") else f"gs://{remote}"
+        with fs.open(src, "rb") as r, open(dest, "wb") as w:
+            w.write(r.read())
+        n += 1
+    os.environ["HF_DATASETS_CACHE"] = local_dir
+    os.environ["HF_DATASETS_OFFLINE"] = "1"
+    logger.info("Synced %d dataset-cache files %s -> %s; HF_DATASETS_OFFLINE=1", n, base, local_dir)
+    return n
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument(
@@ -321,6 +445,13 @@ def main():
         help="Path to HF checkpoint (gs:// or local). Must contain config.json + model.safetensors + tokenizer files.",
     )
     p.add_argument("--output-json", required=True, help="Where to write the final result JSON (gs:// or local).")
+    p.add_argument(
+        "--summary-json",
+        default=None,
+        help="Where to write the small scores-only summary sibling (no samples). Defaults next to "
+        "--output-json. Point this at a PERMANENT prefix while --output-json goes to a ttl= prefix, "
+        "so scores persist forever while sample-heavy finals/partials auto-expire.",
+    )
     p.add_argument(
         "--tokenizer",
         default=None,
@@ -349,12 +480,35 @@ def main():
         "for other tasks are ignored, not skipped). Use to debug a single task "
         "(e.g. --task-filter squad,arc_easy).",
     )
+    p.add_argument(
+        "--dataset-cache-gcs",
+        default=None,
+        help="GCS prefix of the canonical HF datasets cache (in this checkpoint's region). "
+        "If set, sync it to local disk and run datasets OFFLINE so task loading never hits "
+        "the HF Hub API (which rate-limits at 1000 req/5min and blocks large eval fleets).",
+    )
+    p.add_argument(
+        "--hub-cache-gcs",
+        default=None,
+        help="GCS prefix of the warmed HF hub-config cache (core_tasks_hub_cache, in this "
+        "checkpoint's region). Synced into HF_HOME so from_hf's reference-config probe "
+        "(gpt2, ...) resolves offline — the other half of making the eval hermetic (models, "
+        "not just datasets). Without it a large fleet blows the Hub rate limit on cold start.",
+    )
     args = p.parse_args()
 
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
+
+    # Must happen before any from_hf / `datasets` / lm-eval load. The hub cache
+    # feeds from_hf's offline reference-config probe; the dataset cache feeds
+    # offline task loading. Both make the eval hermetic vs the shared-token Hub limit.
+    if args.hub_cache_gcs:
+        _prepare_hub_cache(args.hub_cache_gcs)
+    if args.dataset_cache_gcs:
+        _prepare_offline_dataset_cache(args.dataset_cache_gcs)
 
     _install_custom_task_path()
 
@@ -398,10 +552,19 @@ def main():
             mp=jmp.get_policy("p=bfloat16,c=bfloat16"),
             per_device_eval_parallelism=1,
         )
-        model_config = HFCheckpointConverter.from_hf(checkpoint_path).LevConfigClass()
+        # Stagger the cold-start HF Hub hit: when hundreds of evals launch together
+        # they thundering-herd AutoConfig resolution and most fail with "couldn't
+        # connect to huggingface.co". An upfront jitter spreads the first hit; the
+        # retry wrapper rides out whatever contention remains.
+        stagger = random.uniform(0, 60)
+        logger.info("Staggering HF cold-start by %.1fs to avoid thundering-herd", stagger)
+        time.sleep(stagger)
+        model_config = _load_hf_with_retry(
+            "HFCheckpointConverter.from_hf", lambda: HFCheckpointConverter.from_hf(checkpoint_path).LevConfigClass()
+        )
 
         trainer_config.initialize()
-        tokenizer = load_tokenizer(tokenizer_path)
+        tokenizer = _load_hf_with_retry("load_tokenizer", lambda: load_tokenizer(tokenizer_path))
         compute_axis_mapping = trainer_config.compute_axis_mapping
         parameter_axis_mapping = trainer_config.parameter_axis_mapping
 
@@ -528,7 +691,7 @@ def main():
         "dclm": dclm_aggregation,
         "extraction_log": extraction_log,
     }
-    summary_path = args.output_json.rsplit(".json", 1)[0] + "_summary.json"
+    summary_path = args.summary_json or (args.output_json.rsplit(".json", 1)[0] + "_summary.json")
     with _open_for_write(summary_path) as f:
         json.dump(summary, f, indent=2, default=_json_default)
     logger.info("Wrote summary to %s", summary_path)

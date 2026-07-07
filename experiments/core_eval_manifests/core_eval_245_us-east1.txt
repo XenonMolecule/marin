@@ -1,0 +1,8 @@
+gs://marin-us-east1/checkpoints/isoflop-curation/curation-dclm_10k-expFM_natural-9e+17-d512-L6-B8/hf/
+gs://marin-us-east1/checkpoints/isoflop-curation/curation-fineweb_cc_10k-expFM_natural-2e+18-d1024-L11-B8/hf/
+gs://marin-us-east1/checkpoints/isoflop-curation/curation-fineweb_cc_10k-expFM_natural-9e+17-d1024-L11-B8/hf/
+gs://marin-us-east1/checkpoints/isoflop-curation/curation-fineweb_edu_10k-expFM_natural-2e+18-d1024-L11-B8/hf/
+gs://marin-us-east1/checkpoints/isoflop-curation/curation-fineweb_edu_10k-expFM_natural-3e+18-d1024-L11-B8/hf/
+gs://marin-us-east1/checkpoints/isoflop-curation/curation-high_quality_10k-expFM_natural-1e+17-d512-L6-B8/hf/
+gs://marin-us-east1/checkpoints/isoflop-curation/curation-high_quality_10k-expFM_natural-3e+17-d512-L6-B8/hf/
+gs://marin-us-east1/checkpoints/isoflop-curation/curation-nemotron_10k-expFM_natural-3e+18-d1536-L16-B8/hf/
