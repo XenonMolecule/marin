@@ -715,6 +715,25 @@ def main():
         default=6 * 3600.0,
         help="Keep-alive: max seconds to block before exiting even if children remain (default 6h).",
     )
+    ap.add_argument(
+        "--hidden-sizes",
+        type=int,
+        nargs="+",
+        default=None,
+        metavar="WIDTH",
+        help="Keep only plans at these model widths (hidden_dim), e.g. 512 to eval only the 157M "
+        "checkpoints. Combine with --region-float to float just the small (cheap-egress) models "
+        "out of a capacity-locked region while leaving the big ones region-pinned.",
+    )
+    ap.add_argument(
+        "--cells",
+        nargs="+",
+        default=None,
+        metavar="BUDGET:WIDTH",
+        help="Keep only plans at these exact (budget, width) cells, e.g. '9e+20:2432 2e+19:2432'. "
+        "Matches the run-name substring '-<budget>-d<width>-' so it's exact and float-safe. Use to "
+        "relaunch a specific handful of straggler cells.",
+    )
     args = ap.parse_args()
 
     method_filter: set[str] | None
@@ -730,6 +749,13 @@ def main():
     )
     if args.dedup_cells:
         plans = drop_rerun_variants(plans)
+    if args.cells:
+        plans = filter_to_cells(plans, args.cells)
+    if args.hidden_sizes:
+        keep = set(args.hidden_sizes)
+        before = len(plans)
+        plans = [p for p in plans if p.hidden_dim in keep]
+        logger.info("Width filter %s: %d plans -> %d", sorted(keep), before, len(plans))
     if args.pilot:
         plans = select_pilot(plans, top_n=args.top_n)
     logger.info("Selected %d plans", len(plans))

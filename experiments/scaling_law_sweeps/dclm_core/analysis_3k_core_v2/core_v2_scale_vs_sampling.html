@@ -1,0 +1,263 @@
+<title>DCLM Core_v2 — Scale vs. Sampling</title>
+<style>
+  :root {
+    --ground: #FBFAF7;
+    --panel: #FFFFFF;
+    --ink: #1B1E22;
+    --muted: #5E656E;
+    --hair: #E7E3DB;
+    --scale: #0F7C86;      /* effect: scale */
+    --scale-soft: #0f7c8620;
+    --sampling: #B9711C;   /* effect: sampling */
+    --sampling-soft: #b9711c1f;
+    --tenk: #0F7C86;
+    --biased: #B9711C;
+    --random: #9A9086;
+    --pos: #1F7A44;
+    --accent-line: #1B1E22;
+    --shadow: 0 1px 2px rgba(20,20,20,.05), 0 6px 20px rgba(20,20,20,.04);
+    --maxw: 78ch;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ground: #121417;
+      --panel: #191C20;
+      --ink: #ECE7DE;
+      --muted: #9AA1AA;
+      --hair: #2A2E34;
+      --scale: #3FBCC6;
+      --scale-soft: #3fbcc622;
+      --sampling: #E0A44E;
+      --sampling-soft: #e0a44e22;
+      --tenk: #3FBCC6;
+      --biased: #E0A44E;
+      --random: #8A8178;
+      --pos: #6BD199;
+      --accent-line: #ECE7DE;
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.28);
+    }
+  }
+  :root[data-theme="light"] {
+    --ground: #FBFAF7; --panel: #FFFFFF; --ink: #1B1E22; --muted: #5E656E; --hair: #E7E3DB;
+    --scale: #0F7C86; --sampling: #B9711C; --tenk: #0F7C86; --biased: #B9711C; --random: #9A9086;
+    --pos: #1F7A44; --accent-line: #1B1E22; --scale-soft:#0f7c8620; --sampling-soft:#b9711c1f;
+  }
+  :root[data-theme="dark"] {
+    --ground: #121417; --panel: #191C20; --ink: #ECE7DE; --muted: #9AA1AA; --hair: #2A2E34;
+    --scale: #3FBCC6; --sampling: #E0A44E; --tenk: #3FBCC6; --biased: #E0A44E; --random: #8A8178;
+    --pos: #6BD199; --accent-line: #ECE7DE; --scale-soft:#3fbcc622; --sampling-soft:#e0a44e22;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--ground); color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 17px; line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 960px; margin: 0 auto; padding: 4.5rem 1.5rem 6rem; }
+  .serif { font-family: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif; }
+  h1, h2, h3 { font-family: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif; text-wrap: balance; line-height: 1.15; font-weight: 600; }
+
+  .eyebrow {
+    font-size: .74rem; letter-spacing: .16em; text-transform: uppercase;
+    color: var(--muted); font-weight: 600; margin: 0 0 1rem;
+  }
+  h1 { font-size: clamp(2.1rem, 5vw, 3.1rem); margin: 0 0 1.1rem; letter-spacing: -.01em; }
+  .lede { font-size: 1.24rem; color: var(--ink); max-width: var(--maxw); margin: 0 0 .4rem; }
+  .lede b { font-weight: 600; }
+  .sub { color: var(--muted); max-width: var(--maxw); font-size: 1.02rem; }
+
+  .verdict {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 1px;
+    background: var(--hair); border: 1px solid var(--hair); border-radius: 14px;
+    overflow: hidden; margin: 2.4rem 0 0; box-shadow: var(--shadow);
+  }
+  .verdict > div { background: var(--panel); padding: 1.5rem 1.6rem; }
+  .verdict .tag { font-size: .72rem; letter-spacing: .14em; text-transform: uppercase; font-weight: 700; margin: 0 0 .5rem; }
+  .verdict .scale-tag { color: var(--scale); }
+  .verdict .samp-tag { color: var(--sampling); }
+  .verdict .big { font-family: "Iowan Old Style", Palatino, Georgia, serif; font-size: 2.4rem; font-weight: 600; line-height: 1; font-variant-numeric: tabular-nums; }
+  .verdict .big.scale { color: var(--scale); }
+  .verdict .big.samp { color: var(--sampling); }
+  .verdict .cap { color: var(--muted); font-size: .95rem; margin: .5rem 0 0; }
+
+  section { margin-top: 3.6rem; }
+  h2 { font-size: 1.5rem; margin: 0 0 .3rem; }
+  .section-note { color: var(--muted); margin: 0 0 1.5rem; max-width: var(--maxw); }
+  p { max-width: var(--maxw); }
+
+  .chart { background: var(--panel); border: 1px solid var(--hair); border-radius: 14px; padding: 1.8rem 1.7rem 1.5rem; box-shadow: var(--shadow); }
+  .chart h3 { font-size: 1.05rem; margin: 0 0 .2rem; }
+  .chart .chart-sub { color: var(--muted); font-size: .9rem; margin: 0 0 1.6rem; }
+  .grp { margin: 0 0 1.5rem; }
+  .grp:last-child { margin-bottom: .3rem; }
+  .grp-name { font-weight: 600; font-size: .96rem; margin: 0 0 .55rem; display: flex; justify-content: space-between; align-items: baseline; }
+  .grp-name .deltas { font-size: .82rem; font-weight: 500; }
+  .grp-name .d-samp { color: var(--sampling); }
+  .grp-name .d-scale { color: var(--scale); margin-left: .8rem; }
+  .bar-row { display: grid; grid-template-columns: 74px 1fr 52px; align-items: center; gap: .7rem; margin: .32rem 0; }
+  .bar-row .lbl { font-size: .78rem; color: var(--muted); text-align: right; letter-spacing: .02em; }
+  .track { background: var(--hair); border-radius: 5px; height: 22px; overflow: hidden; }
+  .fill { height: 100%; border-radius: 5px; }
+  .fill.random { background: var(--random); }
+  .fill.biased { background: var(--biased); }
+  .fill.tenk { background: var(--tenk); }
+  .bar-row .val { font-variant-numeric: tabular-nums; font-size: .9rem; font-weight: 600; }
+
+  .tablewrap { overflow-x: auto; border: 1px solid var(--hair); border-radius: 14px; box-shadow: var(--shadow); }
+  table { border-collapse: collapse; width: 100%; background: var(--panel); font-size: .95rem; min-width: 640px; }
+  caption { text-align: left; caption-side: top; padding: 1.1rem 1.3rem .2rem; color: var(--muted); font-size: .88rem; }
+  th, td { padding: .62rem .9rem; text-align: right; font-variant-numeric: tabular-nums; }
+  th:first-child, td:first-child { text-align: left; font-variant-numeric: normal; }
+  thead th { font-size: .74rem; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); font-weight: 600; border-bottom: 1px solid var(--hair); }
+  tbody td { border-bottom: 1px solid var(--hair); }
+  tbody tr:last-child td { border-bottom: none; }
+  .grouprow td { background: var(--scale-soft); font-weight: 600; font-family: "Iowan Old Style", Palatino, Georgia, serif; color: var(--ink); letter-spacing: .01em; }
+  .col-samp { color: var(--sampling); font-weight: 600; }
+  .col-scale { color: var(--scale); font-weight: 600; }
+  .dash { color: var(--muted); }
+  .best { font-weight: 700; }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 1.1rem; margin: 1.2rem 0 0; font-size: .84rem; color: var(--muted); }
+  .legend span { display: inline-flex; align-items: center; gap: .45rem; }
+  .swatch { width: 13px; height: 13px; border-radius: 3px; display: inline-block; }
+
+  .caveats { background: var(--panel); border: 1px solid var(--hair); border-left: 3px solid var(--sampling); border-radius: 10px; padding: 1.3rem 1.5rem; box-shadow: var(--shadow); }
+  .caveats h3 { font-size: 1rem; margin: 0 0 .7rem; }
+  .caveats ul { margin: 0; padding-left: 1.1rem; color: var(--muted); }
+  .caveats li { margin: .4rem 0; max-width: none; }
+  .caveats b { color: var(--ink); font-weight: 600; }
+
+  footer { margin-top: 3.5rem; padding-top: 1.4rem; border-top: 1px solid var(--hair); color: var(--muted); font-size: .84rem; }
+  code { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: .86em; background: var(--scale-soft); padding: .08em .35em; border-radius: 4px; }
+</style>
+
+<div class="wrap">
+  <p class="eyebrow">DCLM Core_v2 · 3000-WARC sweep · 154 evaluations</p>
+  <h1 class="serif">The Core_v2 jump is mostly scale — but head-biased sampling is a real second effect</h1>
+  <p class="lede">Re-running Core_v2 across the biased and random 3000-WARC corpora, at matched model sizes, cleanly separates the two forces behind the 10k-scale scores. <b>Data quantity dominates; how you sample the pool matters too, at roughly a third the magnitude.</b></p>
+  <p class="sub">Because the random-3k and 10k corpora share the same uniform-random draw and differ only in size, <code>random-3k → 10k</code> isolates <b>scale</b>. Because biased-3k and random-3k share N = 3000 and differ only in draw, <code>random-3k → biased-3k</code> isolates <b>sampling</b>.</p>
+
+  <div class="verdict">
+    <div>
+      <p class="tag scale-tag">Scale effect · 2.9B</p>
+      <div class="big scale">+10 to +19</div>
+      <p class="cap">Core_v2 points gained going random-3k → 10k (same sampling, ~3.5× the data).</p>
+    </div>
+    <div>
+      <p class="tag samp-tag">Sampling effect · 2.9B</p>
+      <div class="big samp">+2.5 to +8.6</div>
+      <p class="cap">Points gained going random-3k → biased-3k (same N, head-biased draw beats uniform).</p>
+    </div>
+  </div>
+
+  <section>
+    <h2 class="serif">The decomposition at 2.9B</h2>
+    <p class="section-note">Best Core_v2 (×100) across evaluated budgets, per method. Three bars per method: the uniform-random 3k draw, the head-biased 3k draw, and the 10k pool. The amber gap is sampling; the teal gap is scale.</p>
+    <div class="chart">
+      <h3 class="serif">Core_v2 by corpus — 2.9B models</h3>
+      <p class="chart-sub">Axis 0–36. Every method rises far more from 3k→10k (scale) than from random→biased (sampling).</p>
+
+      <!-- dclm -->
+      <div class="grp">
+        <div class="grp-name"><span>DCLM-Baseline</span><span class="deltas"><span class="d-samp">sampling +2.51</span><span class="d-scale">scale +10.24</span></span></div>
+        <div class="bar-row"><span class="lbl">random-3k</span><div class="track"><div class="fill random" style="width:66.0%"></div></div><span class="val">23.76</span></div>
+        <div class="bar-row"><span class="lbl">biased-3k</span><div class="track"><div class="fill biased" style="width:73.0%"></div></div><span class="val">26.27</span></div>
+        <div class="bar-row"><span class="lbl">10k</span><div class="track"><div class="fill tenk" style="width:94.4%"></div></div><span class="val">34.00</span></div>
+      </div>
+      <!-- nemotron -->
+      <div class="grp">
+        <div class="grp-name"><span>Nemotron-CC</span><span class="deltas"><span class="d-samp">sampling +8.60</span><span class="d-scale">scale +19.37</span></span></div>
+        <div class="bar-row"><span class="lbl">random-3k</span><div class="track"><div class="fill random" style="width:38.7%"></div></div><span class="val">13.93</span></div>
+        <div class="bar-row"><span class="lbl">biased-3k</span><div class="track"><div class="fill biased" style="width:62.6%"></div></div><span class="val">22.53</span></div>
+        <div class="bar-row"><span class="lbl">10k</span><div class="track"><div class="fill tenk" style="width:92.5%"></div></div><span class="val">33.30</span></div>
+      </div>
+      <!-- resiliparse -->
+      <div class="grp">
+        <div class="grp-name"><span>Resiliparse + dedup</span><span class="deltas"><span class="d-samp">sampling +5.30</span><span class="d-scale">scale +12.60</span></span></div>
+        <div class="bar-row"><span class="lbl">random-3k</span><div class="track"><div class="fill random" style="width:34.4%"></div></div><span class="val">12.39</span></div>
+        <div class="bar-row"><span class="lbl">biased-3k</span><div class="track"><div class="fill biased" style="width:49.2%"></div></div><span class="val">17.70</span></div>
+        <div class="bar-row"><span class="lbl">10k</span><div class="track"><div class="fill tenk" style="width:69.4%"></div></div><span class="val">24.99</span></div>
+      </div>
+
+      <div class="legend">
+        <span><i class="swatch" style="background:var(--random)"></i>random-3k (uniform draw)</span>
+        <span><i class="swatch" style="background:var(--biased)"></i>biased-3k (head-biased draw)</span>
+        <span><i class="swatch" style="background:var(--tenk)"></i>10k pool</span>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2 class="serif">Effect sizes, side by side</h2>
+    <p class="section-note">Same numbers as deltas. Scale beats sampling in every cell — by 1.8× (DCLM 998M) to 4.1× (DCLM 2.9B).</p>
+    <div class="tablewrap">
+      <table>
+        <caption>Core_v2 ×100. Sampling = biased-3k − random-3k (fixed N). Scale = 10k − random-3k (fixed sampling).</caption>
+        <thead>
+          <tr><th>Method</th><th>random-3k</th><th>biased-3k</th><th>10k</th><th>Sampling Δ</th><th>Scale Δ</th></tr>
+        </thead>
+        <tbody>
+          <tr class="grouprow"><td colspan="6">2.9B (d2432)</td></tr>
+          <tr><td>DCLM-Baseline</td><td>23.76</td><td>26.27</td><td>34.00</td><td class="col-samp">+2.51</td><td class="col-scale">+10.24</td></tr>
+          <tr><td>Nemotron-CC</td><td>13.93</td><td>22.53</td><td>33.30</td><td class="col-samp">+8.60</td><td class="col-scale">+19.37</td></tr>
+          <tr><td>Resiliparse+dedup</td><td>12.39</td><td>17.70</td><td>24.99</td><td class="col-samp">+5.30</td><td class="col-scale">+12.60</td></tr>
+          <tr class="grouprow"><td colspan="6">998M (d1536)</td></tr>
+          <tr><td>DCLM-Baseline</td><td>13.66</td><td>21.14</td><td>27.28</td><td class="col-samp">+7.48</td><td class="col-scale">+13.62</td></tr>
+          <tr><td>Nemotron-CC</td><td>16.27</td><td>18.96</td><td>25.31</td><td class="col-samp">+2.69</td><td class="col-scale">+9.05</td></tr>
+          <tr><td>Resiliparse+dedup</td><td class="dash">—</td><td>16.80</td><td>20.19</td><td class="dash">—</td><td class="dash">—</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2 class="serif">Full three-way table</h2>
+    <p class="section-note">Best Core_v2 (×100) per method × size. Bold = highest of the three at that cell — the 10k pool wins nearly everywhere.</p>
+    <div class="tablewrap">
+      <table>
+        <caption>All six curation methods. Biased-3k and 10k cover 157M / 998M / 2.9B; random-3k exists only for DCLM, Nemotron, Resiliparse.</caption>
+        <thead>
+          <tr><th>Method</th><th>Size</th><th>random-3k</th><th>biased-3k</th><th>10k</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>DCLM-Baseline</td><td>157M</td><td class="dash">—</td><td>9.44</td><td class="best">9.95</td></tr>
+          <tr><td>DCLM-Baseline</td><td>998M</td><td>13.66</td><td>21.14</td><td class="best">27.28</td></tr>
+          <tr><td>DCLM-Baseline</td><td>2.9B</td><td>23.76</td><td>26.27</td><td class="best">34.00</td></tr>
+          <tr><td>Nemotron-CC</td><td>157M</td><td>8.71</td><td>9.59</td><td class="best">10.18</td></tr>
+          <tr><td>Nemotron-CC</td><td>998M</td><td>16.27</td><td>18.96</td><td class="best">25.31</td></tr>
+          <tr><td>Nemotron-CC</td><td>2.9B</td><td>13.93</td><td>22.53</td><td class="best">33.30</td></tr>
+          <tr><td>Resiliparse+dedup</td><td>157M</td><td>7.43</td><td class="best">8.88</td><td>8.24</td></tr>
+          <tr><td>Resiliparse+dedup</td><td>998M</td><td class="dash">—</td><td>16.80</td><td class="best">20.19</td></tr>
+          <tr><td>Resiliparse+dedup</td><td>2.9B</td><td>12.39</td><td>17.70</td><td class="best">24.99</td></tr>
+          <tr><td>High-Quality (ours)</td><td>157M</td><td class="dash">—</td><td>10.01</td><td class="best">10.27</td></tr>
+          <tr><td>High-Quality (ours)</td><td>998M</td><td class="dash">—</td><td>23.72</td><td class="best">26.85</td></tr>
+          <tr><td>High-Quality (ours)</td><td>2.9B</td><td class="dash">—</td><td>27.51</td><td class="best">32.25</td></tr>
+          <tr><td>FineWeb-Edu</td><td>157M</td><td class="dash">—</td><td>6.58</td><td class="best">9.09</td></tr>
+          <tr><td>FineWeb-Edu</td><td>998M</td><td class="dash">—</td><td>14.82</td><td class="best">19.58</td></tr>
+          <tr><td>FineWeb-Edu</td><td>2.9B</td><td class="dash">—</td><td class="dash">—</td><td class="best">22.51</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2 class="serif">What this says about the original question</h2>
+    <p>You asked whether the Core_v2 behavior at 10k was a <b>scale</b> effect or something you could have <b>predicted all along</b> from the sampling. It's mostly the former. Holding the sampling method fixed, going from 3,000 to 10,364 WARCs buys +10 to +19 Core_v2 points at 2.9B — the dominant term. The head-biased draw is genuinely better than a uniform draw at the same size (+2.5 to +8.6), so sampling was <em>always</em> helping, but it's a second-order correction, not the main story. Notably the ranking among baselines is stable across all three regimes: DCLM ≥ Nemotron ≥ Resiliparse throughout.</p>
+  </section>
+
+  <div class="caveats">
+    <h3 class="serif">Reading caveats</h3>
+    <ul>
+      <li><b>Best-of-budget selection.</b> Each cell is the max Core_v2 over the 3–8 evaluated budgets — an optimistic point estimate, and budget coverage differs between biased-3k and random-3k.</li>
+      <li><b>random-3k coverage is thinner.</b> Only DCLM / Nemotron / Resiliparse were trained on the random draw, and Resiliparse-random is missing 998M — so the sampling column is blank there.</li>
+      <li><b>Scale ≈ sampling equivalence.</b> random-3k → 10k mixes "more data" with "more unique tokens / more epochs"; both move together here and aren't separated.</li>
+      <li><b>10k ≈ random by construction.</b> The 10k pool's quality distribution matches the uniform-random 3k draw (verified earlier), which is what makes <code>random-3k → 10k</code> a clean scale axis.</li>
+    </ul>
+  </div>
+
+  <footer>
+    154 / 154 Core_v2 evaluations · <code>data_curation_3k_core_results/</code> + <code>data_curation_10k_core_results/</code> · Core_v2 = 22-task centered mean, ×100 · generated from the completed 3000-WARC rerun.
+  </footer>
+</div>

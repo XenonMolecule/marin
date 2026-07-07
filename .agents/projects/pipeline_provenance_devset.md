@@ -233,8 +233,117 @@ Multi-agent workflow `knowledge-gap-investigation` (wf_694387d9-a3b) verifying e
 sub-gap adversarially + producing ranked dev-set doc priorities. Data + brief in
 `scratch/gap_investigation/`.
 
+## PHASE 2 — dilution ablation (in progress 2026-07-05, on cloud VM)
+
+Two hq-corpus variants, swept at 3 budgets (2e18/2e19/2e20; NOT 2e21 — wandb
+runtime 78-104h there, and lambada/naturalqs gaps SHRINK with scale so small
+scale is cheaper AND more sensitive). Only variants are new runs; hq+dclm curves
+are the existing backdrop.
+
+- **C reweight** (money experiment): `ReweightedCurationMethod` (new subclass in
+  data_curation_math.py) mixes full hq cache (0.856) + new `hq_dense` cache (0.144)
+  → dense char-share 12.3%→25% (=DCLM), fixed token budget. Tests density hypothesis.
+- **B epoch-control**: `hq_epoch_sub344` = uniform 34.4% subsample → 7.33B tok (=DCLM
+  count), composition unchanged. Tests the fewer-tokens/more-epochs confound.
+
+Build: `experiments/baseline_collection/build_hq_variants.py` (dense+epoch docs,
+us-central1); tokenize `experiments/scaling_law_sweeps/tokenize_hq_variants.py`.
+
+**CROSS-REGION EGRESS GUARDS (user priority — costs real money):**
+- ALL stages in-region us-central1 (where hq HF export + hq cache live).
+- Both variant methods register with `pin_region="us-central1"`; launch with
+  `--allowed-regions us-central1`.
+- Training child `_assert_all_components_local` (run_curation_train_standalone.py)
+  hard-fails on ANY non-local component cache_dir — VERIFIED it iterates the reweight's
+  extra `__dense` component too. Test: `tests/test_hq_reweight_variant.py` asserts
+  no component path is cross-region.
+- Eval launchers hard-pin each child to its checkpoint region (weights stay in-region).
+- Pre-launch: verify hq_dense + hq_epoch + full hq caches all EXIST in us-central1.
+- NOTE: `tests/test_data_curation_mirror_safety.py` is PRE-EXISTING stale (tests the
+  removed mirror:// design; 15 fail on HEAD independent of this work) — do not fix here.
+
+## PHASE 2 LAUNCHED (2026-07-05) — 6 ablation runs
+
+Caches (us-central1): `hq_dense-7024eb` (2.589B tok), `hq_epoch_sub344-f4dcd4`
+(7.330B tok ≈ DCLM 7.332B). Registered in curation_plan.py: `hq_epoch` (single-source,
+pin us-central1) + `hq_reweight` (ReweightedCurationMethod, base full-hq + dense@0.144,
+pin us-central1). Egress test + registration resolution verified (0 cross-region paths).
+
+Launched via launch_fixed_model_sweep.py (coordinator iris job us-central1): both
+methods × budgets {3e18, 3e19, 3e20} at fixed d1536 (fixed dim → clean budget trend;
+all cells have existing hq_10k+dclm_10k baselines). Runtimes ~1.7h / 12h / 19h.
+NOTE canonical budgets are 3e/9e/1.8e-spaced (the "2e+19" run labels = 1.8e19 rounded).
+
+Compare curves: baseline hq_10k (existing) vs hq_epoch vs hq_reweight, on jeopardy/
+lambada/arc/csqa/piqa vs budget. Reads: metadata/olmo_bpb_results (after eval).
+- reweight closes jeopardy w/o hurting csqa/piqa → density fix works (actionable).
+- epoch closes jeopardy → it was epochs/repetition, not composition.
+- neither → deeper (synthetic / something else).
+
+TODO after training: launch olmo_bpb + core_tasks evals over the hf/ checkpoints
+(region-pinned us-central1), then plot trend.
+
 ## Cost discipline
 
 - Everything touching corpora runs in-region us-central2 (reuse matched_viewer
   cross-region guards). Laptop only pulls the small summary JSONs.
 - TPU (training) is free on TRC; GCS egress is the only real cost — avoid it.
+
+## PHASE 2 RESULTS (2026-07-06) — density hypothesis REFUTED
+
+Dilution ablation, hq_reweight (dense→25%) vs baseline hq vs dclm, gap-closed
+(100%=matches dclm) on olmo_bpb jeopardy/lambada/naturalqs:
+
+| benchmark | reweight 3e18 | reweight 3e19 |
+|---|---|---|
+| jeopardy | +14% | +10% |
+| lambada | -4% | -5% |
+| naturalqs | -1% | -41% |
+
+**Concentrating hq's expository content to DCLM's level does NOT close the
+fact-recall gap** (weak-to-negative, 2 scales, not growing). Density/composition
+REFUTED as the driver. naturalqs regression => upweighting hq's mediocre
+expository displaces useful breadth without adding fact-density => hq's expository
+docs aren't fact-rich enough. Leading explanation now = **document content
+quality** (dclm's fastText selects fact-denser docs than hq extraction keeps);
+spec direction shifts from "keep more expository" to "extract/select fact-denser".
+
+epoch-control 3e18 read was NOISE (0.02-0.07 epochs — no repetition active). Clean
+epoch test = 3e20 ONLY (hq 2.34 vs epoch-variant 6.80 epochs). Pending.
+
+**OOM lesson:** d1536 B32/B256 runs OOM at --force-memory-gb 64 (checkpoint
+serialization); relaunch B32+ with --force-memory-gb 160. keep=[] + temp-only
+checkpoints => OOM-during-save leaves NO resumable ckpt (restart from 0), BUT the
+final hf export can still be written before the cleanup OOM (reweight 3e19
+"failed" yet had valid step-38013 → eval-able). Always check for a final hf export
+before assuming a "failed" run is lost.
+
+## PHASE 2 FINAL (2026-07-06) — content QUALITY, not composition or epochs
+
+Full ablation complete (8/9 points; reweight 3e20 finishing). gap-closed vs dclm:
+
+| benchmark | reweight 3e18 | reweight 3e19 | EPOCH 3e20 (clean test) |
+|---|---|---|---|
+| jeopardy | +14% | +10% | **-18%** |
+| lambada | -4% | -5% | +6% |
+| naturalqs | -1% | -41% | -6% |
+
+**BOTH hypotheses refuted:**
+- Composition/density (reweight): weak-to-negative across 3e18/3e19. Concentrating
+  hq's expository content to dclm's 25% does NOT close the fact-recall gap.
+- Epochs/repetition (epoch @3e20, the ONLY scale where epoching active: hq 2.34 vs
+  variant 6.80 epochs): jeopardy WORSE (0.962 vs hq 0.927, -18%). Repeating a
+  smaller hq subset hurts (loses unique fact coverage).
+
+**Conclusion: DCLM's fact-recall edge is document CONTENT QUALITY.** DCLM 7.3B beats
+hq 21.3B while neither quantity lever on hq's own content helps => dclm's individual
+docs are fact-denser (fastText selects knowledge-rich text; hq's LLM "useful content"
+extraction doesn't). Not how-much, not how-often; what's IN each doc.
+
+**SPEC DIRECTION:** push the extractor toward higher factual-density-per-token
+content (knowledge-quality selection, fastText-style), NOT "keep more expository"
+(refuted) or "smaller high-quality subset repeated" (refuted). This is the redirect
+the ablation bought.
+
+Artifacts: evals gs://marin-us-east5/metadata/olmo_bpb_results/curation-hq_{reweight,epoch}-*;
+plot scratch/build_ablation_plot.py; manifests experiments/core_eval_manifests/hq_ablation_*.txt.

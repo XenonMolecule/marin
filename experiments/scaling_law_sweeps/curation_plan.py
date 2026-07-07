@@ -30,6 +30,7 @@ from experiments.scaling_law_sweeps.completed_adamh import (
 )
 from experiments.scaling_law_sweeps.data_curation_math import (
     CurationMethod,
+    ReweightedCurationMethod,
     implicit_target_exp_a,
     load_d_obs_from_stats,
     slice_tokens_for,
@@ -70,7 +71,7 @@ def pick_v6e_type_single_vm(estimated_memory_bytes: int) -> str | None:
     return None  # too big — v6e-16+ has vm_count!=1, can't mix with v4/v5p
 
 
-import math  # re-import for pick_v6e; python allows this
+import math  # noqa: E402  # re-import for pick_v6e; python allows this
 
 # --- Compute budgets ----------------------------------------------------------
 # Matches delphi's `completed_adamh` defaults (7 log-spaced FLOP points).
@@ -155,6 +156,12 @@ _D_OBS_DEFAULTS: dict[str, int] = {
     # high_quality (LLM-extracted) 10k: dedup + CORE-v2 decontam (n=15/DF<=10),
     # tokenized us-central1 only (not mirrored). d_obs from train/.stats.json.
     "high_quality_decon_10364warcs-6451c8": 21296896949,
+    # hq dilution-ablation variants (us-central1 only; built by build_hq_variants.py
+    # from the hq HF export docs). dense = fact-bearing expository partition (upweight
+    # component for hq_reweight); epoch_sub344 = uniform 34.4% subsample matching
+    # DCLM's token count (7.332B) for the epoch-control ablation.
+    "hq_dense-7024eb": 2588921892,
+    "hq_epoch_sub344-f4dcd4": 7329749552,
     # FineWeb-CC 10k: full HF FineWeb for our WARCs (HF dedup trusted; no extra
     # dedup/decontam). Tokenized us-central2 only (not mirrored).
     "fineweb_cc_10364warcs-ddfeda": 28004233781,
@@ -380,6 +387,30 @@ METHODS: dict[str, CurationMethod] = {
         "high_quality_10k",
         "high_quality_decon_10364warcs-6451c8",
         sampled_warcs=EXPC_SAMPLED_WARCS,
+    ),
+    # --- Dilution-ablation variants of high_quality ---
+    # Base hq cache + both variant caches (hq_dense, hq_epoch_sub344) exist in BOTH
+    # us-central1 and us-east5, so pin_region=None lets runs float across those two
+    # (hard-constrained via --allowed-regions us-central1 us-east5 at launch — the
+    # variant caches exist ONLY in those two regions). output_path is region-local
+    # (run_curation_train_standalone.py:808), so no cross-region checkpoint egress.
+    # hq_epoch: uniform subsample to DCLM's token count (composition unchanged) —
+    # isolates the "fewer unique tokens / more epochs" confound.
+    "hq_epoch": _method(
+        "hq_epoch",
+        "hq_epoch_sub344-f4dcd4",
+        sampled_warcs=EXPC_SAMPLED_WARCS,
+    ),
+    # hq_reweight: full hq cache upweighted with the dense expository partition so
+    # dense char-share goes 12.3%→25% (=DCLM), at fixed token budget. Tests whether
+    # concentrating fact-dense content closes the knowledge gap.
+    "hq_reweight": ReweightedCurationMethod(
+        name="hq_reweight",
+        tokenized_rel_path="tokenized/high_quality_decon_10364warcs-6451c8/",
+        d_obs_tokens=_D_OBS_DEFAULTS["high_quality_decon_10364warcs-6451c8"],
+        sampled_warcs=EXPC_SAMPLED_WARCS,
+        dense_rel_path="tokenized/hq_dense-7024eb/",
+        dense_weight=0.144,
     ),
     "fineweb_cc_10k": _method(
         "fineweb_cc_10k",
@@ -848,7 +879,7 @@ def _planned_run_from_candidate(
 
     # v5p alternative: pick_v5p_type chooses the smallest v5p that fits the model's
     # memory. For large v4 plans (v4-32/v4-64), that v5p is often much smaller
-    # (v5p-16/v5p-32) because v5p has 3× more HBM per chip. But the vm_count filter
+    # (v5p-16/v5p-32) because v5p has 3x more HBM per chip. But the vm_count filter
     # in submit_one drops alternatives with mismatched vm_count — leaving multi-host
     # plans with NO fallback when v4 capacity is exhausted.
     #
@@ -920,7 +951,7 @@ def enumerate_plans(
     min_slice_tokens: float = MIN_SLICE_TOKENS_DEFAULT,
     seq_len: int = SEQ_LEN,
 ) -> list[PlannedRun]:
-    """Build the full list of `PlannedRun`s for the cartesian product of methods × experiments.
+    """Build the full list of `PlannedRun`s for the cartesian product of methods x experiments.
 
     `experiments` accepts mixed legacy and ExpC forms — see `_normalize_experiment_spec`.
     For ExpC, `_iter_valid_candidates` is invoked with the data-rich-aware

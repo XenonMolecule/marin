@@ -8,7 +8,7 @@ math is unit-testable without needing executor/levanter/fray imports.
 """
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import fsspec
 from levanter.data.text import (
@@ -275,6 +275,68 @@ class CurationMethod:
             shuffle=True,
             permutation_type="feistel",
         )
+
+
+@dataclass(frozen=True)
+class ReweightedCurationMethod(CurationMethod):
+    """A CurationMethod that UPWEIGHTS a second (sub-corpus) cache in the training
+    mixture, at a fixed total token budget — used for the composition-reweight
+    ablation (concentrate hq's fact-dense expository content to DCLM's level).
+
+    The training stream becomes a two-component mixture:
+        {base cache: 1 - dense_weight,  dense cache: dense_weight}
+    plus the inherited validation components (weight 0.0). The base cache is the
+    parent's ``tokenized_rel_path``; ``dense_rel_path`` is a bare relative path to
+    the extra cache (must be co-located in the same region → pin_region).
+
+    Backward-compatible: this is a NEW class; existing ``CurationMethod`` instances
+    are untouched. Only instances of this subclass emit the extra component.
+    """
+
+    dense_rel_path: str = ""
+    dense_weight: float = 0.0
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if not self.dense_rel_path or not (0.0 < self.dense_weight < 1.0):
+            raise ValueError(
+                f"ReweightedCurationMethod needs dense_rel_path and 0<dense_weight<1, "
+                f"got {self.dense_rel_path!r}, {self.dense_weight}"
+            )
+        if self.dense_rel_path.startswith(("gs://", "mirror://", "http://", "https://", "/")):
+            raise ValueError(f"dense_rel_path must be a bare relative path, got {self.dense_rel_path!r}")
+
+    def as_lm_mixture_config(
+        self,
+        region: str,
+        with_uncheatable_eval: bool = True,
+        with_paloma: bool = True,
+        with_lima: bool = True,
+    ) -> LMMixtureDatasetConfig:
+        from experiments.scaling_law_sweeps.region_tracker import REGION_TO_BUCKET
+
+        base = super().as_lm_mixture_config(region, with_uncheatable_eval, with_paloma, with_lima)
+        dense_cache = f"{REGION_TO_BUCKET[region]}/{self.dense_rel_path}"
+        dense_key = f"{self.name}__dense"
+        dense_component = DatasetComponent(
+            source=UrlDatasetSourceConfig(
+                cache_dir=dense_cache,
+                train_urls=[],
+                validation_urls=[],
+                format=TextLmDatasetFormat(),
+                tags=[dense_key],
+            ),
+            cache_dir=dense_cache,
+            format=TextLmDatasetFormat(),
+            tags=[dense_key],
+        )
+        components = {**base.components, dense_key: dense_component}
+        # Downweight the base training component to (1 - dense_weight); leave the
+        # 0.0-weight validation components exactly as the parent set them.
+        train_weights = dict(base.train_weights)
+        train_weights[self.name] = 1.0 - self.dense_weight
+        train_weights[dense_key] = self.dense_weight
+        return replace(base, components=components, train_weights=train_weights)
 
 
 def t_exp_ceiling(method: CurationMethod, t_target: float, *, allow_data_rich: bool = False) -> float:

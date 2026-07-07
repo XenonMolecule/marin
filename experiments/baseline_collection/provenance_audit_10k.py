@@ -928,6 +928,20 @@ def _category_case_sql(col: str = "domain") -> str:
     return "CASE " + " ".join(whens) + " ELSE 'other' END"
 
 
+def categorize(url: str) -> str:
+    """Python twin of `_category_case_sql`: priority-ordered substring match on the
+    registered domain → content category (first pattern wins, else 'other').
+
+    Kept in lockstep with CATEGORY_PATTERNS so the SQL retention analysis and the
+    Python corpus-construction (build_hq_variants) agree on category membership.
+    """
+    dom = registered_domain(url)
+    for cat, pats in CATEGORY_PATTERNS:
+        if any(p in dom for p in pats):
+            return cat
+    return "other"
+
+
 def run_domaindiff(args: argparse.Namespace) -> int:
     """Comprehensive retention differential: per-category (all URLs, captures the
     long tail), per-TLD, and a large top-domain table. Where does HQ over/under-keep?"""
