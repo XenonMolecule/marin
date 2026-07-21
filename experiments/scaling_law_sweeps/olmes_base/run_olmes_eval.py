@@ -40,10 +40,48 @@ _HUB_CACHE_MARKER = "/eval_datasets/core_tasks_hub_cache/"  # reused from the CO
 
 
 def _prepare_hub_cache(gcs_cache: str, local_dir: str = "/tmp/olmes_hf_home") -> int:
+    # Clear first: reused workers keep stale HF `.no_exist` markers from a prior run whose
+    # cache lacked a reference config, and _sync_cache (overwrite-only) never removes them,
+    # so huggingface_hub refuses to load that config offline even once it's cached.
+    import shutil
+
+    shutil.rmtree(local_dir, ignore_errors=True)
     n = _sync_cache(gcs_cache, _HUB_CACHE_MARKER, local_dir)
     os.environ["HF_HOME"] = local_dir
     logger.info("Synced %d hub-cache files -> %s; HF_HOME set", n, local_dir)
     return n
+
+
+def _install_resilient_from_hf() -> None:
+    """Make Levanter's ``HFCheckpointConverter.from_hf`` offline-resilient.
+
+    ``from_hf`` probes EVERY registered config's default HF reference to name-match the
+    checkpoint's arch; under ``HF_HUB_OFFLINE`` a NON-matching config whose default repo
+    isn't in the local cache (gpt2/gemma/... — which the eval container's transformers can't
+    resolve offline even when cached) crashes the probe. Fall back to resolving the config
+    directly from the checkpoint's own ``model_type`` and building the converter against the
+    checkpoint itself (no default-repo fetch).
+    """
+    from levanter.compat import hf_checkpoints as _hc
+
+    _orig = _hc.HFCheckpointConverter.from_hf
+
+    def _resilient(model_name_or_path, trust_remote_code: bool = False):
+        try:
+            return _orig(model_name_or_path, trust_remote_code)
+        except Exception:
+            import json
+
+            import fsspec
+
+            from levanter.models.lm_model import LmConfig
+
+            ckpt = str(model_name_or_path).rstrip("/")
+            with fsspec.open(f"{ckpt}/config.json", "r") as f:
+                model_type = json.load(f)["model_type"]
+            return LmConfig.get_known_choices()[model_type]().hf_checkpoint_converter(ref_checkpoint=ckpt)
+
+    _hc.HFCheckpointConverter.from_hf = staticmethod(_resilient)
 
 
 def _prepare_offline_dataset_cache(gcs_cache: str, local_dir: str = "/tmp/olmes_hf_cache") -> int:
@@ -65,9 +103,10 @@ def main():
     p.add_argument("--limit", type=int, default=None, help="Cap each task to N examples (smoke test). None = full.")
     args = p.parse_args()
 
-    # Make every HF surface offline+local BEFORE any HF library import.
-    os.environ["TRANSFORMERS_OFFLINE"] = "1"
-    os.environ["HF_HUB_OFFLINE"] = "1"
+    # Model config/tokenizer load ONLINE (like CORE v2): the container's transformers can't
+    # reliably resolve a few repos (gpt2, mistral-regex fix) OFFLINE. The DATASETS stay offline
+    # (_prepare_offline_dataset_cache sets HF_DATASETS_OFFLINE=1) so the staged eval data is used
+    # without re-download. HF_HOME (set in _prepare_hub_cache) still accelerates hub lookups.
     _prepare_hub_cache(args.hub_cache_gcs)
     _prepare_offline_dataset_cache(args.dataset_cache_gcs)
 
@@ -89,6 +128,8 @@ def main():
     hf_env = {k: os.environ.get(k) for k in
               ("TRANSFORMERS_OFFLINE", "HF_HUB_OFFLINE", "HF_DATASETS_OFFLINE", "HF_DATASETS_CACHE", "HF_HOME")}
     logger.info("HF offline env: %s", hf_env)
+
+    _install_resilient_from_hf()  # evaluate() loads the model via from_hf's offline-fragile scan
 
     config = EvaluationConfig(
         evaluator="levanter_lm_evaluation_harness",

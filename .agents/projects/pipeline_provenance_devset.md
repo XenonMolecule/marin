@@ -347,3 +347,61 @@ the ablation bought.
 
 Artifacts: evals gs://marin-us-east5/metadata/olmo_bpb_results/curation-hq_{reweight,epoch}-*;
 plot scratch/build_ablation_plot.py; manifests experiments/core_eval_manifests/hq_ablation_*.txt.
+
+## PHASE C — eval-attribution → missing-domain discovery (2026-07-07, autonomous overnight)
+
+Goal (Michael's idea): for eval examples hq loses on, extract topic keywords, then
+find pretraining docs carrying those keywords that dclm/nemo KEEP but hq DROPS → the
+domains/website-types hq is missing → feed the real dev set. Matched docs = a separate
+HELD-OUT set (not for training).
+
+Pipeline (all IN-REGION, no bulk egress):
+- **Phase A** `eval_attribution.py`: per-example scores for hq/dclm/nemo from CoreV2
+  core_tasks + OLMES olmes_base (both have per-example samples; OLMo-bpb does NOT →
+  jeopardy/naturalqs deferred), UNION of 8B (d3584) + 2.9B (d2432). → 34,539 hq-worse
+  examples across 15 tasks. Out: gs://marin-us-east5/scratch/eval_attribution/hq_worse_examples_all_suites.parquet
+- **Phase B** keyword extraction (workflow, 4,452-example broad sample) → 13,852 keywords,
+  3 content families hq misses: SOCIAL/emotional commonsense, everyday HOW-TO/procedural,
+  school SCIENCE. Curated → 13,419. Out: scratch/eval_attribution/keywords_curated.json (+GCS).
+- **Phase C** `keyword_corpus_scan.py` (estimate-df, aggregate) + `keyword_scan_zephyr.py` (scan):
+  1. estimate-df (dclm sample) → DF-drop generics + IDF → keywords_final.json (us-central2).
+  2. ZEPHYR scan each corpus in-region (workers region-pinned via ResourceConfig): hq
+     (us-central1), dclm/nemo/fwedu (us-central2). Emits matched docs {url,domain,kws,score,snippet}.
+  3. aggregate (duckdb, us-central2): join hits + membership → ranked domains, distinguishing
+     COVERAGE gap (kept_hq=false) vs QUALITY gap (kept_hq=true but hq extraction didn't match).
+     Out: gs://marin-us-central2/scratch/provenance_10k/keyword_agg/{domains,heldout_missing_docs}.parquet
+
+Zephyr notes: from_files(SINGLE glob), .load_jsonl()/.load_parquet(), .map().filter().write_parquet(skip_existing=True);
+ZephyrContext(max_workers=N, resources=ResourceConfig(cpu=1,ram=,regions=[region],preemptible=True)); ctx.put/get_shared for keywords.
+HQKW_METHOD/HQKW_WORKERS/HQKW_GLOB via env. Matcher validated (word-boundary; 'sparkling' does NOT match 'park').
+
+## PHASE C RESULT (2026-07-07) — the domains/registers hq is missing
+
+Per-example topical scan (each hq-worse eval example's keywords; doc matches iff it has
+>=3 AND >=60% of an example's keywords → excludes tag-clouds) over all 4 corpora IN-REGION
+via Zephyr; duckdb aggregate join with membership. Outputs:
+gs://marin-us-central2/scratch/provenance_10k/keyword_agg/{domains,heldout_missing_docs}.parquet
+Report: scratch/missing_domains_report.txt + missing_domains.png (also gs://marin-us-east5/scratch/eval_attribution/).
+
+**3000 domains carry hq-worse-eval content dclm/nemo keep but hq drops.**
+Missing docs: 297,700 COVERAGE-gap (hq never had the url) + 22,167 QUALITY-gap (hq kept it
+but extraction didn't carry the content — the ablation's per-doc-quality story, concrete docs).
+
+By website TYPE (missing docs): blog 100k, news 12.8k, reference_wiki 7.3k, forum_social 4.1k,
+FICTION 4.1k (pure coverage — hq drops ~all fiction), academic 3.2k, qa_help 1.1k, CODE_TECH 155
+(hq WINS code → barely missing). "other" 185k includes miscategorized science sites.
+
+Top domains: blogspot/wordpress (blogs — how-to/procedural/personal), wikipedia/wikia/fandom
+(reference), biomedcentral/sciencedaily/phys.org/plos (SCIENCE explainers/journals),
+stackexchange/reddit (Q&A), fanfiction/AO3/literotica (FICTION), cnn/guardian (news), wikihow (how-to).
+
+Top eval subjects in the missing docs: cooking/baking (pasta/cookies/ice cream), health/anatomy
+(infection/diabetes/respiratory/cavity), everyday procedural (disposing/clothing/garbage),
+gambling/casino, biology/nutrition, language(Iran→Farsi). = the Phase-B families (how-to/procedural,
+social/everyday, science) as CONCRETE docs+domains.
+
+**DEV-SET DIRECTION:** hq's gap is mostly COVERAGE — it drops whole registers dclm/nemo keep:
+BLOGS (how-to/procedural, #1), FICTION (all of it), SCIENCE explainer sites, reference/Q&A/news.
+Plus a smaller QUALITY tail (hq kept the page but extracted worse — where the ablation's
+content-quality fix applies). The held-out set (heldout_missing_docs.parquet) = these docs,
+tied to eval subjects, for building the real dev set.

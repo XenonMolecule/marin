@@ -127,6 +127,43 @@ _D_OBS_DEFAULTS: dict[str, int] = {
     "baseline_dclm-cf177e": 2_114_092_590,
     "baseline_nemotron_full-75f981": 2_943_995_743,
     "resiliparse_random_dedup_3000warcs-7de1e2": 109_186_106_815,
+    # --- Random 100-WARC sample from the 10k pool (uniform draw seed 0, manifest
+    #     experiments/distill/subsets/baseline_warcs_100_random.txt; 60 crawls spanning
+    #     2013-2022). The COUNTERPART to the head-biased *_100 methods, whose manifest
+    #     (subsets/baseline_warcs_100.txt = first 100 of the date-SORTED 3k manifest)
+    #     covers only 2 crawls, BOTH 2013. Built 2026-07-15 by subset_random100_10k.py,
+    #     which subsets the EXISTING 10,364-WARC extractions (no re-extraction) — all
+    #     three methods use the IDENTICAL 100 WARCs.
+    #     NOTE the biased head has MORE tokens/WARC (2013 WARCs are denser): dclm
+    #     98M(biased) vs 68M(random); hq 414M vs 203M. So the old N=100 differed from a
+    #     random sample in BOTH content mix and data volume. (hq's larger gap also has a
+    #     confound: the 10k source is decon+dedup'd, the 3k-sourced biased hq is not.)
+    #     Caches tokenized in the source region + mirrored to us-east5; pin_region
+    #     us-east5 so children land where the mirror + free capacity are.
+    #     Biased/random tokens-per-100-WARCs by method: dclm 98M/68M (1.44x),
+    #     hq 414M/203M (2.0x), nemotron_full 317M/103M (3.1x) — the head-biased 2013
+    #     WARCs yield MORE tokens for every method. nemotron's 3.1x is the largest,
+    #     consistent with Nemotron-CC covering the 2013-era crawls far more densely
+    #     than the 2013-2022 average.
+    "dclm_random_100warcs-350025": 67_666_557,
+    "high_quality_random_100warcs-88f468": 202_814_071,
+    "nemotron_full_random_100warcs-ade768": 103_440_840,
+    # Random 300/500-WARC samples (10k pool, seed 0; NESTED: 100 c 300 c 500). Same
+    # subset_random100_10k.py path (WARC_N=300/500). Tokens scale ~linearly with N,
+    # confirming clean nesting. The N=100->300->500 ladder over identical architectures
+    # (256/512/768/1536) probes whether HQ flips to WORSE as data grows.
+    "dclm_random_300warcs-cbd706": 214_838_835,
+    "nemotron_full_random_300warcs-39307a": 318_293_446,
+    "high_quality_random_300warcs-c6c5a5": 639_355_979,
+    "dclm_random_500warcs-b8780e": 356_033_903,
+    "nemotron_full_random_500warcs-3f7ddf": 520_096_252,
+    "high_quality_random_500warcs-5cc14b": 1_050_918_135,
+    "dclm_random_1000warcs-5a69c1": 706_817_668,
+    "nemotron_full_random_1000warcs-83bd90": 1_028_007_768,
+    "high_quality_random_1000warcs-2470d1": 2_089_503_582,
+    "dclm_random_2000warcs-7ba7b6": 1_424_810_618,
+    "nemotron_full_random_2000warcs-7e5953": 2_035_820_453,
+    "high_quality_random_2000warcs-06a890": 4_181_779_555,
     "baseline_dclm-23e9be": 2_663_454_015,
     "baseline_nemotron-c67de9": 1_919_401_016,
     "baseline_fineweb_edu-7a3bc5": 817_221_529,
@@ -151,6 +188,14 @@ _D_OBS_DEFAULTS: dict[str, int] = {
     # the corresponding `_method(...)` call below.
     "dclm_400m_1x_10k_dclm-3df0ba": 7331583927,
     "dclm_400m_1x_10k_nemotron_full-3dcb75": 10130086896,
+    # CORE-v2-decontaminated (n=15/DF<=10, same treatment as high_quality/resiliparse)
+    # variants of the dclm/nemotron 10k caches. Tokenized us-central2; input_ids +
+    # ledger + stats lean-mirrored to us-east5 (pin_region enforces training there).
+    # Token deltas vs non-decon are tiny (dclm -4.1M/0.056%, nemo -5.1M/0.05%) — the
+    # decon flag rates were ~0.01-0.02% genuine, so this measures whether removing
+    # eval leakage moves the curves at all. See decontam_dclm_nemo_fineweb_scope.md.
+    "dclm_400m_1x_10k_dclm_decon-177776": 7327476298,
+    "dclm_400m_1x_10k_nemotron_full_decon-e271a5": 10125029374,
     # FineWeb-Edu 10k — us-central2 only (not mirrored). pin_region enforces it.
     "dclm_400m_1x_10k_fineweb_edu-0a3143": 2346934380,
     # high_quality (LLM-extracted) 10k: dedup + CORE-v2 decontam (n=15/DF<=10),
@@ -373,6 +418,23 @@ METHODS: dict[str, CurationMethod] = {
         "dclm_400m_1x_10k_nemotron_full-3dcb75",
         sampled_warcs=EXPC_SAMPLED_WARCS,
     ),
+    # CORE-v2-decontaminated variants of dclm_10k / nemotron_10k. NEW method names
+    # (not a cache swap) so the non-decon runs stay intact and skip-if-done doesn't
+    # skip these — run_name embeds the method name, not the cache hash. Caches are
+    # lean-mirrored to us-east5; pin_region forces training there (v5p covers the
+    # whole grid + co-located with the non-decon caches for a fair comparison).
+    "dclm_10k_decon": _method(
+        "dclm_10k_decon",
+        "dclm_400m_1x_10k_dclm_decon-177776",
+        sampled_warcs=EXPC_SAMPLED_WARCS,
+        pin_region="us-east5",
+    ),
+    "nemotron_10k_decon": _method(
+        "nemotron_10k_decon",
+        "dclm_400m_1x_10k_nemotron_full_decon-e271a5",
+        sampled_warcs=EXPC_SAMPLED_WARCS,
+        pin_region="us-east5",
+    ),
     # 10k natural-epoch methods. fineweb_edu_10k + fineweb_cc_10k are mirrored to all
     # 6 regions; high_quality_10k is mirrored to all EXCEPT us-central2 (2026-06-12).
     # So NO pin_region -> children float for capacity. high_quality lacks us-central2,
@@ -450,6 +512,69 @@ METHODS: dict[str, CurationMethod] = {
         "resiliparse_random_dedup_3000",
         "resiliparse_random_dedup_3000warcs-7de1e2",
         sampled_warcs=3000,
+    ),
+    # --- Random 100-WARC sample (10k pool, seed 0) — the unbiased counterpart to the
+    #     head-biased dclm_100 / nemotron_full_100 / high_quality_100 (2013-only).
+    #     Same 100 WARCs across all three. Caches mirrored to us-east5; pinned there.
+    "dclm_random_100": _method(
+        "dclm_random_100",
+        "dclm_random_100warcs-350025",
+        sampled_warcs=100,
+        pin_region="us-east5",
+    ),
+    "high_quality_random_100": _method(
+        "high_quality_random_100",
+        "high_quality_random_100warcs-88f468",
+        sampled_warcs=100,
+        pin_region="us-east5",
+    ),
+    "nemotron_full_random_100": _method(
+        "nemotron_full_random_100",
+        "nemotron_full_random_100warcs-ade768",
+        sampled_warcs=100,
+        pin_region="us-east5",
+    ),
+    # Random 300/500 (nested seed-0 ladder). Caches mirrored to us-east5; pinned there.
+    "dclm_random_300": _method(
+        "dclm_random_300", "dclm_random_300warcs-cbd706", sampled_warcs=300, pin_region="us-east5"
+    ),
+    "nemotron_full_random_300": _method(
+        "nemotron_full_random_300", "nemotron_full_random_300warcs-39307a", sampled_warcs=300, pin_region="us-east5"
+    ),
+    "high_quality_random_300": _method(
+        "high_quality_random_300", "high_quality_random_300warcs-c6c5a5", sampled_warcs=300, pin_region="us-east5"
+    ),
+    "dclm_random_500": _method(
+        "dclm_random_500", "dclm_random_500warcs-b8780e", sampled_warcs=500, pin_region="us-east5"
+    ),
+    "nemotron_full_random_500": _method(
+        "nemotron_full_random_500", "nemotron_full_random_500warcs-3f7ddf", sampled_warcs=500, pin_region="us-east5"
+    ),
+    "high_quality_random_500": _method(
+        "high_quality_random_500", "high_quality_random_500warcs-5cc14b", sampled_warcs=500, pin_region="us-east5"
+    ),
+    # N=1000 rung of the crossover ladder. hq pinned to us-central1 = co-located with its
+    # 2.1B-token cache (largest), so zero mirror egress; dclm/nemotron mirror their smaller
+    # us-central2 caches out to the v5p training regions.
+    "dclm_random_1000": _method(
+        "dclm_random_1000", "dclm_random_1000warcs-5a69c1", sampled_warcs=1000, pin_region="us-east5"
+    ),
+    "nemotron_full_random_1000": _method(
+        "nemotron_full_random_1000", "nemotron_full_random_1000warcs-83bd90", sampled_warcs=1000, pin_region="us-east1"
+    ),
+    "high_quality_random_1000": _method(
+        "high_quality_random_1000", "high_quality_random_1000warcs-2470d1", sampled_warcs=1000, pin_region="us-east5"
+    ),
+    # N=2000 rung. Same co-location strategy: hq stays us-central1 (4.2B cache local);
+    # dclm/nemotron caches pre-copied from us-central2 to their v5p training regions.
+    "dclm_random_2000": _method(
+        "dclm_random_2000", "dclm_random_2000warcs-7ba7b6", sampled_warcs=2000, pin_region="us-east5"
+    ),
+    "nemotron_full_random_2000": _method(
+        "nemotron_full_random_2000", "nemotron_full_random_2000warcs-7e5953", sampled_warcs=2000, pin_region="us-east1"
+    ),
+    "high_quality_random_2000": _method(
+        "high_quality_random_2000", "high_quality_random_2000warcs-06a890", sampled_warcs=2000, pin_region="us-east5"
     ),
     # --- WARC-scaling sweep subsamples ---
     # dclm: mirrored to us-central1 / us-central2 / us-east1 / us-east5 — float

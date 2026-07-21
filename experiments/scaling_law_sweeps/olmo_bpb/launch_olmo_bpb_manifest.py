@@ -144,8 +144,10 @@ def submit_one(
         "WANDB_API_KEY": wandb_api_key,
         "HF_TOKEN": hf_token,
         "HF_DATASETS_TRUST_REMOTE_CODE": "1",
-        "TRANSFORMERS_OFFLINE": "1",
-        "HF_HUB_OFFLINE": "1",
+        # Model/config/tokenizer load ONLINE (like CORE v2) — the eval container's transformers
+        # can't reliably resolve a few repos (gpt2, mistral-regex fix) OFFLINE. HF_HOME points at
+        # the staged hub cache (accelerator; cache hits avoid the Hub, misses fetch online).
+        "HF_HOME": "/tmp/olmo_bpb_hf_home",
         "PYTHONUNBUFFERED": "1",
         "MARIN_MIRROR_BUDGET_GB": "25",
     }

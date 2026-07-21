@@ -53,6 +53,13 @@ _LOG2_E = math.log2(math.e)
 
 
 def _prepare_hub_cache(gcs_cache: str, local_dir: str = "/tmp/olmo_bpb_hf_home") -> int:
+    # Clear the dir first: iris reuses workers, and a prior run whose cache lacked a
+    # reference config leaves HF `.no_exist/<rev>/config.json` "known-absent" markers that
+    # _sync_cache (overwrite-only) never removes, so huggingface_hub keeps refusing to load
+    # that config offline even after it's been added to the GCS cache. Fresh dir = no markers.
+    import shutil
+
+    shutil.rmtree(local_dir, ignore_errors=True)
     n = _sync_cache(gcs_cache, _HUB_CACHE_MARKER, local_dir)
     os.environ["HF_HOME"] = local_dir
     logger.info("Synced %d hub-cache files -> %s; HF_HOME set", n, local_dir)
@@ -185,9 +192,12 @@ def main():
 
 
 def _drive(args) -> None:
-    # Every HF surface offline+local BEFORE any HF/levanter import.
-    os.environ["TRANSFORMERS_OFFLINE"] = "1"
-    os.environ["HF_HUB_OFFLINE"] = "1"
+    # Load model config/tokenizer ONLINE (like the CORE v2 eval). The staged hub cache still
+    # accelerates and covers most lookups, but from_hf's registry probe + tokenizer load touch a
+    # few repos (bare `gpt2`, the Llama-3.1 tokenizer's mistral-regex fix, ...) whose OFFLINE
+    # resolution is unreliable in the eval container's transformers. Online-with-retry is robust;
+    # the launcher paces submission in waves to avoid Hub rate-limit bunching. (olmo_bpb reads its
+    # eval requests as staged raw text, so nothing here needs HF datasets.)
     _prepare_hub_cache(args.hub_cache_gcs)
     data_dir = _prepare_dataset_cache(args.dataset_cache_gcs)
 
@@ -210,7 +220,21 @@ def _drive(args) -> None:
     )
     trainer_config.initialize()
 
-    model_config = HFCheckpointConverter.from_hf(checkpoint).LevConfigClass()
+    try:
+        model_config = HFCheckpointConverter.from_hf(checkpoint).LevConfigClass()
+    except Exception:
+        # from_hf probes EVERY registered config's default HF reference; under HF_HUB_OFFLINE a
+        # NON-matching config whose default repo isn't cached crashes the probe (gpt2/gemma/... in
+        # the eval container). The checkpoint's own config IS local — resolve LevConfig directly
+        # from its model_type via the registry, skipping the fragile scan.
+        import json as _json
+
+        import fsspec as _fsspec
+        from levanter.models.lm_model import LmConfig as _LmConfig
+
+        with _fsspec.open(f"{checkpoint.rstrip('/')}/config.json", "r") as _f:
+            _mt = _json.load(_f)["model_type"]
+        model_config = _LmConfig.get_known_choices()[_mt]()
     tokenizer = load_tokenizer(checkpoint)
     parameter_axis_mapping = trainer_config.parameter_axis_mapping
     compute_axis_mapping = trainer_config.compute_axis_mapping

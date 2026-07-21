@@ -447,7 +447,16 @@ class HFCheckpointConverter(Generic[LevConfig]):
         # TODO: hacky hacky
         for k, v in LmConfig.get_known_choices().items():
             if issubclass(v, HFCompatConfig):
-                if v().hf_checkpoint_converter().HfConfigClass.__name__ == config_class.__name__:
+                # Constructing a config's converter eagerly resolves its default reference
+                # (config + tokenizer). Under HF_HUB_OFFLINE a NON-matching config whose
+                # default repo isn't in the local cache would otherwise crash this probe.
+                # Skip such configs: the checkpoint's own arch IS locally loadable, so it
+                # won't be the one that fails here.
+                try:
+                    hf_config_class_name = v().hf_checkpoint_converter().HfConfigClass.__name__
+                except Exception:
+                    continue
+                if hf_config_class_name == config_class.__name__:
                     LevConfigClass = v
                     break
         else:

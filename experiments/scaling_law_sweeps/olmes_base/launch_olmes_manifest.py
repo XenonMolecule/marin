@@ -113,8 +113,10 @@ def submit_one(client, row: CheckpointRow, hf_step_dir: str, *, priority_band: i
         "WANDB_API_KEY": wandb_api_key,
         "HF_TOKEN": hf_token,
         "HF_DATASETS_TRUST_REMOTE_CODE": "1",
-        "TRANSFORMERS_OFFLINE": "1",
-        "HF_HUB_OFFLINE": "1",
+        # Model/config/tokenizer load ONLINE (like CORE v2) — offline resolution of a few repos
+        # (gpt2, mistral-regex fix) is unreliable in the eval container. Datasets stay offline
+        # (runner sets HF_DATASETS_OFFLINE=1). HF_HOME points at the staged hub cache (accelerator).
+        "HF_HOME": "/tmp/olmes_hf_home",
         "PYTHONUNBUFFERED": "1",
         "WANDB_INIT_TIMEOUT": "300",
         "MARIN_MIRROR_BUDGET_GB": "25",

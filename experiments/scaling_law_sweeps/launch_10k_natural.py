@@ -72,6 +72,9 @@ logger = logging.getLogger(__name__)
 METHOD_NAMES: tuple[str, ...] = (
     "dclm_10k",
     "nemotron_10k",
+    # CORE-v2-decontaminated variants (pin_region=us-east5 via curation_plan.METHODS).
+    "dclm_10k_decon",
+    "nemotron_10k_decon",
     "high_quality_10k",
     "fineweb_cc_10k",
     "fineweb_edu_10k",

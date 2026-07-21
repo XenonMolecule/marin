@@ -69,11 +69,22 @@ def _memory_gb_for_plan(hidden_dim: int, batch_size: int) -> int:
     base = _memory_gb_for_hidden(hidden_dim)
     if hidden_dim <= 256 and batch_size >= 128:
         return max(base, 64)
+    # 2026-07-15: high_quality_random_100 OOM'd (exit 137, SIGKILL during
+    # "commit to storage layer" = checkpoint serialization) at the 48 GB floor on
+    # FOUR B>=32 cells: d768/B32, d512/B64, d512/B32, d256/B64 — all outside the
+    # d<=256 & B>=128 corner above. dclm_random_100 SUCCEEDED at the identical
+    # d512/B32 cell, so this is corpus-driven, not architecture-driven: host RAM
+    # here is dominated by loader prefetch, and the hq cache is ~3x the dclm cache
+    # (203M vs 68M tokens). The plan is method-agnostic, so bump every B>=32 cell
+    # rather than special-case a method. v5p/v4 hosts have ample RAM (see floor
+    # comment), so the larger request does not hurt scheduling.
+    if batch_size >= 32:
+        return max(base, 128)
     return base
 
 
 # All WARC subsample sizes this sweep covers.
-WARC_COUNTS: tuple[int, ...] = (100, 500, 1000, 2000)
+WARC_COUNTS: tuple[int, ...] = (100, 300, 500, 1000, 2000)
 
 # Canonical anchor architecture present at every N for cross-N comparison.
 ANCHOR_HIDDEN_SIZE: int = 512  # 156.5M params under AdamH heuristic
@@ -105,6 +116,14 @@ WARC_METHOD_BASE_NAMES: tuple[str, ...] = (
     "med_low_quality",
     "med_quality",
     "high_quality",
+    # RANDOM 100-WARC sample of the 10k pool (seed 0) — the unbiased counterpart to
+    # the head-biased `dclm`/`nemotron_full`/`high_quality` at N=100, whose manifest
+    # is the first 100 lines of the date-SORTED 3k manifest (2 crawls, BOTH 2013).
+    # N=100 ONLY (the random draw is a 100-WARC manifest); built by
+    # subset_random100_10k.py. See .agents/projects/random100_10k_sample.md.
+    "dclm_random",
+    "nemotron_full_random",
+    "high_quality_random",
 )
 
 # Per-N model size lineup. Each entry is a list of hidden_sizes under the
@@ -126,13 +145,25 @@ _HIDDEN_SIZES_PER_N: dict[int, tuple[int, ...]] = {
     # 768 and 1536 added 2026-05-24 for the dense 100-WARC quality-tier grid
     # (low/med/high_quality). Existing N=100 methods unaffected unless launched
     # with the new hidden sizes via --only-hidden-sizes.
-    100: (256, 512, 768, 1536),
-    # N=500: mid 167M snaps to anchor; small 26M floors to h=256; large 500M -> h=1024.
-    500: (256, 512, 1024),
+    100: (256, 512, 768, 1536, 2432),
+    # N=300 + N=500: crossover-HUNT grid (Michael 2026-07-16). The methodology snap
+    # collapses N=300's mid+large targets (100M/300M) both into the h=512 anchor band
+    # -> (256,512), too thin to surface the HQ-vs-DCLM crossover (which at N=100 only
+    # appeared at d1536). So both N reuse N=100's extended sizes for a clean, controlled
+    # N=100->300->500 ladder over the NESTED seed-0 random samples (100 c 300 c 500):
+    # identical architectures isolate the pure effect of adding WARCs. N=500 was widened
+    # from its old methodology grid (256,512,1024); completed BIASED-500 runs are a subset
+    # and unaffected (only a re-launch would enumerate the new cells).
+    300: (256, 512, 768, 1536, 2432),
+    500: (256, 512, 768, 1536, 2432),
     # N=1000: scaled trio + anchor extra (none of the trio in the snap band).
-    1000: (256, 768, 1536, 512),
-    # N=2000: small 105M snaps to anchor; mid 666M -> h=1280; large 2B -> h=2048.
-    2000: (512, 1280, 2048),
+    1000: (256, 768, 1536, 512, 2432),
+    # N=2000: aligned to the ladder's (256,512,768,1536) (Michael 2026-07-18) so the
+    # random_2000 rung overlays the N=100->1000 crossover ladder over identical
+    # architectures. (Was the methodology snap (512,1280,2048); the already-trained
+    # BIASED-2000 runs used that grid and are untouched -- only a fresh enumeration,
+    # i.e. the random_2000 launch, picks up these sizes.)
+    2000: (256, 512, 768, 1536, 2432),
 }
 
 # Per-N compute (FLOPs) budget grid, log-spaced to bracket the cliff range
@@ -142,7 +173,11 @@ _HIDDEN_SIZES_PER_N: dict[int, tuple[int, ...]] = {
 _BUDGETS_PER_N: dict[int, tuple[float, ...]] = {
     # 1e19 and 1e20 added 2026-05-24 for the dense 100-WARC quality-tier grid.
     100: (3e15, 1e16, 3e16, 1e17, 3e17, 1e18, 3e18, 1e19, 1e20),
-    500: (1e16, 3e16, 1e17, 3e17, 1e18, 3e18, 1e19),
+    # N=300 + N=500 crossover-hunt budgets: N=100's quality range (top 1e20) so the
+    # x-axis is directly comparable across the N ladder; extend past 1e20 later only if
+    # nothing shows. N=500 widened from its old (…1e19) top for the same reason.
+    300: (1e16, 3e16, 1e17, 3e17, 1e18, 3e18, 1e19, 3e19, 1e20),
+    500: (1e16, 3e16, 1e17, 3e17, 1e18, 3e18, 1e19, 3e19, 1e20),
     1000: (3e16, 1e17, 3e17, 1e18, 3e18, 1e19, 3e19, 1e20),
     2000: (1e17, 3e17, 1e18, 3e18, 1e19, 3e19, 1e20, 3e20),
 }

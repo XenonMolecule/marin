@@ -437,6 +437,27 @@ def _prepare_offline_dataset_cache(gcs_cache: str, local_dir: str = "/tmp/dclm_c
     return n
 
 
+def _resilient_lev_config(checkpoint: str):
+    """LevConfig class for a checkpoint, resilient to from_hf's offline registry scan.
+
+    from_hf probes EVERY registered config's default HF reference; under HF_HUB_OFFLINE a
+    NON-matching config whose default repo isn't resolvable offline (gpt2/gemma/... in the
+    eval container) crashes the probe DETERMINISTICALLY (retries don't help). Fall back to
+    resolving the LevConfig directly from the checkpoint's own model_type via the registry.
+    """
+    try:
+        return HFCheckpointConverter.from_hf(checkpoint).LevConfigClass
+    except Exception:
+        import json
+
+        import fsspec
+        from levanter.models.lm_model import LmConfig
+
+        with fsspec.open(f"{checkpoint.rstrip('/')}/config.json", "r") as f:
+            model_type = json.load(f)["model_type"]
+        return LmConfig.get_known_choices()[model_type]
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument(
@@ -560,7 +581,7 @@ def main():
         logger.info("Staggering HF cold-start by %.1fs to avoid thundering-herd", stagger)
         time.sleep(stagger)
         model_config = _load_hf_with_retry(
-            "HFCheckpointConverter.from_hf", lambda: HFCheckpointConverter.from_hf(checkpoint_path).LevConfigClass()
+            "HFCheckpointConverter.from_hf", lambda: _resilient_lev_config(checkpoint_path)()
         )
 
         trainer_config.initialize()
@@ -711,4 +732,29 @@ def _json_default(value):
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception:
+        # finelog/`iris job logs` is unreliable during outages, so persist the traceback to GCS
+        # next to the summary path (<run>_error.txt) for offline diagnosis.
+        import sys as _sys
+        import traceback as _tb
+
+        _tbtext = _tb.format_exc()
+        try:
+            _av = _sys.argv
+            _sp = None
+            for _i, _a in enumerate(_av):
+                if _a == "--summary-json":
+                    _sp = _av[_i + 1]
+                elif _a == "--output-json" and _sp is None:
+                    _sp = _av[_i + 1]
+            if _sp:
+                _errp = _sp.replace("_summary.json", "_error.txt")
+                import fsspec as _fsspec
+
+                with _fsspec.open(_errp, "w") as _f:
+                    _f.write(_tbtext)
+        except Exception:
+            pass
+        raise
