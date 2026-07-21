@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 
 from experiments.fast_curation._launch_common import submit_workers
 
@@ -21,8 +22,8 @@ logger = logging.getLogger(__name__)
 
 # Phase C needs justext (extraction-bakeoff). No fasttext/tokenizer.
 CPU_C_EXTRAS = ["cpu", "extraction-bakeoff"]
-WANDB_API_KEY = "***REMOVED-WANDB-KEY***"
-HF_TOKEN = "***REMOVED-HF-TOKEN***"
+WANDB_API_KEY = os.environ["WANDB_API_KEY"]
+HF_TOKEN = os.environ["HF_TOKEN"]
 
 
 def build_command(args: argparse.Namespace, seed: int) -> list[str]:

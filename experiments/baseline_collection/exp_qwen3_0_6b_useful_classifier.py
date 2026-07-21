@@ -23,6 +23,7 @@ Data is in us-east5, in-region for the TPU; ``assert_data_in_region`` fails fast
 import argparse
 import dataclasses
 import logging
+import os
 from datetime import timedelta
 
 import jmp
@@ -200,8 +201,8 @@ def main():
         resources=ResourceConfig.with_tpu(args.tpu_type),
         output_path=output_path,
         env_vars={
-            "WANDB_API_KEY": "***REMOVED-WANDB-KEY***",
-            "HF_TOKEN": "***REMOVED-HF-TOKEN***",
+            "WANDB_API_KEY": os.environ["WANDB_API_KEY"],
+            "HF_TOKEN": os.environ["HF_TOKEN"],
         },
     )
     run_levanter_train_decoder_classifier(pod_config)

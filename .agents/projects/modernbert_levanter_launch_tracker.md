@@ -194,8 +194,8 @@ end-to-end on TPU. (Smoke used full_prep data — path test only, F1 not meaning
 uv run iris --cluster marin job run --region us-east5 \
   --cpu 4 --memory 8GB --disk 10GB --priority interactive --no-wait \
   --job-name mb-clf-smoke-coord \
-  -e WANDB_API_KEY ***REMOVED-WANDB-KEY*** \
-  -e HF_TOKEN ***REMOVED-HF-TOKEN*** \
+  -e WANDB_API_KEY "$WANDB_API_KEY" \
+  -e HF_TOKEN "$HF_TOKEN" \
   -- python -m experiments.baseline_collection.launch_modernbert_levanter \
        --run-id mb-clf-smoke-e5a --smoke --tpu-type v6e-4 --region us-east5
 ```

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import subprocess
 
 logger = logging.getLogger(__name__)
@@ -26,8 +27,8 @@ logger = logging.getLogger(__name__)
 # transformers -> core via marin-levanter[serve]; warcio/resiliparse/charset_normalizer -> core.
 CPU_EXTRAS = ["cpu", "dclm", "extraction-bakeoff"]
 
-WANDB_API_KEY = "***REMOVED-WANDB-KEY***"
-HF_TOKEN = "***REMOVED-HF-TOKEN***"
+WANDB_API_KEY = os.environ["WANDB_API_KEY"]
+HF_TOKEN = os.environ["HF_TOKEN"]
 
 
 def build_command(args: argparse.Namespace, seed: int) -> list[str]:

@@ -17,6 +17,7 @@ driver, and marin's own region check intentionally skips train/validation URLs, 
 
 import argparse
 import logging
+import os
 from datetime import timedelta
 
 import jmp
@@ -278,8 +279,8 @@ def main():
         resources=ResourceConfig.with_tpu(args.tpu_type, **tpu_kwargs),
         output_path=output_path,
         env_vars={
-            "WANDB_API_KEY": "***REMOVED-WANDB-KEY***",
-            "HF_TOKEN": "***REMOVED-HF-TOKEN***",
+            "WANDB_API_KEY": os.environ["WANDB_API_KEY"],
+            "HF_TOKEN": os.environ["HF_TOKEN"],
         },
     )
     run_levanter_train_classifier(pod_config)

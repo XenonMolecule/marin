@@ -124,8 +124,8 @@ HF artifacts: gs://marin-us-east5/checkpoints/qwen3-useful/<run>/hf (backbone + 
 ```
 uv run iris --cluster marin job run --region us-east5 --cpu 2 --memory 8GB --disk 10GB \
   --priority interactive --no-wait --extra cpu --enable-extra-resources \
-  -e WANDB_API_KEY ***REMOVED-WANDB-KEY*** \
-  -e HF_TOKEN ***REMOVED-HF-TOKEN*** \
+  -e WANDB_API_KEY "$WANDB_API_KEY" \
+  -e HF_TOKEN "$HF_TOKEN" \
   --job-name qwen3clf-<id> \
   -- python -m experiments.baseline_collection.exp_qwen3_0_6b_useful_classifier --run-id <id> [--smoke]
 ```
