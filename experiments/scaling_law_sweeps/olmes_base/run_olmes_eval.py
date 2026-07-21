@@ -73,7 +73,6 @@ def _install_resilient_from_hf() -> None:
             import json
 
             import fsspec
-
             from levanter.models.lm_model import LmConfig
 
             ckpt = str(model_name_or_path).rstrip("/")
@@ -98,7 +97,9 @@ def main():
     p.add_argument("--hf-checkpoint", required=True, help="HF checkpoint dir (gs://...); config.json + safetensors.")
     p.add_argument("--output-dir", required=True, help="GCS dir to write results.json into.")
     p.add_argument("--run-name", default=None, help="Run name for wandb / imputed model name.")
-    p.add_argument("--dataset-cache-gcs", required=True, help="GCS prefix of the OLMES HF-datasets cache in THIS region.")
+    p.add_argument(
+        "--dataset-cache-gcs", required=True, help="GCS prefix of the OLMES HF-datasets cache in THIS region."
+    )
     p.add_argument("--hub-cache-gcs", required=True, help="GCS prefix of the model-config hub cache in THIS region.")
     p.add_argument("--limit", type=int, default=None, help="Cap each task to N examples (smoke test). None = full.")
     args = p.parse_args()
@@ -125,8 +126,10 @@ def main():
     checkpoint = args.hf_checkpoint.rstrip("/")
     logger.info("OLMES eval: checkpoint=%s tasks=%d", checkpoint, len(OLMES_BASE_EASY_RUNNABLE))
 
-    hf_env = {k: os.environ.get(k) for k in
-              ("TRANSFORMERS_OFFLINE", "HF_HUB_OFFLINE", "HF_DATASETS_OFFLINE", "HF_DATASETS_CACHE", "HF_HOME")}
+    hf_env = {
+        k: os.environ.get(k)
+        for k in ("TRANSFORMERS_OFFLINE", "HF_HUB_OFFLINE", "HF_DATASETS_OFFLINE", "HF_DATASETS_CACHE", "HF_HOME")
+    }
     logger.info("HF offline env: %s", hf_env)
 
     _install_resilient_from_hf()  # evaluate() loads the model via from_hf's offline-fragile scan

@@ -94,7 +94,9 @@ def check(sonnet: str, raw_html: str, resiliparse: str | None, gemini: str | Non
                 if key and key not in son_norm:
                     gem_only.append(t)
         if len(gem_only) >= 3:
-            issues.append(f"GEMINI_DROPPED={len(gem_only)} substantive lines gemini kept but Sonnet omitted [REAL — review]")
+            issues.append(
+                f"GEMINI_DROPPED={len(gem_only)} substantive lines gemini kept but Sonnet omitted [REAL — review]"
+            )
 
     return {
         "chars": len(s),
@@ -133,7 +135,9 @@ def main() -> int:
         try:
             sonnet = open(f"{out_dir}/{hid}.txt").read()
         except FileNotFoundError:
-            rows.append({"url": d["url"], "register": d["register"], "verdict": "MISSING", "issues": ["no Sonnet output"]})
+            rows.append(
+                {"url": d["url"], "register": d["register"], "verdict": "MISSING", "issues": ["no Sonnet output"]}
+            )
             continue
         raw = open(d["html"]).read()
         try:
@@ -148,8 +152,10 @@ def main() -> int:
     print(f"{'verdict':<8}{'register':<14}{'chars':>8}{'inv':>5}{'resi':>6}{'gem':>6}  issues / url")
     for r in rows:
         rr, gg = r.get("resi_ratio"), r.get("gem_ratio")
-        print(f"{r['verdict']:<8}{r.get('register', ''):<14}{r.get('chars', 0):>8}{r.get('inversions', 0):>5}"
-              f"{(rr if rr is not None else 0):>6}{(gg if gg is not None else 0):>6}  {r['url'][:48]}")
+        print(
+            f"{r['verdict']:<8}{r.get('register', ''):<14}{r.get('chars', 0):>8}{r.get('inversions', 0):>5}"
+            f"{(rr if rr is not None else 0):>6}{(gg if gg is not None else 0):>6}  {r['url'][:48]}"
+        )
         for iss in r.get("issues", []):
             print(f"          - {iss}")
     print(f"\nPASS {npass}/{len(rows)}   FLAG {len(rows) - npass}")

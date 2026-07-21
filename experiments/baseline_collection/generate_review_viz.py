@@ -78,10 +78,16 @@ def _diff(a: str, b: str, context: int = 3) -> str:
             out += [cell("del", x) for x in la[i1:i2]]
             out += [cell("ins", x) for x in lb[j1:j2]]
 
-    verdict = "⚠ REAL content differs — review" if n_sub else "✓ differences are formatting/quotes only — nothing substantive dropped"
-    hdr = (f'<div class=diffhdr><b class=real>{n_sub}</b> substantive · '
-           f'<b class=fmt>{n_fmt}</b> formatting/quote lines &nbsp; <span class=vd>{verdict}</span>'
-           f'<button onclick="document.body.classList.toggle(\'subonly\')">substantive-only</button></div>')
+    verdict = (
+        "⚠ REAL content differs — review"
+        if n_sub
+        else "✓ differences are formatting/quotes only — nothing substantive dropped"
+    )
+    hdr = (
+        f"<div class=diffhdr><b class=real>{n_sub}</b> substantive · "
+        f"<b class=fmt>{n_fmt}</b> formatting/quote lines &nbsp; <span class=vd>{verdict}</span>"
+        f"<button onclick=\"document.body.classList.toggle('subonly')\">substantive-only</button></div>"
+    )
     return hdr + "".join(out)
 
 
@@ -98,19 +104,24 @@ def main() -> int:
         # prefer the merged-gold candidate as the comparison column; fall back to gemini
         merged = _read(f"{ROOT}/extract_out/{hid}_merged.txt")
         gemini = merged if merged else _read(f"{ROOT}/extract_out/gemini_{hid}.txt")
-        docs.append({
-            "url": d["url"],
-            "register": d["register"],
-            "hid": hid,
-            "sonnet": sonnet,
-            "gemini": gemini,
-            "compare_label": "MERGED GOLD" if merged else "gemini-2.5-flash",
-            "resi": resi.get(d["url"], ""),
-            "diff": _diff(sonnet, gemini) if gemini and not gemini.startswith("[") else "",
-            "verdict": c.get("verdict", "?"),
-            "issues": c.get("issues", []),
-            "stats": {k: c.get(k) for k in ("chars", "inversions", "matched_paras", "cleanliness", "resi_ratio", "gem_ratio")},
-        })
+        docs.append(
+            {
+                "url": d["url"],
+                "register": d["register"],
+                "hid": hid,
+                "sonnet": sonnet,
+                "gemini": gemini,
+                "compare_label": "MERGED GOLD" if merged else "gemini-2.5-flash",
+                "resi": resi.get(d["url"], ""),
+                "diff": _diff(sonnet, gemini) if gemini and not gemini.startswith("[") else "",
+                "verdict": c.get("verdict", "?"),
+                "issues": c.get("issues", []),
+                "stats": {
+                    k: c.get(k)
+                    for k in ("chars", "inversions", "matched_paras", "cleanliness", "resi_ratio", "gem_ratio")
+                },
+            }
+        )
 
     data = json.dumps(docs).replace("</", "<\\/")
     page = _TEMPLATE.replace("__DATA__", data)

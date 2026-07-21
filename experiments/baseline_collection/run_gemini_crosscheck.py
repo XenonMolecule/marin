@@ -33,7 +33,9 @@ def gemini_backoff(prompt: str, html: str, model: str, tries: int = 6) -> str:
     ctx = ssl.create_default_context(cafile=os.environ.get("SSL_CERT_FILE") or None)
     for attempt in range(tries):
         try:
-            req = urllib.request.Request(url, data=json.dumps(body).encode(), headers={"Content-Type": "application/json"})
+            req = urllib.request.Request(
+                url, data=json.dumps(body).encode(), headers={"Content-Type": "application/json"}
+            )
             with urllib.request.urlopen(req, timeout=300, context=ctx) as r:
                 d = json.loads(r.read())
             cands = d.get("candidates") or []

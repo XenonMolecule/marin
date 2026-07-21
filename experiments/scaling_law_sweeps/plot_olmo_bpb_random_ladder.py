@@ -93,7 +93,9 @@ def _load() -> list[dict]:
     for r in REGIONS:
         files += [
             ln
-            for ln in _sh(["gcloud", "storage", "ls", f"gs://marin-{r}/{SUB}/curation-*_random_*/results.json"]).splitlines()
+            for ln in _sh(
+                ["gcloud", "storage", "ls", f"gs://marin-{r}/{SUB}/curation-*_random_*/results.json"]
+            ).splitlines()
             if ln.strip().endswith("results.json")
         ]
     with ThreadPoolExecutor(max_workers=24) as ex:
@@ -107,14 +109,22 @@ def _load() -> list[dict]:
         if not mt:
             continue
         rows.append(
-            {"method": mt.group("method"), "n": int(mt.group("n")), "budget": float(mt.group("budget")), "dim": int(mt.group("dim")), **m}
+            {
+                "method": mt.group("method"),
+                "n": int(mt.group("n")),
+                "budget": float(mt.group("budget")),
+                "dim": int(mt.group("dim")),
+                **m,
+            }
         )
     logger.info("loaded %d HQ/DCLM olmo-bpb results", len(rows))
     return rows
 
 
 def _cells(rows: list[dict], method: str, n: int, dim: int, key: str) -> list[tuple[float, float]]:
-    return sorted((r["budget"], r[key]) for r in rows if r["method"] == method and r["n"] == n and r["dim"] == dim and key in r)
+    return sorted(
+        (r["budget"], r[key]) for r in rows if r["method"] == method and r["n"] == n and r["dim"] == dim and key in r
+    )
 
 
 def _grid(rows: list[dict], key: str, out: Path) -> None:

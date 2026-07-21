@@ -86,8 +86,15 @@ def main() -> int:
     p.add_argument("--glob", help="explicit shard glob (with --root)")
     p.add_argument("--format", choices=["jsonl", "parquet"], help="explicit format (with --root)")
     p.add_argument("--region", help="explicit worker region (with --root)")
-    p.add_argument("--match-field", required=True, help="dotted record field to match, e.g. url or metadata.nemotron_url")
-    p.add_argument("--contains", required=True, action="append", help="substring the match-field must contain (repeatable; any-match)")
+    p.add_argument(
+        "--match-field", required=True, help="dotted record field to match, e.g. url or metadata.nemotron_url"
+    )
+    p.add_argument(
+        "--contains",
+        required=True,
+        action="append",
+        help="substring the match-field must contain (repeatable; any-match)",
+    )
     p.add_argument("--label", required=True, help="output subdir label, e.g. nemo or genuine-high-actual")
     p.add_argument("--max-workers", type=int, default=200)
     args = p.parse_args()

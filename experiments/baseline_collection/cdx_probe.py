@@ -6,7 +6,6 @@ import time
 
 import duckdb
 import fsspec
-
 from marin.datakit.download.commoncrawl.cdx_query_columnar import _build_domain_filter, _get_parquet_urls
 
 OUT = "gs://marin-us-central2/scratch/provenance_10k_devset/cdx_probe.json"

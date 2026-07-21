@@ -53,9 +53,7 @@ def main() -> int:
 
     # 10 gold docs — longest html per url in case of dup snapshots
     placeholders = ", ".join(f"'{u}'" for u in GOLD_10)
-    rows = con.execute(
-        f"SELECT dev_url, html FROM read_parquet('{HTML}') WHERE dev_url IN ({placeholders})"
-    ).fetchall()
+    rows = con.execute(f"SELECT dev_url, html FROM read_parquet('{HTML}') WHERE dev_url IN ({placeholders})").fetchall()
     best: dict[str, str] = {}
     for url, html in rows:
         if html and len(html) > len(best.get(url, "")):

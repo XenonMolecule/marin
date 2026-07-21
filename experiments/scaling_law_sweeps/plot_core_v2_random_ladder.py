@@ -66,7 +66,12 @@ def _collect(method: str) -> dict[tuple[float, int], float]:
         files += [
             ln
             for ln in _sh(
-                ["gcloud", "storage", "ls", f"gs://marin-{r}/{CORE_SUB}/curation-{method}-expWARC_natural-*_summary.json"]
+                [
+                    "gcloud",
+                    "storage",
+                    "ls",
+                    f"gs://marin-{r}/{CORE_SUB}/curation-{method}-expWARC_natural-*_summary.json",
+                ]
             ).splitlines()
             if ln.strip()
         ]
@@ -116,7 +121,9 @@ def _gap_figure(data: dict[int, dict], out: Path) -> None:
             hq, dc = data[n]["hq"], data[n]["dclm"]
             pts = sorted((b, hq[(b, dim)] - dc[(b, dim)]) for (b, d) in set(hq) & set(dc) if d == dim)
             if pts:
-                ax.plot([b for b, _ in pts], [g for _, g in pts], marker="o", ms=6, lw=2, color=N_COLOR[n], label=f"N={n}")
+                ax.plot(
+                    [b for b, _ in pts], [g for _, g in pts], marker="o", ms=6, lw=2, color=N_COLOR[n], label=f"N={n}"
+                )
         ax.axhline(0, color="#d62728", lw=1.2, ls="--", alpha=0.7)
         ax.set_xscale("log")
         ax.set_title(f"d{dim} ({PARAMS.get(dim, '?')})", fontsize=11)
@@ -130,7 +137,11 @@ def _gap_figure(data: dict[int, dict], out: Path) -> None:
     handles = [Line2D([0], [0], color=N_COLOR[n], lw=2.5, marker="o", label=f"N={n} WARCs") for n in NS]
     handles.append(Line2D([0], [0], color="#d62728", lw=1.2, ls="--", label="crossover (HQ=DCLM)"))
     fig.legend(handles=handles, loc="lower center", ncol=4, frameon=False, bbox_to_anchor=(0.5, -0.02))
-    fig.suptitle("HQ − DCLM Core v2 gap across the N=100→300→500 random ladder\n(does HQ's edge shrink/flip as WARCs grow?)", fontsize=13, y=1.0)
+    fig.suptitle(
+        "HQ − DCLM Core v2 gap across the N=100→300→500 random ladder\n(does HQ's edge shrink/flip as WARCs grow?)",
+        fontsize=13,
+        y=1.0,
+    )
     fig.tight_layout(rect=(0, 0.05, 1, 0.97))
     out.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out, dpi=140, bbox_inches="tight")
@@ -147,7 +158,16 @@ def _absolute_figure(data: dict[int, dict], out: Path) -> None:
             for src, ls, mk in (("hq", "solid", "o"), ("dclm", (0, (4, 3)), "s")):
                 pts = sorted((b, v) for (b, d), v in data[n][src].items() if d == dim)
                 if pts:
-                    ax.plot([b for b, _ in pts], [v for _, v in pts], marker=mk, ms=4, lw=1.8, color=N_COLOR[n], linestyle=ls, alpha=0.9)
+                    ax.plot(
+                        [b for b, _ in pts],
+                        [v for _, v in pts],
+                        marker=mk,
+                        ms=4,
+                        lw=1.8,
+                        color=N_COLOR[n],
+                        linestyle=ls,
+                        alpha=0.9,
+                    )
         ax.axhline(0, color="#bbb", lw=0.8, ls=":")
         ax.set_xscale("log")
         ax.set_title(f"d{dim} ({PARAMS.get(dim, '?')})", fontsize=11)
@@ -159,7 +179,10 @@ def _absolute_figure(data: dict[int, dict], out: Path) -> None:
     for j in range(len(dims), nrow * ncol):
         axes[j // ncol][j % ncol].axis("off")
     handles = [Line2D([0], [0], color=N_COLOR[n], lw=2.5, label=f"N={n}") for n in NS]
-    handles += [Line2D([0], [0], color="#444", lw=1.8, marker="o", label="HQ"), Line2D([0], [0], color="#444", lw=1.8, ls=(0, (4, 3)), marker="s", label="DCLM")]
+    handles += [
+        Line2D([0], [0], color="#444", lw=1.8, marker="o", label="HQ"),
+        Line2D([0], [0], color="#444", lw=1.8, ls=(0, (4, 3)), marker="s", label="DCLM"),
+    ]
     fig.legend(handles=handles, loc="lower center", ncol=5, frameon=False, bbox_to_anchor=(0.5, -0.02))
     fig.suptitle("Core v2 vs FLOPs — HQ (solid) vs DCLM (dashed) across N=100/300/500", fontsize=13, y=1.0)
     fig.tight_layout(rect=(0, 0.05, 1, 0.97))
@@ -202,7 +225,9 @@ def _grid_figure(data: dict[int, dict], out: Path) -> None:
         Line2D([0], [0], color=DCLM_COLOR, lw=2.5, marker="s", label="DCLM"),
     ]
     fig.legend(handles=handles, loc="lower center", ncol=2, frameon=False, bbox_to_anchor=(0.5, -0.01))
-    fig.suptitle("DCLM vs HQ Core v2 — grid of model scale × WARC count (N=100/300/500/1000/2000 random)", fontsize=14, y=1.0)
+    fig.suptitle(
+        "DCLM vs HQ Core v2 — grid of model scale × WARC count (N=100/300/500/1000/2000 random)", fontsize=14, y=1.0
+    )
     fig.tight_layout(rect=(0, 0.03, 1, 0.98))
     out.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out, dpi=140, bbox_inches="tight")

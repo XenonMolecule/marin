@@ -96,15 +96,32 @@ def rows_from_manifest(manifest_path: str) -> list[CheckpointRow]:
     return rows
 
 
-def submit_one(client, row: CheckpointRow, hf_step_dir: str, *, priority_band: int, wandb_api_key: str,
-               hf_token: str, limit: int | None, name_suffix: str, memory_gb: int) -> str:
+def submit_one(
+    client,
+    row: CheckpointRow,
+    hf_step_dir: str,
+    *,
+    priority_band: int,
+    wandb_api_key: str,
+    hf_token: str,
+    limit: int | None,
+    name_suffix: str,
+    memory_gb: int,
+) -> str:
     cmd_args = [
-        "python", "-m", "experiments.scaling_law_sweeps.olmes_base.run_olmes_eval",
-        "--hf-checkpoint", hf_step_dir,
-        "--output-dir", row.output_dir(),
-        "--run-name", row.run_name,
-        "--dataset-cache-gcs", row.cache_gcs(),
-        "--hub-cache-gcs", row.hub_cache_gcs(),
+        "python",
+        "-m",
+        "experiments.scaling_law_sweeps.olmes_base.run_olmes_eval",
+        "--hf-checkpoint",
+        hf_step_dir,
+        "--output-dir",
+        row.output_dir(),
+        "--run-name",
+        row.run_name,
+        "--dataset-cache-gcs",
+        row.cache_gcs(),
+        "--hub-cache-gcs",
+        row.hub_cache_gcs(),
     ]
     if limit is not None:
         cmd_args += ["--limit", str(limit)]
@@ -201,10 +218,15 @@ def main():
 
         try:
             job_id = submit_one(
-                client, row, hf_step_dir,
+                client,
+                row,
+                hf_step_dir,
                 priority_band=PRIORITY_BAND_MAP[args.child_priority],
-                wandb_api_key=wandb_api_key, hf_token=hf_token,
-                limit=args.limit, name_suffix=args.name_suffix, memory_gb=args.memory_gb,
+                wandb_api_key=wandb_api_key,
+                hf_token=hf_token,
+                limit=args.limit,
+                name_suffix=args.name_suffix,
+                memory_gb=args.memory_gb,
             )
         except Exception as e:
             logger.error("[%3d] SUBMIT FAILED for %s: %s", i, row.run_name, e)
@@ -223,13 +245,20 @@ def main():
     if args.launch and submitted_results:
         start = time.time()
         pending = set(submitted_results)
-        logger.info("Keep-alive: holding parent open for %d children (timeout %.1fh)...",
-                    len(pending), args.keepalive_timeout / 3600.0)
+        logger.info(
+            "Keep-alive: holding parent open for %d children (timeout %.1fh)...",
+            len(pending),
+            args.keepalive_timeout / 3600.0,
+        )
         while pending and (time.time() - start) < args.keepalive_timeout:
             time.sleep(args.keepalive_poll)
             pending = {r for r in pending if not _gcs_exists(r)}
-            logger.info("Keep-alive: %d/%d results present (%.0f min)",
-                        len(submitted_results) - len(pending), len(submitted_results), (time.time() - start) / 60.0)
+            logger.info(
+                "Keep-alive: %d/%d results present (%.0f min)",
+                len(submitted_results) - len(pending),
+                len(submitted_results),
+                (time.time() - start) / 60.0,
+            )
         if pending:
             logger.warning("Keep-alive timed out; %d children missing results.", len(pending))
         else:

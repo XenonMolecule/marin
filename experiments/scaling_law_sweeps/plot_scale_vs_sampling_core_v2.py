@@ -141,9 +141,7 @@ def _load_points(cache_3k: Path, cache_10k: Path) -> list[Point]:
         method = _canon(raw)
         if method is None:
             continue
-        points.append(
-            Point(method, int(r["width"]), float(r["budget"]), float(r["core_v2"]) / 100.0, "10k")
-        )
+        points.append(Point(method, int(r["width"]), float(r["budget"]), float(r["core_v2"]) / 100.0, "10k"))
 
     rows_3k = json.loads(cache_3k.read_text())
     for r in rows_3k:
@@ -152,9 +150,7 @@ def _load_points(cache_3k: Path, cache_10k: Path) -> list[Point]:
         if method is None:
             continue
         regime = "random-3k" if "_random_" in raw else "biased-3k"
-        points.append(
-            Point(method, int(r["width"]), float(r["budget"]), float(r["core_v2"]) / 100.0, regime)
-        )
+        points.append(Point(method, int(r["width"]), float(r["budget"]), float(r["core_v2"]) / 100.0, regime))
 
     logger.info(
         "Loaded %d points (%s)",
@@ -227,17 +223,16 @@ def _build_grid(points: list[Point], output_dir: Path) -> None:
                         marker=dict(size=6, color=color),
                         line=dict(color=color, width=2, dash=dash),
                         hovertemplate=(
-                            f"{label} | {method} d{width}"
-                            "<br>flops=%{x:.2e}<br>Core_v2=%{y:.4f}<extra></extra>"
+                            f"{label} | {method} d{width}" "<br>flops=%{x:.2e}<br>Core_v2=%{y:.4f}<extra></extra>"
                         ),
                     ),
                     row=ri + 1,
                     col=ci + 1,
                 )
-            fig.update_xaxes(type="log", title_text="compute (FLOPs)" if ri == len(methods) - 1 else None,
-                             row=ri + 1, col=ci + 1)
-            fig.update_yaxes(range=y_range, title_text="DCLM Core_v2" if ci == 0 else None,
-                             row=ri + 1, col=ci + 1)
+            fig.update_xaxes(
+                type="log", title_text="compute (FLOPs)" if ri == len(methods) - 1 else None, row=ri + 1, col=ci + 1
+            )
+            fig.update_yaxes(range=y_range, title_text="DCLM Core_v2" if ci == 0 else None, row=ri + 1, col=ci + 1)
 
     fig.update_layout(
         template="plotly_white",
@@ -285,8 +280,7 @@ def _build_overlay(points: list[Point], output_dir: Path) -> None:
         v.sort()
 
     titles = [_panel_label(w) for w in widths] + [""] * (n_rows * n_cols - len(widths))
-    fig = make_subplots(rows=n_rows, cols=n_cols, subplot_titles=titles,
-                        horizontal_spacing=0.06, vertical_spacing=0.12)
+    fig = make_subplots(rows=n_rows, cols=n_cols, subplot_titles=titles, horizontal_spacing=0.06, vertical_spacing=0.12)
 
     method_seen: set[str] = set()
     regime_seen: set[str] = set()
@@ -313,11 +307,11 @@ def _build_overlay(points: list[Point], output_dir: Path) -> None:
                         marker=dict(size=5, color=color),
                         line=dict(color=color, width=2, dash=dash),
                         hovertemplate=(
-                            f"{method} | {regime} | d{width}"
-                            "<br>flops=%{x:.2e}<br>Core_v2=%{y:.4f}<extra></extra>"
+                            f"{method} | {regime} | d{width}" "<br>flops=%{x:.2e}<br>Core_v2=%{y:.4f}<extra></extra>"
                         ),
                     ),
-                    row=row, col=col,
+                    row=row,
+                    col=col,
                 )
         fig.update_xaxes(type="log", title_text="compute (FLOPs)", row=row, col=col)
         fig.update_yaxes(range=y_range, title_text="DCLM Core_v2" if col == 1 else None, row=row, col=col)
@@ -328,10 +322,18 @@ def _build_overlay(points: list[Point], output_dir: Path) -> None:
             continue
         regime_seen.add(regime)
         fig.add_trace(
-            go.Scatter(x=[None], y=[None], mode="lines", name=REGIME_STYLE[regime][0],
-                       legendgroup="regime", legendgrouptitle=dict(text="line style = regime"),
-                       line=dict(color="#666666", width=2, dash=dash), showlegend=True),
-            row=1, col=1,
+            go.Scatter(
+                x=[None],
+                y=[None],
+                mode="lines",
+                name=REGIME_STYLE[regime][0],
+                legendgroup="regime",
+                legendgrouptitle=dict(text="line style = regime"),
+                line=dict(color="#666666", width=2, dash=dash),
+                showlegend=True,
+            ),
+            row=1,
+            col=1,
         )
 
     fig.update_layout(
@@ -394,8 +396,7 @@ def _build_delta(points: list[Point], output_dir: Path) -> None:
     bound = max(0.02, 1.15 * max(abs(min(all_deltas)), abs(max(all_deltas))))
 
     titles = [_panel_label(w) for w in widths] + [""] * (n_rows * n_cols - len(widths))
-    fig = make_subplots(rows=n_rows, cols=n_cols, subplot_titles=titles,
-                        horizontal_spacing=0.06, vertical_spacing=0.14)
+    fig = make_subplots(rows=n_rows, cols=n_cols, subplot_titles=titles, horizontal_spacing=0.06, vertical_spacing=0.14)
 
     seen: set[str] = set()
     for idx, width in enumerate(widths):
@@ -418,16 +419,21 @@ def _build_delta(points: list[Point], output_dir: Path) -> None:
                     marker=dict(size=6, color=METHOD_COLORS.get(method, "#333333")),
                     line=dict(color=METHOD_COLORS.get(method, "#333333"), width=2),
                     hovertemplate=(
-                        f"{method} | d{width}"
-                        "<br>flops=%{x:.2e}<br>biased−random=%{y:+.4f}<extra></extra>"
+                        f"{method} | d{width}" "<br>flops=%{x:.2e}<br>biased−random=%{y:+.4f}<extra></extra>"
                     ),
                 ),
-                row=row, col=col,
+                row=row,
+                col=col,
             )
         fig.update_xaxes(type="log", title_text="compute (FLOPs)", row=row, col=col)
-        fig.update_yaxes(range=[-bound, bound], tickformat="+.3f", zeroline=False,
-                         title_text="Δ Core_v2 (biased − random)" if col == 1 else None,
-                         row=row, col=col)
+        fig.update_yaxes(
+            range=[-bound, bound],
+            tickformat="+.3f",
+            zeroline=False,
+            title_text="Δ Core_v2 (biased − random)" if col == 1 else None,
+            row=row,
+            col=col,
+        )
 
     fig.update_layout(
         template="plotly_white",
@@ -468,7 +474,13 @@ def _print_effect_table(points: list[Point]) -> None:
             r, b, t = regimes["random-3k"][f], regimes["biased-3k"][f], regimes["10k"][f]
             logger.info(
                 "%-12s %-6d %8.2f %8.2f %8.2f | %8.2f %8.2f",
-                method, width, r * 100, b * 100, t * 100, (b - r) * 100, (t - b) * 100,
+                method,
+                width,
+                r * 100,
+                b * 100,
+                t * 100,
+                (b - r) * 100,
+                (t - b) * 100,
             )
 
 

@@ -147,7 +147,9 @@ def _plabel(params: int) -> str:
     return f"{params / 1e9:.2f}B" if params >= 1e9 else f"{params / 1e6:.0f}M"
 
 
-def _figure(recs: list[dict], xkey: str, xlabel: str, out: Path, regimes: tuple[str, ...] = ("biased", "random")) -> None:
+def _figure(
+    recs: list[dict], xkey: str, xlabel: str, out: Path, regimes: tuple[str, ...] = ("biased", "random")
+) -> None:
     recs = [r for r in recs if r["regime"] in regimes]
     dims = sorted({r["hidden"] for r in recs})
     params_for = {dim: max(r["params"] for r in recs if r["hidden"] == dim) for dim in dims}
@@ -193,13 +195,19 @@ def _figure(recs: list[dict], xkey: str, xlabel: str, out: Path, regimes: tuple[
     _regime_label = {"random": "random (10k pool)", "biased": "biased (2013 head)"}
     _regime_marker = {"random": "o", "biased": "s"}
     regime_handles = [
-        Line2D([0], [0], color="#444", lw=2, linestyle=_REGIME_STYLE[rg], marker=_regime_marker[rg], label=_regime_label[rg])
+        Line2D(
+            [0], [0], color="#444", lw=2, linestyle=_REGIME_STYLE[rg], marker=_regime_marker[rg], label=_regime_label[rg]
+        )
         for rg in regimes
     ]
     fig.legend(
         handles=method_handles + regime_handles, loc="lower center", ncol=6, frameon=False, bbox_to_anchor=(0.5, -0.03)
     )
-    _suffix = {("biased", "random"): "biased vs random", ("biased",): "biased (2013 head) only", ("random",): "random (10k pool) only"}
+    _suffix = {
+        ("biased", "random"): "biased vs random",
+        ("biased",): "biased (2013 head) only",
+        ("random",): "random (10k pool) only",
+    }
     fig.suptitle(
         f"DCLM Core v2 vs {xlabel} by model scale — N=100 WARC sweep ({_suffix.get(regimes, '/'.join(regimes))})",
         fontsize=13,

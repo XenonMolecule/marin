@@ -31,9 +31,7 @@ def main() -> int:
     with fsspec.open(args.urls, "r") as f:
         urls = json.load(f)
     placeholders = ", ".join("'" + u.replace("'", "''") + "'" for u in urls)
-    rows = con.execute(
-        f"SELECT dev_url, html FROM read_parquet('{HTML}') WHERE dev_url IN ({placeholders})"
-    ).fetchall()
+    rows = con.execute(f"SELECT dev_url, html FROM read_parquet('{HTML}') WHERE dev_url IN ({placeholders})").fetchall()
     best: dict[str, str] = {}
     for u, html in rows:
         if html and len(html) > len(best.get(u, "")):

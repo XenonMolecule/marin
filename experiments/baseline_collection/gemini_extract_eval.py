@@ -33,7 +33,9 @@ def gemini(prompt: str, html: str, model: str, retries: int = 2) -> str:
     d = None
     for attempt in range(retries + 1):
         try:
-            req = urllib.request.Request(url, data=json.dumps(body).encode(), headers={"Content-Type": "application/json"})
+            req = urllib.request.Request(
+                url, data=json.dumps(body).encode(), headers={"Content-Type": "application/json"}
+            )
             with urllib.request.urlopen(req, timeout=300) as r:
                 d = json.loads(r.read())
             break
@@ -80,14 +82,19 @@ def main() -> int:
         html = open(f"{ROOT}/html_noted/doc_{i}.html").read()
         out = gemini(prompt, html, args.model)
         sim = similarity(out, gold)
-        rows.append({"i": i, "register": r["register"], "sim": round(sim, 3), "gem_len": len(out), "gold_len": len(gold)})
+        rows.append(
+            {"i": i, "register": r["register"], "sim": round(sim, 3), "gem_len": len(out), "gold_len": len(gold)}
+        )
         json.dump({"text": out}, open(f"{ROOT}/gemini_out/{args.out_tag}_doc_{i}.json", "w"))
         print(f"  doc_{i:<2} [{r['register']:<14}] sim={sim:.3f}  gemini={len(out):>6}c  gold={len(gold):>6}c")
 
     avg = sum(x["sim"] for x in rows) / len(rows) if rows else 0.0
     print(f"\n[{args.model}] AVG token-similarity to agent gold: {avg:.3f} over {len(rows)} docs")
-    json.dump({"model": args.model, "prompt": args.prompt, "avg": avg, "rows": rows},
-              open(f"{ROOT}/gemini_eval_{args.out_tag}.json", "w"), indent=1)
+    json.dump(
+        {"model": args.model, "prompt": args.prompt, "avg": avg, "rows": rows},
+        open(f"{ROOT}/gemini_eval_{args.out_tag}.json", "w"),
+        indent=1,
+    )
     return 0
 
 

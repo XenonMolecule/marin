@@ -91,18 +91,30 @@ def main() -> int:
         out = chat(args.base_url, args.model, key, prompt, d["html"], args.max_tokens)
         json.dump({"text": out}, open(f"{ROOT}/gemini_out/{args.out_tag}_{label}_doc_{d['i']}.json", "w"))
         sim = similarity(out, d["gold"])
-        return {"i": d["i"], "register": d["register"], "sim": round(sim, 3),
-                "out_len": len(out), "gold_len": len(d["gold"])}
+        return {
+            "i": d["i"],
+            "register": d["register"],
+            "sim": round(sim, 3),
+            "out_len": len(out),
+            "gold_len": len(d["gold"]),
+        }
 
     with ThreadPoolExecutor(max_workers=args.concurrency) as ex:
         rows = sorted(ex.map(run, docs), key=lambda r: r["i"])
 
     for r in rows:
-        print(f"  doc_{r['i']:<2} [{r['register']:<14}] sim={r['sim']:.3f}  out={r['out_len']:>6}c  gold={r['gold_len']:>6}c")
+        print(
+            f"  doc_{r['i']:<2} [{r['register']:<14}] sim={r['sim']:.3f}  out={r['out_len']:>6}c  gold={r['gold_len']:>6}c"
+        )
     avg = sum(r["sim"] for r in rows) / len(rows) if rows else 0.0
-    print(f"\n[{args.model}] AVG token-similarity to agent gold: {avg:.3f} over {len(rows)} docs (concurrency={args.concurrency})")
-    json.dump({"model": args.model, "base_url": args.base_url, "avg": avg, "rows": rows},
-              open(f"{ROOT}/oai_eval_{args.out_tag}.json", "w"), indent=1)
+    print(
+        f"\n[{args.model}] AVG token-similarity to agent gold: {avg:.3f} over {len(rows)} docs (concurrency={args.concurrency})"
+    )
+    json.dump(
+        {"model": args.model, "base_url": args.base_url, "avg": avg, "rows": rows},
+        open(f"{ROOT}/oai_eval_{args.out_tag}.json", "w"),
+        indent=1,
+    )
     return 0
 
 

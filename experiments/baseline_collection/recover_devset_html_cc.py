@@ -33,20 +33,18 @@ import time
 from collections import defaultdict
 
 import fsspec
-import pyarrow as pa
 import pyarrow.parquet as pq
 import requests
 import warcio
 from fray import ResourceConfig
-from zephyr import Dataset, ZephyrContext
-
-from experiments.baseline_collection.decode_warcs_clean import decode_payload
-from marin.datakit.download.commoncrawl.cdx_query import query_single_index
 from marin.datakit.download.commoncrawl.cdx_query_columnar import (
     _build_domain_filter,
     _get_parquet_urls,
     _query_single_crawl,
 )
+from zephyr import Dataset, ZephyrContext
+
+from experiments.baseline_collection.decode_warcs_clean import decode_payload
 
 logger = logging.getLogger(__name__)
 
@@ -289,8 +287,13 @@ def _run_cdx_diag() -> None:
     snap = min(groups, key=lambda s: len(groups[s]["hosts"]))  # fewest hosts = fastest query
     urls = groups[snap]["urls"]
     hosts = sorted(groups[snap]["hosts"])
-    diag: dict = {"snapshot": snap, "n_dev_urls": len(urls), "n_hosts": len(hosts),
-                  "sample_dev_urls": urls[:6], "sample_hosts": hosts[:10]}
+    diag: dict = {
+        "snapshot": snap,
+        "n_dev_urls": len(urls),
+        "n_hosts": len(hosts),
+        "sample_dev_urls": urls[:6],
+        "sample_hosts": hosts[:10],
+    }
     try:
         purls = _get_parquet_urls(snap)
         diag["n_parquet"] = len(purls) if purls else 0
@@ -333,7 +336,9 @@ def _run_cdx(max_workers: int, region: str, shard_idx: int, num_shards: int, tag
     ]
     if num_shards > 1:
         items = [it for i, it in enumerate(items) if i % num_shards == shard_idx]
-    logger.info(f"cdx[{tag} {shard_idx}/{num_shards} @ {region}]: {sum(len(it['urls']) for it in items)} urls across {len(items)} crawls")
+    logger.info(
+        f"cdx[{tag} {shard_idx}/{num_shards} @ {region}]: {sum(len(it['urls']) for it in items)} urls across {len(items)} crawls"
+    )
     # NO reshard barrier: write each crawl's output as it finishes -> CDX_DIR growth is a live signal.
     # Region-tagged filenames so concurrent region jobs never collide on the shared CDX_DIR.
     pipeline = (
@@ -541,12 +546,14 @@ def _build_warc_ptr(max_workers: int) -> None:
         Dataset.from_files(METADATA_GLOB)
         .load_jsonl()
         .filter(lambda r: r.get("url") in variant_to_dev and r.get("warc_file") and r.get("warc_record_id"))
-        .map(lambda r: {
-            "dev_url": variant_to_dev[r["url"]],
-            "warc_file": r["warc_file"],
-            "warc_record_id": r["warc_record_id"],
-            "snapshot": r.get("snapshot", ""),
-        })
+        .map(
+            lambda r: {
+                "dev_url": variant_to_dev[r["url"]],
+                "warc_file": r["warc_file"],
+                "warc_record_id": r["warc_record_id"],
+                "snapshot": r.get("snapshot", ""),
+            }
+        )
         .reshard(16)
         .write_parquet(f"{WARC_PTR}/p-{{shard:05d}}-of-{{total:05d}}.parquet", skip_existing=True)
     )
@@ -578,8 +585,10 @@ def _run_full_warc(max_workers: int, limit_warcs: int = 0, warc_offset: int = 0,
     warcs = all_warcs[warc_offset:end]
     if limit_warcs or warc_offset:
         logger.info(f"full_warc: SMOKE/slice — warcs[{warc_offset}:{end}] = {len(warcs)} warcs")
-    logger.info(f"full_warc: {len(seen)} urls across {len(all_warcs)} distinct warcs "
-                f"(fetching {len(warcs)}, excluded {len(exclude)})")
+    logger.info(
+        f"full_warc: {len(seen)} urls across {len(all_warcs)} distinct warcs "
+        f"(fetching {len(warcs)}, excluded {len(exclude)})"
+    )
 
     def fetch_warc(wf: str) -> list[dict]:
         wanted = {rid: (du, snap) for rid, du, snap in by_warc[wf]}
@@ -598,14 +607,16 @@ def _run_full_warc(max_workers: int, limit_warcs: int = 0, warc_offset: int = 0,
                         continue
                     du, snap = wanted[rid]
                     ct = rec.http_headers.get_header("Content-Type") if rec.http_headers else None
-                    out.append({
-                        "dev_url": du,
-                        "src_url": rec.rec_headers.get_header("WARC-Target-URI") or du,
-                        "snapshot": snap,
-                        "source": "full_warc",
-                        "html": decode_payload(rec.content_stream().read(), ct),
-                        "status": "ok",
-                    })
+                    out.append(
+                        {
+                            "dev_url": du,
+                            "src_url": rec.rec_headers.get_header("WARC-Target-URI") or du,
+                            "snapshot": snap,
+                            "source": "full_warc",
+                            "html": decode_payload(rec.content_stream().read(), ct),
+                            "status": "ok",
+                        }
+                    )
                     if len(out) == len(wanted):
                         break
                 return out
@@ -614,8 +625,14 @@ def _run_full_warc(max_workers: int, limit_warcs: int = 0, warc_offset: int = 0,
                     time.sleep(RETRY_BASE_DELAY * (attempt + 1))
                     continue
                 return [
-                    {"dev_url": du, "src_url": du, "snapshot": snap, "source": "full_warc",
-                     "html": "", "status": f"fetch_fail:{type(e).__name__}"}
+                    {
+                        "dev_url": du,
+                        "src_url": du,
+                        "snapshot": snap,
+                        "source": "full_warc",
+                        "html": "",
+                        "status": f"fetch_fail:{type(e).__name__}",
+                    }
                     for _, du, snap in by_warc[wf]
                 ]
         return []
@@ -667,8 +684,12 @@ def _run_stage_extract(max_workers: int) -> None:
         todo = set(json.load(f))
 
     def keep(r: dict) -> dict | None:
-        if (r.get("dev_url") in todo and r.get("source") in ("full_warc", "fallback")
-                and r.get("status") == "ok" and r.get("html")):
+        if (
+            r.get("dev_url") in todo
+            and r.get("source") in ("full_warc", "fallback")
+            and r.get("status") == "ok"
+            and r.get("html")
+        ):
             return {"dev_url": r["dev_url"], "html": r["html"], "source": r["source"]}
         return None
 
@@ -708,8 +729,14 @@ def _run_fallback(max_workers: int) -> None:
         html = r.get("html")
         if not dev or not html:
             return None
-        return {"dev_url": dev, "src_url": r.get("url"), "snapshot": r.get("snapshot", "") or "",
-                "source": "fallback", "html": html, "status": "ok"}
+        return {
+            "dev_url": dev,
+            "src_url": r.get("url"),
+            "snapshot": r.get("snapshot", "") or "",
+            "source": "fallback",
+            "html": html,
+            "status": "ok",
+        }
 
     for tag, src in FALLBACK_SOURCES:
         pipeline = (
@@ -731,7 +758,24 @@ def _run_fallback(max_workers: int) -> None:
 def main() -> int:
     logging.basicConfig(level=logging.INFO)
     ap = argparse.ArgumentParser()
-    ap.add_argument("--mode", choices=["manifest", "local_pools", "local_targeted", "cdx", "cdx_diag", "fetch", "reconcile", "gate", "warc_ptr", "full_warc", "fallback", "stage_extract"], default="cdx")
+    ap.add_argument(
+        "--mode",
+        choices=[
+            "manifest",
+            "local_pools",
+            "local_targeted",
+            "cdx",
+            "cdx_diag",
+            "fetch",
+            "reconcile",
+            "gate",
+            "warc_ptr",
+            "full_warc",
+            "fallback",
+            "stage_extract",
+        ],
+        default="cdx",
+    )
     ap.add_argument("--tag", default="r0")
     ap.add_argument("--max-workers", type=int, default=16)
     ap.add_argument("--shards", type=int, default=64)

@@ -31,8 +31,7 @@ def _word_diff(a: str, b: str) -> str:
     a, b = a or "", b or ""
     if len(a) + len(b) > DIFF_CAP:
         return (
-            f'<i>[inline diff skipped — texts too large ({len(a)}+{len(b)} chars); '
-            f"use the side-by-side panels]</i>"
+            f"<i>[inline diff skipped — texts too large ({len(a)}+{len(b)} chars); " f"use the side-by-side panels]</i>"
         )
     ta, tb = _TOK.findall(a), _TOK.findall(b)
     sm = difflib.SequenceMatcher(a=ta, b=tb, autojunk=False)
@@ -117,7 +116,8 @@ def _write(results: list[dict], out: str, diff_cache: dict | None = None) -> Non
             f"</section>"
         )
     ptoggle = "".join(
-        f'<label><input type="checkbox" data-mod="{mod}" checked> {html.escape(lab)}</label>' for mod, lab in present_mods
+        f'<label><input type="checkbox" data-mod="{mod}" checked> {html.escape(lab)}</label>'
+        for mod, lab in present_mods
     )
     has_resi = any(r.get("resiliparse_text") for r in results)
     resibtn = '<button id="tresi">resiliparse→gold</button>' if has_resi else ""

@@ -176,7 +176,7 @@ class CoreRecord:
     macro_loss: float | None  # uncheatable-eval macro loss; None if absent
 
 
-def _loss_min_tokens(records: list["CoreRecord"]) -> dict[int, dict[str, float]]:
+def _loss_min_tokens(records: list[CoreRecord]) -> dict[int, dict[str, float]]:
     """For each (hidden_dim, method), the tokens of its lowest-loss run.
 
     Drives the loss-optimal vline. Fastpipe series and runs missing a loss are
@@ -550,7 +550,9 @@ def main(argv: list[str] | None = None) -> None:
         raise SystemExit("No records loaded; nothing to plot.")
 
     output.parent.mkdir(parents=True, exist_ok=True)
-    subtitle = None if args.regime == "10k" else f"{len(records)} runs; x=tokens_trained (log), one line per curation method"
+    subtitle = (
+        None if args.regime == "10k" else f"{len(records)} runs; x=tokens_trained (log), one line per curation method"
+    )
     fig = _build_figure(records, draw_loss_vlines=preset["vlines"], title_main=preset["title"], subtitle=subtitle)
     fig.write_html(str(output), include_plotlyjs="cdn")
     logger.info("Wrote %s", output)

@@ -89,8 +89,10 @@ def main() -> int:
     for a in requested:
         r = resolve(a, available)
         if r is None:
-            print(f"  !! '{a}' not found in ListModels — skipping. (available gemini ids: "
-                  f"{[m for m in available if 'gemini' in m]})")
+            print(
+                f"  !! '{a}' not found in ListModels — skipping. (available gemini ids: "
+                f"{[m for m in available if 'gemini' in m]})"
+            )
             continue
         models[a] = r
         print(f"  resolved {a!r} -> {r!r}")
@@ -137,11 +139,11 @@ def main() -> int:
             worst = min(similarity(outputs[base][d["i"]], outputs[m][d["i"]]) for m in mids[1:])
             div.append((worst, d))
         div.sort(key=lambda x: x[0])
-        print(f"\n=== actual output diffs for the {args.diff_top} most model-divergent docs "
-              f"(baseline {base}) ===")
+        print(f"\n=== actual output diffs for the {args.diff_top} most model-divergent docs " f"(baseline {base}) ===")
         for worst, d in div[: args.diff_top]:
-            print(f"\n##### doc_{d['i']} [{d['register']}] cross-model sim={worst:.3f} "
-                  f"(low = models disagree) #####")
+            print(
+                f"\n##### doc_{d['i']} [{d['register']}] cross-model sim={worst:.3f} " f"(low = models disagree) #####"
+            )
             for m in mids[1:]:
                 print(f"\n--- {base}  →  {m} ---")
                 print(unified(outputs[base][d["i"]], outputs[m][d["i"]], base, m, args.diff_lines))
