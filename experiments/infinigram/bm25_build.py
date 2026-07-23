@@ -50,10 +50,13 @@ logger = logging.getLogger(__name__)
 BM25_INDEX_ROOT_TEMPLATE = "{bucket}/bm25_indices/{collection}/{dataset}"
 
 # One bm25s sub-index per group of staged shards whose *compressed* size sums to
-# at most this. jsonl.gz decompresses ~3-4x, and tokens roughly match the text in
-# size, so a 2 GiB group peaks around ~12-16 GiB RAM -- safe on a 32 GiB SMALL
-# worker and a 128 GiB FULL worker while keeping the FULL sub-index count modest.
-SHARD_COMPRESSED_BYTES = 2 * 1024**3
+# at most this. Peak build RAM is a LARGE multiple of the compressed size:
+# jsonl.gz decompresses ~4-5x into the in-memory text list, and bm25s's Python
+# token-id lists cost several times the text again -- empirically a 2 GiB group
+# OOM-killed a 32 GiB worker. 512 MiB peaks around ~10 GiB, safe on the 48 GiB
+# SMALL worker; FULL passes a larger budget (it has 128 GiB) to keep its
+# sub-index count -- and thus build time -- down. Tune via --shard-bytes.
+SHARD_COMPRESSED_BYTES = 512 * 1024**2
 
 # Per-document metadata stored in (and returned by) the index. ``doc_id`` is a
 # corpus-global running index; the rest is provenance recovered at stage time.

@@ -25,6 +25,7 @@ import logging
 import os
 import shutil
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass
 
@@ -36,6 +37,9 @@ from experiments.infinigram.resolve import ResolvedTarget
 logger = logging.getLogger(__name__)
 
 URL_INDEX_NAME = "url_index.jsonl.gz"
+# Shards are processed concurrently; many-small-shard corpora (nemotron: 24k
+# shards) are dominated by per-shard GCS open latency, which threads overlap.
+_STAGE_WORKERS = 16
 
 
 @dataclass(frozen=True)
@@ -88,30 +92,48 @@ def stage_corpus(resolved: ResolvedTarget, local_root: str, *, text_field: str =
         wanted = _collect_wanted_hashes(resolved.shard_urls, text_field)
         prov_map = build_provenance_map(target.provenance_globs, wanted)
 
+    uidx_dir = os.path.join(local_root, "_uidx")
+    os.makedirs(uidx_dir, exist_ok=True)
+
+    def _process(item: tuple[int, str]) -> tuple[int, int]:
+        i, url = item
+        docs = matched = 0
+        out_path = os.path.join(data_dir, f"shard-{i:05d}.jsonl.gz")
+        uidx_path = os.path.join(uidx_dir, f"uidx-{i:05d}.jsonl.gz")
+        with gzip.open(out_path, "wt", encoding="utf-8") as out, gzip.open(uidx_path, "wt", encoding="utf-8") as uidx:
+            for rec in load_file(url):
+                text = _doc_text(rec, text_field)
+                if not text:
+                    continue
+                if prov_map:
+                    prov = prov_map.get(content_hash(text))
+                    if prov:
+                        rec = {**rec, **prov}
+                        matched += 1
+                if text_field != "text":
+                    rec = {**rec, "text": text}
+                out.write(json.dumps(rec, ensure_ascii=False))
+                out.write("\n")
+                docs += 1
+                if rec.get("url"):
+                    uidx.write(json.dumps({f: rec.get(f) or "" for f in PROVENANCE_FIELDS}, ensure_ascii=False))
+                    uidx.write("\n")
+        return docs, matched
+
     doc_count = 0
     matched = 0
     try:
-        with gzip.open(url_index_path, "wt", encoding="utf-8") as uidx:
-            for i, url in enumerate(resolved.shard_urls):
-                out_path = os.path.join(data_dir, f"shard-{i:05d}.jsonl.gz")
-                with gzip.open(out_path, "wt", encoding="utf-8") as out:
-                    for rec in load_file(url):
-                        text = _doc_text(rec, text_field)
-                        if not text:
-                            continue
-                        if prov_map:
-                            prov = prov_map.get(content_hash(text))
-                            if prov:
-                                rec = {**rec, **prov}
-                                matched += 1
-                        if text_field != "text":
-                            rec = {**rec, "text": text}
-                        out.write(json.dumps(rec, ensure_ascii=False))
-                        out.write("\n")
-                        doc_count += 1
-                        if rec.get("url"):
-                            uidx.write(json.dumps({f: rec.get(f) or "" for f in PROVENANCE_FIELDS}, ensure_ascii=False))
-                            uidx.write("\n")
+        with ThreadPoolExecutor(max_workers=_STAGE_WORKERS) as ex:
+            for docs, m in ex.map(_process, enumerate(resolved.shard_urls)):
+                doc_count += docs
+                matched += m
+        # Concatenate per-shard url-index files (gzip streams concatenate).
+        with open(url_index_path, "wb") as combined:
+            for i in range(len(resolved.shard_urls)):
+                part = os.path.join(uidx_dir, f"uidx-{i:05d}.jsonl.gz")
+                with open(part, "rb") as pf:
+                    shutil.copyfileobj(pf, combined)
+        shutil.rmtree(uidx_dir, ignore_errors=True)
 
         byte_count = _local_bytes(data_dir)
         logger.info(

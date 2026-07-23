@@ -237,12 +237,13 @@ DATASETS: dict[str, DatasetSpec] = {
                 "10364warcs/deduped/data-*.jsonl.gz",
                 landed=False,
             ),
+            # SMALL uses the deduped (non-decon) tier to match llm_simple_v1 for a
+            # clean pipeline-vs-pipeline comparison (decon drops ~0 docs at 300).
             small=IndexSource.at(
-                "gs://marin-us-central1/documents/baseline_llm_pipeline_v1_decon_deduped/"
-                "300warcs/deduped/data-*.jsonl.gz"
+                "gs://marin-us-central1/documents/baseline_llm_pipeline_v1_deduped/300warcs/deduped/data-*.jsonl.gz"
             ),
             provenance_globs=_llm_provenance_globs("llm_pipeline_v1"),
-            notes="SMALL (300warcs/deduped) landed; FULL 10k still processing.",
+            notes="SMALL (deduped 300warcs) landed; FULL 10k still processing.",
         ),
         DatasetSpec(
             dataset="llm_simple_v1",
@@ -252,13 +253,13 @@ DATASETS: dict[str, DatasetSpec] = {
                 "10364warcs/deduped/data-*.jsonl.gz",
                 landed=False,
             ),
+            # SMALL landed as the post-dedup (pre-decon) tier; final leaf is ``reshape/``.
             small=IndexSource.at(
-                "gs://marin-us-central1/documents/baseline_llm_simple_v1_decon_deduped/"
-                "300warcs/deduped/data-*.jsonl.gz",
-                landed=False,
+                "gs://marin-us-central1/documents/baseline_llm_simple_v1_deduped/300warcs/reshape/data-*.jsonl.gz"
             ),
             provenance_globs=_llm_provenance_globs("llm_simple_v1"),
-            notes="One-call oc3 pipeline; tiers landing (see pipelines/pipeline_specs.py).",
+            notes="One-call oc3 pipeline. SMALL uses the deduped (non-decon) 300warcs/reshape tier "
+            "(the decon tier isn't built for 300); FULL 10k still processing.",
         ),
         DatasetSpec(
             dataset="med_quality",

@@ -24,7 +24,13 @@ import subprocess
 import fsspec
 from marin.utils import fsspec_exists
 
-from experiments.infinigram.bm25_build import Bm25BuildResult, bm25_index_dir, build_bm25_index, iter_shard_metrics
+from experiments.infinigram.bm25_build import (
+    SHARD_COMPRESSED_BYTES,
+    Bm25BuildResult,
+    bm25_index_dir,
+    build_bm25_index,
+    iter_shard_metrics,
+)
 from experiments.infinigram.bm25_query import MANIFEST_NAME, smoke_test_index
 from experiments.infinigram.gcs_io import upload_dir
 from experiments.infinigram.resolve import ResolvedTarget, resolve_target
@@ -93,6 +99,7 @@ def build_bm25_for_target(
     target: IndexTarget,
     *,
     local_root: str,
+    shard_bytes: int = SHARD_COMPRESSED_BYTES,
     overwrite: bool = False,
     verify: bool = True,
 ) -> str:
@@ -104,7 +111,7 @@ def build_bm25_for_target(
     resolved = resolve_target(target)
     save_dir = os.path.join(local_root, "bm25_index")
     with stage_corpus(resolved, local_root) as staged:
-        build = build_bm25_index(staged, save_dir)
+        build = build_bm25_index(staged, save_dir, shard_bytes=shard_bytes)
         smoke = smoke_test_index(list(build.shard_dirs), doc_count=build.doc_count) if verify else {}
         _upload(build, resolved, staged, smoke, index_dir)
     logger.info("Done: %s -> %s (%d docs, %.1fs)", target.name, index_dir, build.doc_count, build.build_seconds)
@@ -116,6 +123,12 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--dataset", required=True)
     p.add_argument("--collection", choices=[c.value for c in Collection], default=Collection.FULL.value)
     p.add_argument("--local-root", default=os.environ.get("BM25_LOCAL_ROOT", "/tmp/bm25/run"))
+    p.add_argument(
+        "--shard-bytes",
+        type=int,
+        default=int(os.environ.get("BM25_SHARD_BYTES", SHARD_COMPRESSED_BYTES)),
+        help="Max compressed bytes of staged shards per bm25s sub-index (bounds build RAM).",
+    )
     p.add_argument("--overwrite", action="store_true", help="Rebuild even if an index already exists.")
     p.add_argument("--no-verify", action="store_true", help="Skip the pre-upload smoke test.")
     return p.parse_args()
@@ -129,6 +142,7 @@ def main() -> None:
     build_bm25_for_target(
         target,
         local_root=args.local_root,
+        shard_bytes=args.shard_bytes,
         overwrite=args.overwrite,
         verify=not args.no_verify,
     )
