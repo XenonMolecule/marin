@@ -47,6 +47,7 @@ def _base_dir(pattern: str) -> str:
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     plain: dict[str, int] = {}
+    absent_children: dict[str, list] = {}
     for t in all_targets():
         src = t.source
         pattern = src.globs[0] if src.globs else src.prefix
@@ -58,10 +59,12 @@ def main() -> None:
         except Exception as e:
             children = [f"<ls error: {str(e)[:40]}>"]
         logger.info("PROBE %s plain_glob=%d base=%s children=%s", t.name, n, base, children)
-    # Compact final line: targets whose data exists by plain glob but the registry
-    # may not resolve (the interesting gap).
+        if n == 0:
+            # Only the trailing base segment + its children -- what actually exists
+            # near where the data is expected (reveals a sibling-path landing).
+            absent_children[t.name] = [base.split("/")[-1] + "/", *children]
     present = {n: c for n, c in plain.items() if c > 0}
-    raise RuntimeError(f"PROBE_DONE plain_glob_present={present}")
+    raise RuntimeError(f"PROBE_DONE present={present} absent_children={absent_children}")
 
 
 if __name__ == "__main__":
