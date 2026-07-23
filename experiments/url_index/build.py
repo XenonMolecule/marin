@@ -22,6 +22,7 @@ final artifacts, which are uploaded to GCS.
 import argparse
 import dataclasses
 import gc
+import hashlib
 import json
 import logging
 import os
@@ -33,11 +34,11 @@ import fsspec
 import pyarrow as pa
 import pyarrow.parquet as pq
 from fsspec.core import url_to_fs
-from marin.utils import fsspec_glob
+from marin.utils import fsspec_exists, fsspec_glob
 
 from experiments.infinigram.provenance import build_provenance_map, content_hash
 from experiments.infinigram.resolve import ResolvedTarget, resolve_target
-from experiments.infinigram.targets import REGION_BUCKET, Collection, IndexTarget, get_target
+from experiments.infinigram.targets import DATASETS, REGION_BUCKET, Collection, IndexSource, IndexTarget, get_target
 from experiments.url_index import layout
 from experiments.url_index.keys import (
     _normalize_record_id,
@@ -146,7 +147,7 @@ def build_subset_filter(field: str, manifest_path: str, metadata_glob: str | Non
 
 
 def _read_records(shard: str) -> Iterator[dict]:
-    """Stream JSON records from a ``.jsonl(.gz|.zst)`` shard, thread-free.
+    """Stream records from a ``.jsonl(.gz|.zst)`` or ``.parquet`` shard, thread-free.
 
     ``zephyr.load_file`` opens with ``cache_type='background'``, which spawns a
     gcsfs prefetch thread (+16 MiB buffers) per file. Across tens of thousands of
@@ -154,13 +155,24 @@ def _read_records(shard: str) -> Iterator[dict]:
     container -- gc cannot reclaim them. We read with ``cache_type='none'`` for
     bounded, prefetch-free sequential streaming.
     """
-    compression = "gzip" if shard.endswith(".gz") else "zstd" if shard.endswith(".zst") else None
     fs, path = url_to_fs(shard)
+    if shard.endswith(".parquet"):
+        with fs.open(path, "rb", cache_type="none") as fh:
+            pf = pq.ParquetFile(fh)
+            for batch in pf.iter_batches():
+                yield from batch.to_pylist()
+        return
+    compression = "gzip" if shard.endswith(".gz") else "zstd" if shard.endswith(".zst") else None
     with fs.open(path, "rb", cache_type="none", compression=compression) as f:
         for line in f:
             line = line.strip()
             if line:
                 yield json.loads(line)
+
+
+def _warc_path_hash(warc_path: str) -> str:
+    """``sha256(warc_path)[:12]`` -- the per-WARC shard key (matches decode_warcs_clean)."""
+    return hashlib.sha256(warc_path.encode()).hexdigest()[:12]
 
 
 def _doc_text(rec: dict) -> str | None:
@@ -301,11 +313,24 @@ def _emit_artifacts(staging_path: str, dataset: str, local_out: str, *, keys_onl
     return (layout.KEYS_NAME,) if keys_only else (layout.KEYS_NAME, layout.META_NAME, layout.TEXT_NAME)
 
 
-def _resolve(target: IndexTarget, source_glob: str | None) -> ResolvedTarget:
-    """Resolve the target's registry source, or ``source_glob`` when overriding it."""
+def _resolve(target: IndexTarget, source_glob: str | None, source_warc_manifest: str | None) -> ResolvedTarget:
+    """Resolve the target's registry source, or a ``source_glob`` override.
+
+    A ``source_glob`` containing ``{warc_hash}`` selects one per-WARC shard per
+    entry of ``source_warc_manifest`` (e.g. fastpipe's kept_text tree) -- reading
+    only the manifest's WARCs, not the whole 10k pool.
+    """
     if source_glob is None:
         return resolve_target(target)
-    shards = tuple(sorted(fsspec_glob(source_glob)))
+    if "{warc_hash}" in source_glob:
+        if not source_warc_manifest:
+            raise ValueError("source-glob with {warc_hash} needs --source-warc-manifest")
+        warcs = _load_manifest_warcs(source_warc_manifest)
+        candidates = [source_glob.format(warc_hash=_warc_path_hash(w)) for w in warcs]
+        shards = tuple(sorted(s for s in candidates if fsspec_exists(s)))
+        logger.info("Selected %d/%d per-WARC shards from manifest", len(shards), len(warcs))
+    else:
+        shards = tuple(sorted(fsspec_glob(source_glob)))
     if not shards:
         raise ValueError(f"--source-glob matched no shards: {source_glob}")
     bucket = REGION_BUCKET[target.region]
@@ -322,6 +347,7 @@ def build_target(
     overwrite: bool = False,
     keys_only: bool = False,
     source_glob: str | None = None,
+    source_warc_manifest: str | None = None,
     subset: SubsetFilter | None = None,
 ) -> dict:
     """Build and upload the URL-index artifacts for ``target``. Returns the stats dict."""
@@ -331,7 +357,7 @@ def build_target(
         logger.info("%s already built at %s (use --overwrite to rebuild)", target.name, out_dir)
         return {"skipped": True, "out_dir": out_dir}
 
-    resolved = _resolve(target, source_glob)  # region-checked shard URLs
+    resolved = _resolve(target, source_glob, source_warc_manifest)  # region-checked shard URLs
 
     # Recover url/ids by text-hash join only for text-only tiers. Some tiers of a
     # provenance-carrying dataset (e.g. high_quality's trained 300-WARC subset)
@@ -395,6 +421,17 @@ def _parse_args() -> argparse.Namespace:
     )
     p.add_argument("--source-glob", default=None, help="Override the registry source with this gs:// glob.")
     p.add_argument(
+        "--source-warc-manifest",
+        default=None,
+        help="With a {warc_hash} source-glob: select one per-WARC shard per manifest WARC.",
+    )
+    p.add_argument(
+        "--region",
+        default=None,
+        choices=sorted(REGION_BUCKET),
+        help="Region for a dataset not in the registry (requires --source-glob).",
+    )
+    p.add_argument(
         "--subset-manifest",
         default=None,
         help="Restrict to the WARCs in this manifest (build a random-N subset of a 10k tier).",
@@ -404,10 +441,19 @@ def _parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
+def _target_for(dataset: str, collection: Collection, region: str | None, source_glob: str | None) -> IndexTarget:
+    """Registry target, or a synthetic one for a dataset built via --source-glob + --region."""
+    if dataset in DATASETS:
+        return get_target(dataset, collection)
+    if not region or not source_glob:
+        raise SystemExit(f"unknown dataset {dataset!r}; provide --region and --source-glob to build it")
+    return IndexTarget(dataset=dataset, collection=collection, region=region, source=IndexSource.at(source_glob))
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     args = _parse_args()
-    target = get_target(args.dataset, Collection(args.collection))
+    target = _target_for(args.dataset, Collection(args.collection), args.region, args.source_glob)
     subset = None
     if args.subset_manifest:
         if not args.subset_field:
@@ -419,6 +465,7 @@ def main() -> None:
         overwrite=args.overwrite,
         keys_only=args.keys_only,
         source_glob=args.source_glob,
+        source_warc_manifest=args.source_warc_manifest,
         subset=subset,
     )
 

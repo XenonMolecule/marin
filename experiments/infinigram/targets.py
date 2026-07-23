@@ -262,6 +262,20 @@ DATASETS: dict[str, DatasetSpec] = {
             "(the decon tier isn't built for 300); FULL 10k still processing.",
         ),
         DatasetSpec(
+            dataset="fastpipe_v3",
+            region="us-east5",
+            # fastText+JustText->ModernBERT cascade. kept_text is one parquet per WARC
+            # carrying url/doc_id/snapshot inline; the SMALL 300-WARC index is built by
+            # selecting the manifest's per-WARC shards (build --source-warc-manifest).
+            full=IndexSource.at(
+                "gs://marin-us-east5/documents/fast_curation/fastpipe_v3-da3893385e/kept_text/data-*.parquet"
+            ),
+            small=IndexSource.at(
+                "gs://marin-us-east5/documents/fast_curation/fastpipe_v3-da3893385e/kept_text/data-*.parquet"
+            ),
+            notes="kept_text per-WARC parquet (url inline). SMALL via --source-warc-manifest hash selection.",
+        ),
+        DatasetSpec(
             dataset="med_quality",
             region=_C1,
             full=IndexSource.at(
