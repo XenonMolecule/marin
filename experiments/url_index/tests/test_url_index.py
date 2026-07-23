@@ -178,6 +178,21 @@ def test_subset_filter_restricts_to_manifest_warcs(tmp_path):
     assert {r["url_key"] for r in rows} == {"a.com/1", "c.com/3"}  # WARC-B dropped
 
 
+def test_min_field_filters_quality_band(tmp_path):
+    tmp = str(tmp_path)
+    docs = [
+        {"url": "http://a.com/1", "text": "low", "modernbert_prob": 0.2},
+        {"url": "http://b.com/2", "text": "mid", "modernbert_prob": 0.5},
+        {"url": "http://c.com/3", "text": "high", "modernbert_prob": 0.9},
+    ]
+    shard = os.path.join(tmp, "kt.jsonl.gz")
+    _write_shard(shard, docs)
+    target = IndexTarget(dataset="fp", collection=Collection.SMALL, region="us-east5", source=IndexSource.at("x"))
+    resolved = ResolvedTarget(target=target, shard_urls=(shard,), shard_bytes=(0,))
+    rows = list(build._iter_rows(resolved, {}, min_field="modernbert_prob", min_value=0.49377))
+    assert {r["url_key"] for r in rows} == {"b.com/2", "c.com/3"}  # 0.2 dropped
+
+
 def test_keys_only_skips_text_store(tmp_path):
     tmp = str(tmp_path)
     docs = [_doc("http://u1.com/", "r1", "raw universe text")]

@@ -196,18 +196,24 @@ def _iter_rows(
     *,
     keys_only: bool = False,
     subset: SubsetFilter | None = None,
+    min_field: str | None = None,
+    min_value: float = 0.0,
 ) -> "list[dict]":
     """Yield one key-row per document, recovering url/id from provenance when text-only.
 
     In ``keys_only`` mode the ``text`` string is dropped after its hash/length are
     computed, so the staging parquet stays small even for ~500M-doc raw tiers.
     When ``subset`` is set, only docs whose ``subset.field`` value is in the subset
-    key set are emitted (restricting a 10k tier to a random-N WARC sample).
+    key set are emitted (restricting a 10k tier to a random-N WARC sample). When
+    ``min_field`` is set, only docs with ``rec[min_field] >= min_value`` are kept
+    (e.g. a fastpipe ModernBERT-prob quality band).
     """
     gcs = fsspec.filesystem("gcs") if resolved.shard_urls and resolved.shard_urls[0].startswith("gs://") else None
     for i, shard in enumerate(resolved.shard_urls):
         for rec in _read_records(shard):
             if subset is not None and rec.get(subset.field) not in subset.keys:
+                continue
+            if min_field is not None and float(rec.get(min_field, float("-inf"))) < min_value:
                 continue
             text = _doc_text(rec)
             if not text:
@@ -349,6 +355,8 @@ def build_target(
     source_glob: str | None = None,
     source_warc_manifest: str | None = None,
     subset: SubsetFilter | None = None,
+    min_field: str | None = None,
+    min_value: float = 0.0,
 ) -> dict:
     """Build and upload the URL-index artifacts for ``target``. Returns the stats dict."""
     out_dir = layout.index_dir(target.region, target.collection, target.dataset)
@@ -374,7 +382,8 @@ def build_target(
         staging_path = tmp.name
     try:
         doc_count, url_present = _write_unsorted(
-            _iter_rows(resolved, prov_map, keys_only=keys_only, subset=subset), staging_path
+            _iter_rows(resolved, prov_map, keys_only=keys_only, subset=subset, min_field=min_field, min_value=min_value),
+            staging_path,
         )
         # Free the provenance map (can be GiBs for one-call tiers) before the emit pass.
         prov_map.clear()
@@ -438,6 +447,8 @@ def _parse_args() -> argparse.Namespace:
     )
     p.add_argument("--subset-field", default=None, help="Join field: file_path | warc_file | url | warc_record_id.")
     p.add_argument("--subset-metadata", default=None, help="10k WARC metadata glob (for url/warc_record_id joins).")
+    p.add_argument("--min-field", default=None, help="Keep only docs with rec[min_field] >= min_value (e.g. a band).")
+    p.add_argument("--min-value", type=float, default=0.0, help="Threshold for --min-field.")
     return p.parse_args()
 
 
@@ -467,6 +478,8 @@ def main() -> None:
         source_glob=args.source_glob,
         source_warc_manifest=args.source_warc_manifest,
         subset=subset,
+        min_field=args.min_field,
+        min_value=args.min_value,
     )
 
 
