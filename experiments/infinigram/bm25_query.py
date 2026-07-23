@@ -68,6 +68,11 @@ class Bm25Index:
             raise ValueError("Bm25Index needs at least one sub-index")
         self._retrievers = retrievers
 
+    @property
+    def num_docs(self) -> int:
+        """Total documents across all sub-indices."""
+        return sum(r.scores["num_docs"] for r in self._retrievers)
+
     def search(self, query: str, k: int = 10) -> list[Bm25Hit]:
         """Return the top-``k`` documents for ``query`` across all sub-indices.
 

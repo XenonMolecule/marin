@@ -44,15 +44,13 @@ PRIORITY_BAND_MAP = {
     "batch": job_pb2.PRIORITY_BAND_BATCH,
 }
 
-# Per-collection resource + sharding defaults. Peak BM25 build RAM is a large
-# multiple of a sub-index's compressed input (see bm25_build.SHARD_COMPRESSED_
-# BYTES), so memory and shard_bytes are tuned together: FULL gets a larger shard
-# budget (fewer sub-indices, faster) against its 128 GiB; SMALL uses small shards
-# with a 48 GiB margin. A 2 GiB shard OOM-killed a 32 GiB worker, so keep peak
-# well under the memory cap.
+# Per-collection resources. Every worker node caps at 100 GiB disk (marin.yaml),
+# so disk MUST stay under it -- the streaming build bounds disk to one sub-index,
+# so even FULL needs little. RAM is set generously (nodes have 192-720 GiB) to
+# hold a text_bytes_budget's worth of text + tokens; a 2 GiB budget peaks ~12 GiB.
 RESOURCES: dict[Collection, dict[str, object]] = {
-    Collection.FULL: {"cpu": 32.0, "memory": "128g", "disk": "512g", "shard_bytes": 1024 * 1024**2},
-    Collection.SMALL: {"cpu": 8.0, "memory": "48g", "disk": "64g", "shard_bytes": 512 * 1024**2},
+    Collection.FULL: {"cpu": 16.0, "memory": "96g", "disk": "80g", "text_bytes_budget": 2 * 1024**3},
+    Collection.SMALL: {"cpu": 8.0, "memory": "48g", "disk": "48g", "text_bytes_budget": 1024**3},
 }
 
 
@@ -68,8 +66,8 @@ def _submit_one(client: IrisClient, target: IndexTarget, *, priority_band: int, 
         target.collection.value,
         "--local-root",
         f"{JOB_WORK_ROOT}/run",
-        "--shard-bytes",
-        str(res["shard_bytes"]),
+        "--text-bytes-budget",
+        str(res["text_bytes_budget"]),
     ]
     if overwrite:
         cmd.append("--overwrite")

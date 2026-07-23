@@ -101,6 +101,16 @@ def _free_disk_gib(path: str) -> int:
     return (st.f_bavail * st.f_frsize) // 1024**3
 
 
+def _mark(index_dir: str, phase: str) -> None:
+    """Write a tiny progress marker to GCS so a crashed build's last phase is
+    recoverable when task logs are unavailable (list ``<index_dir>/_progress/``)."""
+    try:
+        with fsspec.open(f"{index_dir.rstrip('/')}/_progress/{phase}", "w") as f:
+            f.write(phase)
+    except Exception as e:
+        logger.warning("progress marker %s failed: %s", phase, e)
+
+
 # infini-gram-mini's indexing.py splits the corpus into batches so that peak SA
 # RAM stays near the `--mem` argument (each of `cpus` parallel jobs handles
 # ~mem/(12*cpus) bytes at ~12x RAM, so cpus jobs sum to ~mem); a bigger corpus
@@ -171,20 +181,25 @@ def build_index_for_target(
             shard_url = index_dir.rstrip("/") if single else f"{index_dir.rstrip('/')}/{c:03d}"
             chunk_work = os.path.join(local_root, f"work_{c:03d}")
 
+            _mark(index_dir, f"chunk{c:03d}_staging")
             with stage_corpus(chunk_resolved, chunk_work) as staged:
+                _mark(index_dir, f"chunk{c:03d}_staged_{staged.doc_count}docs")
                 # temp under chunk_work so it is reclaimed between chunks (bounds disk).
                 built = build_index(
                     staged, shard_local, mem_gib=mem_gib, cpus=cpus, temp_dir=os.path.join(chunk_work, "_tmp")
                 )
+                _mark(index_dir, f"chunk{c:03d}_built")
                 stats.doc_count += staged.doc_count
                 stats.provenance_matched += staged.matched_provenance
                 stats.index_bytes += built.index_bytes
                 with open(staged.url_index_path, "rb") as uf:  # gzip streams concatenate
                     shutil.copyfileobj(uf, combined)
+                upload_dir(shard_local, shard_url)
+                _mark(index_dir, f"chunk{c:03d}_uploaded")
+                shard_dir_urls.append(shard_url)
                 if verify:
                     chunk_reports.append(_verify_chunk(list(built.shard_dirs), c))
-                upload_dir(shard_local, shard_url)
-                shard_dir_urls.append(shard_url)
+                    _mark(index_dir, f"chunk{c:03d}_verified")
             shutil.rmtree(shard_local, ignore_errors=True)
             shutil.rmtree(chunk_work, ignore_errors=True)
 
