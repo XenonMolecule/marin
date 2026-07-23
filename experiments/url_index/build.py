@@ -20,6 +20,7 @@ final artifacts, which are uploaded to GCS.
 """
 
 import argparse
+import gc
 import json
 import logging
 import os
@@ -203,9 +204,12 @@ def _emit_artifacts(
     )
     if keys_only:
         return (layout.KEYS_NAME,)
+    # No ORDER BY anywhere: sorting a multi-million-row relation blows DuckDB's
+    # memory budget on shared nodes, and the fast lookup path is the url_key index
+    # that consolidate.py builds on the merged meta -- physical order is irrelevant.
     meta_cols = f"'{dataset}' AS dataset, url_key, domain, warc_record_id, snapshot, warc_file, text_len"
     con.execute(
-        f"COPY (SELECT {meta_cols} FROM {src} ORDER BY domain, url_key) "
+        f"COPY (SELECT {meta_cols} FROM {src}) "
         f"TO '{local_out}/{layout.META_NAME}' (FORMAT parquet, COMPRESSION zstd)"
     )
     con.execute(
@@ -229,6 +233,7 @@ def build_target(target: IndexTarget, *, local_root: str, overwrite: bool = Fals
     if target.provenance_globs:
         wanted = _collect_wanted_hashes(resolved.shard_urls)
         prov_map = build_provenance_map(target.provenance_globs, wanted)
+        del wanted
 
     os.makedirs(local_root, exist_ok=True)
     local_out = tempfile.mkdtemp(dir=local_root, prefix="out-")
@@ -236,6 +241,9 @@ def build_target(target: IndexTarget, *, local_root: str, overwrite: bool = Fals
         staging_path = tmp.name
     try:
         doc_count, url_present = _write_unsorted(_iter_rows(resolved, prov_map, keys_only=keys_only), staging_path)
+        # Free the provenance map (can be GiBs for one-call tiers) before DuckDB runs.
+        prov_map.clear()
+        gc.collect()
         con = duckdb.connect()
         con.execute("SET preserve_insertion_order = false")
         con.execute(f"SET temp_directory = '{local_root}'")
