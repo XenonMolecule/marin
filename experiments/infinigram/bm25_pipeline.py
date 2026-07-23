@@ -37,10 +37,11 @@ from experiments.infinigram.bm25_build import (
     stream_build,
 )
 from experiments.infinigram.bm25_query import MANIFEST_NAME, Bm25Hit, load_local_index
+from experiments.infinigram.bm25_sources import get_bm25_target
 from experiments.infinigram.gcs_io import upload_dir
 from experiments.infinigram.provenance import build_provenance_map, content_hash
 from experiments.infinigram.resolve import resolve_target
-from experiments.infinigram.targets import Collection, IndexTarget, get_target
+from experiments.infinigram.targets import Collection, IndexTarget
 
 logger = logging.getLogger(__name__)
 
@@ -203,7 +204,7 @@ def _parse_args() -> argparse.Namespace:
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     args = _parse_args()
-    target = get_target(args.dataset, Collection(args.collection))
+    target = get_bm25_target(args.dataset, Collection(args.collection))
     os.makedirs(args.local_root, exist_ok=True)
     build_bm25_for_target(
         target,

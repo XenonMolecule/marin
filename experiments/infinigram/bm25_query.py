@@ -34,8 +34,9 @@ except ImportError:
     bm25s = None
 
 from experiments.infinigram.bm25_build import bm25_index_dir
+from experiments.infinigram.bm25_sources import get_bm25_target
 from experiments.infinigram.gcs_io import download_dir
-from experiments.infinigram.targets import Collection, IndexTarget, get_target
+from experiments.infinigram.targets import Collection, IndexTarget
 
 logger = logging.getLogger(__name__)
 
@@ -135,9 +136,9 @@ def open_bm25_index(
     Mirrors the uploaded sub-indices locally, memory-maps them, and returns a
     ready :class:`Bm25Index`. Passing ``also`` searches multiple corpora jointly.
     """
-    targets = [get_target(dataset, collection)]
+    targets = [get_bm25_target(dataset, collection)]
     for ds, col in also or []:
-        targets.append(get_target(ds, col))
+        targets.append(get_bm25_target(ds, col))
 
     dirs: list[str] = []
     for t in targets:

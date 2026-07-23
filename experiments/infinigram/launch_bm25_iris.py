@@ -19,6 +19,7 @@ import logging
 import os
 import time
 
+import fsspec
 from iris.client.client import IrisClient
 from iris.cluster.constraints import Constraint, ConstraintOp, WellKnownAttribute, preemptible_constraint
 from iris.cluster.types import Entrypoint, EnvironmentSpec, ResourceSpec
@@ -27,8 +28,9 @@ from marin.utils import fsspec_exists, fsspec_glob
 
 from experiments.infinigram.bm25_build import bm25_index_dir
 from experiments.infinigram.bm25_query import MANIFEST_NAME
+from experiments.infinigram.bm25_sources import BM25_SPECS, all_bm25_targets, get_bm25_target
 from experiments.infinigram.resolve import resolve_prefix
-from experiments.infinigram.targets import Collection, IndexTarget, all_targets, get_target
+from experiments.infinigram.targets import Collection, IndexTarget
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +103,21 @@ def _is_built(target: IndexTarget) -> bool:
     return fsspec_exists(f"{bm25_index_dir(target).rstrip('/')}/{MANIFEST_NAME}")
 
 
+def _delete_index(target: IndexTarget) -> None:
+    """Remove a target's existing index dir so an overwrite rebuild starts clean.
+
+    Deletes the whole ``bm25_indices/{collection}/{dataset}`` tree (manifest +
+    stale sub-index shards), so ``_is_built`` reads False until the rebuild writes
+    a fresh manifest -- which is what lets the loop's completion signal work in
+    overwrite mode. Scoped to the coordinator's own target list.
+    """
+    fs = fsspec.filesystem("gcs")
+    d = bm25_index_dir(target).rstrip("/")
+    if fs.exists(d):
+        fs.rm(d, recursive=True)
+        logger.info("overwrite: deleted existing index %s", d)
+
+
 def _is_landed(target: IndexTarget) -> bool:
     """True if the target's source glob matches >=1 shard now.
 
@@ -134,6 +151,12 @@ def _coordinator_loop(
     only terminates -- and stops parenting children -- when no build is in flight.
     Not-yet-landed targets are re-checked every ``poll_interval`` seconds.
     """
+    # Overwrite = rebuild on a corrected source tier: clear stale indexes once up
+    # front so _is_built (the completion signal) reflects only fresh rebuilds.
+    if overwrite:
+        for t in targets:
+            _delete_index(t)
+
     submitted: dict[str, str] = {}
     built: set[str] = set()
     while True:
@@ -146,7 +169,7 @@ def _coordinator_loop(
                 continue
             if t.name in submitted:
                 continue  # build in flight; wait for its manifest
-            if overwrite or _is_landed(t):
+            if _is_landed(t):
                 try:
                     jid = _submit_one(client, t, priority_band=band, overwrite=overwrite)
                     submitted[t.name] = jid
@@ -194,11 +217,17 @@ def _parse_args() -> argparse.Namespace:
 def _select_targets(args: argparse.Namespace) -> list[IndexTarget]:
     collections = [Collection(c) for c in args.collections]
     if args.datasets is None:
-        return [t for t in all_targets(only_landed=args.only_landed) if t.collection in collections]
+        return [t for t in all_bm25_targets(only_landed=args.only_landed) if t.collection in collections]
     out: list[IndexTarget] = []
     for ds in args.datasets:
+        if ds not in BM25_SPECS:
+            raise ValueError(f"unknown dataset {ds!r}. Known: {sorted(BM25_SPECS)}")
         for col in collections:
-            target = get_target(ds, col)  # raises on unknown dataset/collection
+            # Skip (dataset, collection) pairs with no training tier (e.g. a
+            # dataset trained only at one scale).
+            if BM25_SPECS[ds].source(col) is None:
+                continue
+            target = get_bm25_target(ds, col)
             if args.only_landed and not target.source.landed:
                 continue
             out.append(target)
