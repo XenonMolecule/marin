@@ -151,6 +151,7 @@ class IndexTarget:
 
 _C2 = "us-central2"
 _C1 = "us-central1"
+_E5 = "us-east5"
 
 DATASETS: dict[str, DatasetSpec] = {
     spec.dataset: spec
@@ -291,6 +292,26 @@ DATASETS: dict[str, DatasetSpec] = {
             notes="Random-300 being regenerated. Legacy raw tier (pre-dedup) is the flat "
             "documents/baseline_llm_extraction/data-*/ namespace (extraction_specs.LEGACY_SPEC_ID).",
         ),
+        # fastpipe_v3 keep-top-X% quality bands (ModernBERT-prob), us-east5. The
+        # 300-WARC deduped docs (subset_to_warcs.py) are text-only (+ modernbert_prob);
+        # no url is available without a separate DCLM-text join, so no provenance here.
+        *[
+            DatasetSpec(
+                dataset=f"fastpipe_v3_{band}",
+                region=_E5,
+                full=IndexSource.at(
+                    f"gs://marin-us-east5/documents/baseline_fastpipe_v3{suffix}_decon_deduped/"
+                    "10364warcs/deduped/data-*.jsonl.gz",
+                    landed=False,
+                ),
+                small=IndexSource.at(
+                    f"gs://marin-us-east5/documents/baseline_fastpipe_v3{suffix}_decon_deduped/"
+                    "300warcs/deduped/data-*.jsonl.gz"
+                ),
+                notes="ModernBERT keep-top-X% band; text-only (+modernbert_prob), no url.",
+            )
+            for band, suffix in (("100", ""), ("80", "_80"), ("60", "_60"), ("40", "_40"), ("20", "_20"))
+        ],
     ]
 }
 
