@@ -14,6 +14,7 @@ Switching which dataset you search is a one-liner: :func:`open_bm25_index` maps 
 ``(dataset, collection)`` to its uploaded index and returns a ready object.
 """
 
+import argparse
 import heapq
 import json
 import logging
@@ -173,3 +174,39 @@ def smoke_test_index(shard_dirs: list[str], *, doc_count: int) -> dict:
     }
     logger.info("BM25 smoke test OK: %s", report)
     return report
+
+
+def _parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser(description="Query an uploaded BM25 index (round-trip verification tool).")
+    p.add_argument("--dataset", required=True)
+    p.add_argument("--collection", choices=[c.value for c in Collection], default=Collection.FULL.value)
+    p.add_argument("--query", required=True, help="Free-text query.")
+    p.add_argument("-k", type=int, default=5, help="Number of hits to return.")
+    return p.parse_args()
+
+
+def main() -> None:
+    """Reopen an uploaded index from GCS and print ranked hits with their metadata.
+
+    Proves an at-rest index is usable end-to-end (mirror from GCS -> mmap -> query
+    -> metadata). Run as an in-region Iris job (needs GCS access + bm25s).
+    """
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    args = _parse_args()
+    index = open_bm25_index(args.dataset, Collection(args.collection))
+    hits = index.search(args.query, k=args.k)
+    logger.info("Query %r on %s-%s -> %d hits", args.query, args.dataset, args.collection, len(hits))
+    for rank, hit in enumerate(hits):
+        meta = hit.metadata
+        logger.info(
+            "  #%d score=%.4f url=%s warc_record_id=%s preview=%r",
+            rank,
+            hit.score,
+            meta.get("url"),
+            meta.get("warc_record_id"),
+            (meta.get("preview") or "")[:120],
+        )
+
+
+if __name__ == "__main__":
+    main()
