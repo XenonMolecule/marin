@@ -13,8 +13,11 @@ import argparse
 import json
 import logging
 
+import fsspec
+
 from experiments.infinigram.bm25_query import open_bm25_index
-from experiments.infinigram.targets import Collection
+from experiments.infinigram.bm25_sources import get_bm25_target
+from experiments.infinigram.targets import REGION_BUCKET, Collection
 
 logger = logging.getLogger(__name__)
 
@@ -59,9 +62,17 @@ def main() -> None:
 
     if not any(r["hits"] > 0 for r in results.values()):
         raise AssertionError(f"NO hits for any query on {args.dataset}-{args.collection}")
-    # Compact, capturable summary (top url per query proves metadata round-trips).
-    compact = {q: {"h": r["hits"], "url": r["top_url"]} for q, r in results.items()}
-    raise RuntimeError(f"QTEST_DONE {args.dataset}-{args.collection} docs={index.num_docs} {json.dumps(compact)}")
+
+    # Write results to GCS (in-region) so they survive bm25s's atexit stderr, which
+    # otherwise clobbers the last line captured by bug-report. A bm25s-free reader
+    # (bm25_qtest_report) collects these.
+    target = get_bm25_target(args.dataset, Collection(args.collection))
+    bucket = REGION_BUCKET[target.region]
+    out = f"{bucket}/bm25_qtest_results/{args.dataset}-{args.collection}.json"
+    payload = {"dataset": args.dataset, "collection": args.collection, "num_docs": index.num_docs, "queries": results}
+    with fsspec.open(out, "w") as f:
+        json.dump(payload, f, indent=2)
+    logger.info("QTEST wrote results to %s", out)
 
 
 if __name__ == "__main__":
