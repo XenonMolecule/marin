@@ -82,23 +82,24 @@ def _provenance_map(target: IndexTarget, shard_urls: tuple[str, ...]) -> dict[st
     return build_provenance_map(target.provenance_globs, wanted)
 
 
-def _iter_docs(shard_urls: tuple[str, ...], prov_map: dict[str, dict], stats: dict) -> Iterator[dict]:
-    """Yield documents (dicts with ``text``) from the resolved shards, provenance-joined."""
-    matched = 0
-    for url in shard_urls:
-        for rec in load_file(url):
-            text = _doc_text(rec)
-            if not text:
-                continue
-            if prov_map:
-                prov = prov_map.get(content_hash(text))
-                if prov:
-                    rec = {**rec, **prov}
-                    matched += 1
-            if rec.get("text") is None:
-                rec = {**rec, "text": text}
-            yield rec
-    stats["provenance_matched"] = matched
+def _iter_shard_docs(url: str, prov_map: dict[str, dict], counter: list[int]) -> Iterator[dict]:
+    """Yield provenance-joined docs from ONE shard; counter[0] += provenance matches."""
+    for rec in load_file(url):
+        text = _doc_text(rec)
+        if not text:
+            continue
+        if prov_map:
+            prov = prov_map.get(content_hash(text))
+            if prov:
+                rec = {**rec, **prov}
+                counter[0] += 1
+        if rec.get("text") is None:
+            rec = {**rec, "text": text}
+        yield rec
+
+
+def _progress_url(index_dir: str) -> str:
+    return f"{index_dir.rstrip('/')}/_progress.json"
 
 
 def build_bm25_for_target(
@@ -109,8 +110,14 @@ def build_bm25_for_target(
     overwrite: bool = False,
     verify: bool = True,
 ) -> str:
-    """Stream-build, verify, and upload the BM25 index for ``target``; return its GCS dir."""
+    """Stream-build (resumable), verify, and upload the BM25 index; return its GCS dir.
+
+    Checkpoints ``_progress.json`` after every uploaded sub-index, so a restart
+    (preemption / worker failure) continues from the last completed input shard
+    instead of rebuilding from scratch.
+    """
     index_dir = bm25_index_dir(target)
+    fs = fsspec.filesystem("gcs")
     if fsspec_exists(_manifest_url(index_dir)) and not overwrite:
         raise FileExistsError(f"{_manifest_url(index_dir)} exists; pass --overwrite to rebuild {target.name}")
 
@@ -118,14 +125,24 @@ def build_bm25_for_target(
     prov_map = _provenance_map(target, resolved.shard_urls)
     save_dir = os.path.join(local_root, "bm25_index")
 
-    uploaded: list[str] = []
-    best_hit: list[Bm25Hit] = []  # best content-probe hit seen across shards
-    fs = fsspec.filesystem("gcs")
+    # Resume from an existing checkpoint unless overwriting (the launcher's overwrite
+    # pre-pass has already deleted the whole index dir, so no stale checkpoint then).
+    ckpt: dict = {}
+    if not overwrite and fs.exists(_progress_url(index_dir)):
+        with fs.open(_progress_url(index_dir), "r") as f:
+            ckpt = json.load(f)
+        logger.info("Resuming %s from checkpoint: %s", target.name, ckpt)
 
-    def on_shard_built(index: int, result: Bm25ShardResult) -> None:
+    uploaded: list[str] = list(ckpt.get("uploaded", []))
+    prov_counter = [int(ckpt.get("provenance_matched", 0))]
+    index_bytes_acc = [int(ckpt.get("index_bytes", 0))]  # cumulative across restarts
+    best_hit: list[Bm25Hit] = []  # best content-probe hit seen this run
+
+    def on_flush(sub_num: int, result: Bm25ShardResult, shards_done: int, doc_id: int) -> None:
         gcs_dir = f"{index_dir.rstrip('/')}/{os.path.basename(result.shard_dir)}"
         upload_dir(result.shard_dir, gcs_dir)
         uploaded.append(gcs_dir)
+        index_bytes_acc[0] += result.index_bytes
         if verify:
             sub = load_local_index([result.shard_dir], mmap=False)
             if sub.num_docs != result.doc_count:
@@ -134,18 +151,37 @@ def build_bm25_for_target(
             if hits and (not best_hit or hits[0].score > best_hit[0].score):
                 best_hit[:] = hits[:1]
         shutil.rmtree(result.shard_dir, ignore_errors=True)
+        # Checkpoint AFTER the upload succeeds, so a restart never double-counts.
+        with fs.open(_progress_url(index_dir), "w") as f:
+            json.dump(
+                {
+                    "shards_done": shards_done,
+                    "doc_id": doc_id,
+                    "next_sub": sub_num + 1,
+                    "uploaded": uploaded,
+                    "index_bytes": index_bytes_acc[0],
+                    "provenance_matched": prov_counter[0],
+                },
+                f,
+            )
 
-    stats: dict = {}
+    shard_readers = [(lambda u=u: _iter_shard_docs(u, prov_map, prov_counter)) for u in resolved.shard_urls]
     build = stream_build(
-        _iter_docs(resolved.shard_urls, prov_map, stats),
+        shard_readers,
         save_dir,
         text_bytes_budget=text_bytes_budget,
-        on_shard_built=on_shard_built,
+        on_flush=on_flush,
+        start_shard=int(ckpt.get("shards_done", 0)),
+        start_doc_id=int(ckpt.get("doc_id", 0)),
+        start_sub=int(ckpt.get("next_sub", 0)),
     )
-    if verify and not best_hit:
-        raise AssertionError(f"content probe {_SMOKE_QUERY!r} returned no hits across {len(uploaded)} shards")
+    if not uploaded:
+        raise ValueError(f"{target.name}: produced 0 sub-indices (empty corpus?)")
+    if verify and build.shards and not best_hit:
+        raise AssertionError(f"content probe {_SMOKE_QUERY!r} returned no hits across {len(build.shards)} new shards")
     shutil.rmtree(save_dir, ignore_errors=True)
 
+    index_bytes = index_bytes_acc[0]
     smoke = {}
     if best_hit:
         m = best_hit[0].metadata
@@ -160,11 +196,11 @@ def build_bm25_for_target(
         "num_sub_indices": len(uploaded),
         "num_input_shards": resolved.shard_count,
         "input_bytes": resolved.total_bytes,
-        "index_bytes": build.index_bytes,
-        "index_to_input_ratio": round(build.index_bytes / resolved.total_bytes, 4) if resolved.total_bytes else None,
+        "index_bytes": index_bytes,
+        "index_to_input_ratio": round(index_bytes / resolved.total_bytes, 4) if resolved.total_bytes else None,
         "doc_count": build.doc_count,
         "provenance_joined": bool(target.provenance_globs),
-        "provenance_matched": stats.get("provenance_matched", 0),
+        "provenance_matched": prov_counter[0],
         "build_seconds": round(build.build_seconds, 2),
         "text_bytes_budget": text_bytes_budget,
         "shard_metrics": iter_shard_metrics(build.shards),
@@ -174,14 +210,8 @@ def build_bm25_for_target(
     }
     with fs.open(_manifest_url(index_dir), "w") as f:
         json.dump(manifest, f, indent=2)
-    logger.info(
-        "Done: %s -> %s (%d docs, %d shards, %.1fs)",
-        target.name,
-        index_dir,
-        build.doc_count,
-        len(uploaded),
-        build.build_seconds,
-    )
+    fs.rm(_progress_url(index_dir))  # build complete; drop the checkpoint
+    logger.info("Done: %s -> %s (%d docs, %d sub-indices)", target.name, index_dir, build.doc_count, len(uploaded))
     return index_dir
 
 

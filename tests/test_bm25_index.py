@@ -12,6 +12,8 @@ is an optional dep, so the whole module skips cleanly if it is not installed.
 
 from __future__ import annotations
 
+import os
+
 import pytest
 
 pytest.importorskip("bm25s")
@@ -64,8 +66,18 @@ def test_build_subindex_returns_metrics_and_metadata(tmp_path):
     assert hits[0].metadata["doc_id"] == 2
 
 
+def _one_shard(docs):
+    """A single input-shard reader over all docs."""
+    return [lambda: iter(docs)]
+
+
+def _per_doc_shards(docs):
+    """One input-shard reader per doc (so a tiny budget flushes after each)."""
+    return [(lambda d=d: iter([d])) for d in docs]
+
+
 def test_stream_build_single_shard_returns_provenance(tmp_path):
-    build = stream_build(_docs_with_ids(), str(tmp_path / "idx"))
+    build = stream_build(_one_shard(_docs_with_ids()), str(tmp_path / "idx"))
     assert build.doc_count == len(_DOCS)
     assert len(build.shards) == 1
     index = load_local_index([s.shard_dir for s in build.shards], mmap=False)
@@ -84,42 +96,59 @@ def test_stream_build_single_shard_returns_provenance(tmp_path):
     ],
 )
 def test_search_ranks_the_relevant_doc_first(tmp_path, query, expected_url):
-    build = stream_build(_docs_with_ids(), str(tmp_path / "idx"))
+    build = stream_build(_one_shard(_docs_with_ids()), str(tmp_path / "idx"))
     index = load_local_index([s.shard_dir for s in build.shards], mmap=False)
     assert index.search(query, k=1)[0].metadata["url"] == expected_url
 
 
-def test_stream_build_shards_by_text_budget_and_merges(tmp_path):
-    # A budget below one doc's text forces a flush after every document, so the
+def test_stream_build_flushes_at_shard_boundary_and_merges(tmp_path):
+    # One input shard per doc + a tiny budget -> flush after every shard, so the
     # query path must merge across independently-built sub-indices.
-    seen: list[tuple[int, Bm25ShardResult]] = []
+    seen: list[tuple[int, int]] = []  # (sub_num, shards_done)
     build = stream_build(
-        _docs_with_ids(),
+        _per_doc_shards(_docs_with_ids()),
         str(tmp_path / "idx"),
         text_bytes_budget=1,
-        on_shard_built=lambda i, r: seen.append((i, r)),
+        on_flush=lambda sub, r, sd, did: seen.append((sub, sd)),
     )
     assert len(build.shards) == len(_DOCS)
     assert build.doc_count == len(_DOCS)
-    # Callback fired once per shard, with monotonic indices.
-    assert [i for i, _ in seen] == list(range(len(_DOCS)))
-    # doc_ids stay globally unique and contiguous across sub-indices.
+    # sub-index numbers and shards_done advance one per flush.
+    assert [sub for sub, _ in seen] == list(range(len(_DOCS)))
+    assert [sd for _, sd in seen] == list(range(1, len(_DOCS) + 1))
     index = load_local_index([s.shard_dir for s in build.shards], mmap=False)
     hits = index.search("united states independence", k=5)
     assert hits[0].metadata["url"] == "http://example.com/usa"
-    assert len({h.metadata["doc_id"] for h in hits}) == len(hits)
     assert sorted(h.metadata["doc_id"] for h in hits) == list(range(len(_DOCS)))
 
 
-def test_stream_build_skips_empty_text_and_raises_on_empty_corpus(tmp_path):
-    build = stream_build([{"text": "hello world"}, {"text": ""}, {"no_text": 1}], str(tmp_path / "idx"))
+def test_stream_build_resume_continues_ids_and_shard_numbers(tmp_path):
+    # First run builds shards 0-1; a "resume" builds the rest with continued
+    # doc ids and sub-index numbers -> a complete, contiguous index.
+    docs = _docs_with_ids()
+    idx = str(tmp_path / "idx")
+    b1 = stream_build(_per_doc_shards(docs)[:2], idx, text_bytes_budget=1)
+    assert len(b1.shards) == 2
+    b2 = stream_build(_per_doc_shards(docs), idx, text_bytes_budget=1, start_shard=2, start_doc_id=2, start_sub=2)
+    assert len(b2.shards) == len(docs) - 2
+    assert b2.doc_count == len(docs)  # doc ids continued from 2
+    assert any(s.shard_dir.endswith("shard_002") for s in b2.shards)
+    all_dirs = [os.path.join(idx, f"shard_{i:03d}") for i in range(len(docs))]
+    index = load_local_index(all_dirs, mmap=False)
+    hits = index.search("united states independence", k=len(docs))
+    assert sorted(h.metadata["doc_id"] for h in hits) == list(range(len(docs)))
+
+
+def test_stream_build_empty_corpus_returns_no_shards(tmp_path):
+    build = stream_build(_one_shard([{"text": "hi there"}, {"text": ""}, {"no_text": 1}]), str(tmp_path / "idx"))
     assert build.doc_count == 1
-    with pytest.raises(ValueError):
-        stream_build([{"text": ""}, {"other": "x"}], str(tmp_path / "empty"))
+    empty = stream_build(_one_shard([{"text": ""}, {"other": "x"}]), str(tmp_path / "empty"))
+    assert empty.doc_count == 0
+    assert len(empty.shards) == 0
 
 
 def test_smoke_test_reports_metrics(tmp_path):
-    build = stream_build(_docs_with_ids(), str(tmp_path / "idx"))
+    build = stream_build(_one_shard(_docs_with_ids()), str(tmp_path / "idx"))
     report = smoke_test_index([s.shard_dir for s in build.shards], doc_count=build.doc_count)
     assert report["num_hits"] >= 1
     assert report["top_url"] is not None

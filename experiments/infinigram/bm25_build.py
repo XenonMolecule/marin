@@ -152,54 +152,63 @@ def _make_meta(rec: dict, doc_id: int) -> dict:
 
 
 def stream_build(
-    docs: Iterable[dict],
+    shard_readers: "list[Callable[[], Iterable[dict]]]",
     save_dir: str,
     *,
     text_bytes_budget: int = TEXT_BYTES_BUDGET,
-    on_shard_built: Callable[[int, Bm25ShardResult], None] | None = None,
+    on_flush: "Callable[[int, Bm25ShardResult, int, int], None] | None" = None,
+    start_shard: int = 0,
+    start_doc_id: int = 0,
+    start_sub: int = 0,
 ) -> Bm25BuildResult:
-    """Build a multi-shard BM25 index by streaming ``docs`` (dicts with ``text``).
+    """Build a BM25 index by streaming input shards; flush a sub-index at *shard
+    boundaries* once buffered text reaches ``text_bytes_budget``.
 
-    Buffers documents until their combined text reaches ``text_bytes_budget``, then
-    flushes one sub-index into ``save_dir/shard_NNN``. ``on_shard_built(index,
-    result)`` runs after each flush -- the pipeline uses it to upload the sub-index
-    and delete it locally, so disk stays bounded. Doc ids are corpus-global and
-    contiguous across shards.
+    ``shard_readers[i]()`` yields the docs (dicts with ``text``) of input shard i.
+    Flushing at shard boundaries (rather than mid-shard) makes the build
+    **resumable**: pass ``start_shard`` / ``start_doc_id`` / ``start_sub`` to
+    continue after an interruption. ``on_flush(sub_num, result, shards_done,
+    doc_id)`` runs after each sub-index -- the pipeline uploads it, deletes it
+    locally, and checkpoints ``(shards_done, doc_id, sub_num+1)`` so a restart
+    skips completed input shards. Assumes a single input shard fits in the budget
+    (true for our datasets -- shards are far smaller than 2 GiB).
     """
     os.makedirs(save_dir, exist_ok=True)
     shards: list[Bm25ShardResult] = []
     texts: list[str] = []
     meta: list[dict] = []
     buffered_bytes = 0
-    doc_id = 0
+    doc_id = start_doc_id
+    sub_num = start_sub
     t0 = time.monotonic()
 
-    def flush() -> None:
-        nonlocal texts, meta, buffered_bytes
+    def flush(shards_done: int) -> None:
+        nonlocal texts, meta, buffered_bytes, sub_num
         if not texts:
             return
-        shard_dir = os.path.join(save_dir, f"shard_{len(shards):03d}")
-        # build_subindex clears `texts`; hand it the list and start fresh after.
-        result = build_subindex(texts, meta, shard_dir)
+        result = build_subindex(texts, meta, os.path.join(save_dir, f"shard_{sub_num:03d}"))
         shards.append(result)
-        if on_shard_built is not None:
-            on_shard_built(len(shards) - 1, result)
+        if on_flush is not None:
+            on_flush(sub_num, result, shards_done, doc_id)
+        sub_num += 1
         texts, meta, buffered_bytes = [], [], 0
 
-    for rec in docs:
-        text = rec.get("text")
-        if not text:
-            continue
-        texts.append(text)
-        meta.append(_make_meta(rec, doc_id))
-        buffered_bytes += len(text)
-        doc_id += 1
+    for i in range(start_shard, len(shard_readers)):
+        for rec in shard_readers[i]():
+            text = rec.get("text")
+            if not text:
+                continue
+            texts.append(text)
+            meta.append(_make_meta(rec, doc_id))
+            buffered_bytes += len(text)
+            doc_id += 1
+        # Flush only at the shard boundary, so a checkpoint == "shards 0..i done".
         if buffered_bytes >= text_bytes_budget:
-            flush()
-    flush()
+            flush(i + 1)
+    flush(len(shard_readers))
 
-    if not shards:
-        raise ValueError(f"corpus produced 0 documents into {save_dir}")
+    # `shards` holds only THIS run's sub-indices (empty on a fully-resumed finalize);
+    # the pipeline validates the cumulative uploaded set is non-empty.
     total = Bm25BuildResult(
         shards=tuple(shards),
         doc_count=doc_id,
@@ -207,7 +216,7 @@ def stream_build(
         build_seconds=time.monotonic() - t0,
     )
     logger.info(
-        "BM25 stream build done: %d docs across %d shard(s), %.2f MiB, %.1fs",
+        "BM25 stream build (this run): %d docs total, %d new sub-index(es), %.2f MiB, %.1fs",
         total.doc_count,
         len(shards),
         total.index_bytes / 1024**2,
