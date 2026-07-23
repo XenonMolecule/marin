@@ -13,7 +13,9 @@ Pipeline (StepRunner)::
     reshape   — read first-N done batches from resolved_{spec}.jsonl.gz (paths
                 already point at the regional sources, remapped here to the
                 us-central1 consolidated archive). Emit a 200-shard flat
-                ``data-XXXXX-of-00200.jsonl.gz`` tree (text-only schema).
+                ``data-XXXXX-of-00200.jsonl.gz`` tree carrying ``text`` plus all
+                provenance columns (``url``, ``warc_record_id``, ``warc_file``,
+                ``snapshot``, and any spec-specific columns).
     normalize — datakit normalize_to_parquet: jsonl.gz → NormalizedData parquet
                 with xxh3_128 ids and DedupMode.EXACT (bonus exact-doc dedup).
                 Output goes under ``normalize_<hash>/outputs/main/``.
@@ -26,8 +28,8 @@ Pipeline (StepRunner)::
                 ``is_cluster_canonical=True``.
     deduped   — apply step: join normalize parquet with fuzzy attr parquet,
                 drop rows where ``is_cluster_canonical=False``; keep canonicals
-                and singletons. Write deduped jsonl.gz (text field) ready to
-                tokenize.
+                and singletons. Write deduped jsonl.gz carrying text + all
+                provenance columns, ready to tokenize (decon preserves columns).
     stats     — JSON summary with all step output paths and counters.
 
 Output paths::
@@ -193,17 +195,44 @@ def _load_canonical_paths(spec: str, hashes: set[str]) -> list[str]:
 # --------------------------------------------------------------------------
 
 
+# Source fields that hold the primary text. The canonical ``text`` key is set
+# from whichever is present, so neither is re-emitted verbatim.
+_TEXT_SOURCE_FIELDS = ("text", "generated_text")
+# datakit injects these onto the normalized parquet (``id`` = content hash;
+# ``source_id`` = original id when an ``id_field`` was present). Neither is
+# provenance, so they must not leak into the deduped output.
+_DATAKIT_INTERNAL_FIELDS = ("id", "source_id")
+
+
+def _carry_provenance(record: dict, text: str) -> dict:
+    """Project ``record`` to ``{text, <all provenance columns>}``.
+
+    Every column except the text-source fields and datakit-internal ids is
+    carried through verbatim, so provenance (``url``, ``warc_record_id``,
+    ``warc_file``, ``snapshot``, and any spec-specific columns such as
+    ``pipeline_id`` / ``num_chunks``) survives dedup + decon end-to-end.
+    ``text`` remains the sole dedup key.
+    """
+    out = {k: v for k, v in record.items() if k not in _TEXT_SOURCE_FIELDS and k not in _DATAKIT_INTERNAL_FIELDS}
+    out["text"] = text
+    return out
+
+
 def _reshape_records(path: str) -> Iterator[dict]:
-    """Yield ``{text}`` records for one canonical batch (text-only schema)."""
+    """Yield ``{text, <provenance...>}`` records for one canonical batch.
+
+    Carries every source column through (see :func:`_carry_provenance`) so
+    provenance survives dedup. ``text`` is the canonical dedup key.
+    """
     for record in load_jsonl(path):
         text = record.get("text") or record.get("generated_text")
-        if text is None or text == "":
+        if not text:
             continue
-        yield {"text": text}
+        yield _carry_provenance(record, text)
 
 
 def _reshape_bucket(bucket: list[str]) -> Iterator[dict]:
-    """Yield ``{text}`` records for every canonical batch in one shard's bucket."""
+    """Yield records for every canonical batch in one shard's bucket."""
     for path in bucket:
         yield from _reshape_records(path)
 
@@ -307,7 +336,9 @@ def _apply_fuzzy_dups(
                 dropped += 1
                 continue
             kept += 1
-            yield {"text": r["text"]}
+            # Re-emit text + all provenance columns (carried through normalize
+            # as passthrough), dropping only the datakit-internal id.
+            yield _carry_provenance(r, r["text"])
         logger.info("  %s: kept=%d dropped=%d", item["basename"], kept, dropped)
 
     pipeline = (
@@ -367,8 +398,8 @@ def build_steps(
         fn=lambda op: _reshape(spec, hashes_ordered, op),
     )
 
-    # 64 MB default partitions (vs the marin 256 MB default) → ~4× more parquet
-    # shards, which gives the downstream MinHash + fuzzy CC stages ~4× more
+    # 64 MB default partitions (vs the marin 256 MB default) → ~4x more parquet
+    # shards, which gives the downstream MinHash + fuzzy CC stages ~4x more
     # parallelism width. Zephyr's actor pool sizes to the upstream `from_list`
     # element count, so `max_parallelism=1024` on the fuzzy step is otherwise
     # capped by N (the normalize shard count). Outputs are identical regardless
@@ -409,7 +440,7 @@ def build_steps(
         # preemptible toggled back on 2026-05-15: non-preemptible 64GB pool is
         # cluster-wide tight (us-central1 AND us-east5 both showing ~10GB free
         # vs 64GB need on the reservation pool). Preemptible widens the
-        # schedulable host pool by ~10×. cc_resume is the safety net — if rav-
+        # schedulable host pool by ~10x. cc_resume is the safety net — if rav-
         # style sync jobs evict a worker mid-iteration, the next worker picks
         # up from the last complete CC iter on disk. Trade-off: more churn,
         # but progress > paralysis.
