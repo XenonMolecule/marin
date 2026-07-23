@@ -45,7 +45,15 @@ def main() -> None:
             m.get("build_seconds"),
             (m.get("smoke") or {}).get("top_url"),
         )
-        built[t.name] = f"{m.get('doc_count')}d/{m.get('num_sub_indices')}s"
+        idx_mib = (m.get("index_bytes") or 0) / 1024**2
+        in_mib = (m.get("input_bytes") or 0) / 1024**2
+        built[t.name] = (
+            f"{m.get('doc_count')}docs "
+            f"{idx_mib:.0f}MiB_idx "
+            f"{in_mib:.0f}MiB_in "
+            f"{m.get('num_sub_indices')}sub "
+            f"ratio={m.get('index_to_input_ratio')}"
+        )
     raise RuntimeError(f"BM25_STATUS built={len(built)}/{len(all_targets())} {built}")
 
 
