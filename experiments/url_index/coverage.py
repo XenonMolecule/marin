@@ -21,7 +21,7 @@ import os
 
 import duckdb
 
-from experiments.url_index.duckdb_gcs import maybe_register_gcs
+from experiments.url_index.duckdb_gcs import cap_memory, maybe_register_gcs
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +31,7 @@ KEY_CHOICES = ("rid_h", "text_h", "dom_h")
 def _load(con: duckdb.DuckDBPyConnection, key_globs: list[str], key: str) -> None:
     """Materialize a deduped ``(dataset, key)`` relation from the keys parquets."""
     maybe_register_gcs(con, key_globs)
+    cap_memory(con)
     globs = ", ".join(f"'{g}'" for g in key_globs)
     con.execute(
         f"CREATE TABLE d AS "

@@ -20,7 +20,7 @@ import logging
 import duckdb
 
 from experiments.infinigram.targets import DATASETS, Collection
-from experiments.url_index.duckdb_gcs import maybe_register_gcs
+from experiments.url_index.duckdb_gcs import cap_memory, maybe_register_gcs
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +35,7 @@ def build_index(meta_globs: list[str], collection: Collection, out_path: str) ->
     """Build the local lookup DuckDB from meta parquets. Returns the row count."""
     con = duckdb.connect(out_path)
     maybe_register_gcs(con, meta_globs)
+    cap_memory(con)
     globs = ", ".join(f"'{g}'" for g in meta_globs)
     con.execute(
         f"CREATE OR REPLACE TABLE docs AS "

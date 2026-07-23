@@ -27,7 +27,6 @@ import os
 import shutil
 import tempfile
 
-import duckdb
 import fsspec
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -72,41 +71,6 @@ def _upload(local_path: str, dest: str) -> None:
     """Copy a local file to a gs:// (or local) destination via fsspec."""
     with open(local_path, "rb") as src, fsspec.open(dest, "wb") as dst:
         shutil.copyfileobj(src, dst)
-
-
-def _container_memory_bytes() -> int | None:
-    """The cgroup memory limit (v2 then v1), or None if unbounded/unreadable.
-
-    DuckDB otherwise sizes its buffer pool off the *host* RAM, which on a shared
-    TPU node is hundreds of GiB -- it then blows past the container cgroup limit
-    and gets OOM-killed (exit 137). We read the real limit and cap DuckDB below it.
-    """
-    for path in ("/sys/fs/cgroup/memory.max", "/sys/fs/cgroup/memory/memory.limit_in_bytes"):
-        try:
-            with open(path) as f:
-                raw = f.read().strip()
-        except OSError:
-            continue
-        if raw == "max":
-            return None
-        val = int(raw)
-        # cgroup v1 reports a huge sentinel when unlimited.
-        if val <= 0 or val >= (1 << 62):
-            return None
-        return val
-    return None
-
-
-def _duckdb_memory_limit_gb(headroom_frac: float = 0.55) -> float | None:
-    """A safe DuckDB ``memory_limit`` (GiB) = ``headroom_frac`` of the container limit.
-
-    The rest is left for the Python process (fsspec buffers, the provenance map).
-    Returns None when the limit is unknown, so DuckDB keeps its default.
-    """
-    b = _container_memory_bytes()
-    if b is None:
-        return None
-    return max(2.0, round(headroom_frac * b / 1024**3, 1))
 
 
 def _doc_text(rec: dict) -> str | None:
@@ -183,40 +147,52 @@ def _write_unsorted(rows_iter, staging_path: str) -> tuple[int, int]:
     return doc_count, url_present
 
 
-def _emit_artifacts(
-    con: duckdb.DuckDBPyConnection, staging_path: str, dataset: str, local_out: str, *, keys_only: bool
-) -> tuple[str, ...]:
-    """DuckDB reads the unsorted staging parquet and writes the artifacts locally.
+_KEYS_COLS = ["rid_h", "text_h", "dom_h"]
+_META_COLS = ["url_key", "domain", "warc_record_id", "snapshot", "warc_file", "text_len"]
 
-    Always writes ``keys.parquet`` (coverage). Unless ``keys_only``, also writes
-    ``meta.parquet`` ordered ``(domain, url_key)`` (cheap -- no text) so the
-    consolidated lookup index inherits that ordering, and ``text.parquet``
-    *unsorted* (streamed): sorting a large ``text`` column blows DuckDB's memory
-    budget on shared nodes, and the fast lookup path uses the indexed consolidated
-    DuckDB, not zone maps on the text store. ``keys_only`` is for huge raw tiers
-    (e.g. resiliparse ~500M docs) whose text store would be multi-TB -- they still
-    contribute to coverage. Returns the artifact filenames written.
+
+def _projected(table: pa.Table, dataset: str, cols: list[str]) -> pa.Table:
+    """A ``dataset``-prefixed projection of ``table`` onto ``cols``."""
+    dcol = pa.array([dataset] * table.num_rows, type=pa.string())
+    arrays = [dcol] + [table.column(c) for c in cols]
+    return pa.table(arrays, names=["dataset", *cols])
+
+
+def _emit_artifacts(staging_path: str, dataset: str, local_out: str, *, keys_only: bool) -> tuple[str, ...]:
+    """Stream the staging parquet into the artifacts with pyarrow (bounded memory).
+
+    No sorting and no DuckDB: we read the staging file one row-group batch at a
+    time and fan each batch out to ``keys.parquet`` (coverage) and -- unless
+    ``keys_only`` -- ``meta.parquet`` (lookup routing) and ``text.parquet``. This
+    is O(batch) memory regardless of doc count, which a DuckDB ``COPY`` is not on
+    a shared node. The fast lookup path is the ``url_key`` index consolidate.py
+    builds on the merged meta, so physical order is irrelevant. ``keys_only`` is
+    for huge raw tiers (e.g. resiliparse ~500M docs). Returns the files written.
     """
-    src = f"read_parquet('{staging_path}')"
-    con.execute(
-        f"COPY (SELECT '{dataset}' AS dataset, rid_h, text_h, dom_h FROM {src}) "
-        f"TO '{local_out}/{layout.KEYS_NAME}' (FORMAT parquet, COMPRESSION zstd)"
-    )
-    if keys_only:
-        return (layout.KEYS_NAME,)
-    # No ORDER BY anywhere: sorting a multi-million-row relation blows DuckDB's
-    # memory budget on shared nodes, and the fast lookup path is the url_key index
-    # that consolidate.py builds on the merged meta -- physical order is irrelevant.
-    meta_cols = f"'{dataset}' AS dataset, url_key, domain, warc_record_id, snapshot, warc_file, text_len"
-    con.execute(
-        f"COPY (SELECT {meta_cols} FROM {src}) "
-        f"TO '{local_out}/{layout.META_NAME}' (FORMAT parquet, COMPRESSION zstd)"
-    )
-    con.execute(
-        f"COPY (SELECT {meta_cols}, text FROM {src}) "
-        f"TO '{local_out}/{layout.TEXT_NAME}' (FORMAT parquet, COMPRESSION zstd, ROW_GROUP_SIZE 20000)"
-    )
-    return (layout.KEYS_NAME, layout.META_NAME, layout.TEXT_NAME)
+    pf = pq.ParquetFile(staging_path)
+    keys_w = meta_w = text_w = None
+    try:
+        for batch in pf.iter_batches(batch_size=_BATCH_ROWS):
+            table = pa.Table.from_batches([batch])
+            keys_tbl = _projected(table, dataset, _KEYS_COLS)
+            if keys_w is None:
+                keys_w = pq.ParquetWriter(os.path.join(local_out, layout.KEYS_NAME), keys_tbl.schema, compression="zstd")
+            keys_w.write_table(keys_tbl)
+            if keys_only:
+                continue
+            meta_tbl = _projected(table, dataset, _META_COLS)
+            if meta_w is None:
+                meta_w = pq.ParquetWriter(os.path.join(local_out, layout.META_NAME), meta_tbl.schema, compression="zstd")
+            meta_w.write_table(meta_tbl)
+            text_tbl = _projected(table, dataset, [*_META_COLS, "text"])
+            if text_w is None:
+                text_w = pq.ParquetWriter(os.path.join(local_out, layout.TEXT_NAME), text_tbl.schema, compression="zstd")
+            text_w.write_table(text_tbl)
+    finally:
+        for w in (keys_w, meta_w, text_w):
+            if w is not None:
+                w.close()
+    return (layout.KEYS_NAME,) if keys_only else (layout.KEYS_NAME, layout.META_NAME, layout.TEXT_NAME)
 
 
 def build_target(target: IndexTarget, *, local_root: str, overwrite: bool = False, keys_only: bool = False) -> dict:
@@ -241,18 +217,10 @@ def build_target(target: IndexTarget, *, local_root: str, overwrite: bool = Fals
         staging_path = tmp.name
     try:
         doc_count, url_present = _write_unsorted(_iter_rows(resolved, prov_map, keys_only=keys_only), staging_path)
-        # Free the provenance map (can be GiBs for one-call tiers) before DuckDB runs.
+        # Free the provenance map (can be GiBs for one-call tiers) before the emit pass.
         prov_map.clear()
         gc.collect()
-        con = duckdb.connect()
-        con.execute("SET preserve_insertion_order = false")
-        con.execute(f"SET temp_directory = '{local_root}'")
-        mem_gb = _duckdb_memory_limit_gb()
-        if mem_gb is not None:
-            con.execute(f"SET memory_limit = '{mem_gb}GB'")
-            logger.info("DuckDB memory_limit set to %.1fGB (cgroup-aware); spilling to %s", mem_gb, local_root)
-        names = _emit_artifacts(con, staging_path, target.dataset, local_out, keys_only=keys_only)
-        con.close()
+        names = _emit_artifacts(staging_path, target.dataset, local_out, keys_only=keys_only)
 
         stats = {
             "dataset": target.dataset,

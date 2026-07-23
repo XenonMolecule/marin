@@ -106,9 +106,7 @@ def _build_local(tmp: str, dataset: str, docs: list[dict], provenance_globs: tup
     build._write_unsorted(build._iter_rows(resolved, prov_map), staging)
     out_dir = os.path.join(tmp, f"{dataset}_out")
     os.makedirs(out_dir, exist_ok=True)
-    con = duckdb.connect()
-    build._emit_artifacts(con, staging, dataset, out_dir, keys_only=keys_only)
-    con.close()
+    build._emit_artifacts(staging, dataset, out_dir, keys_only=keys_only)
     return out_dir
 
 

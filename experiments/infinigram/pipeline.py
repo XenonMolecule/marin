@@ -124,8 +124,10 @@ def _mark(index_dir: str, phase: str) -> None:
 # is a moderate fraction of the container.
 _MEM_SAFETY = 0.8
 _GZ_INFLATE = 3.5  # decompressed / gzip
-_MERGE_FACTOR = 3.0  # indexer peak RAM / decompressed (paper: ~700GB shard on 2TiB)
-_INDEX_MEM_FRACTION = 0.2  # --mem (make-part budget) as a fraction of container
+# indexer merge loads the full suffix array (~5x decompressed) into RAM; measured
+# empirically higher (a 12 GB gz chunk OOM'd a 160 GB box), so budget conservatively.
+_MERGE_FACTOR = 8.0  # indexer peak RAM / decompressed
+_INDEX_MEM_FRACTION = 0.15  # --mem (make-part budget) as a fraction of container
 
 
 def _index_mem_gib(container_mem_gib: int) -> int:
