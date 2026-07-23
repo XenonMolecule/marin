@@ -1,34 +1,31 @@
 # Copyright The Marin Authors
 # SPDX-License-Identifier: Apache-2.0
 
-"""Upload a finished local index to its canonical GCS home + a manifest sidecar.
+"""Manifest for a finished index at its canonical GCS home.
 
 Destination is ``IndexTarget.index_dir``
 (``gs://marin-{region}/infinigram_indices/{collection}/{dataset}/``), always
-in-region. A ``manifest.json`` records what was indexed so a build is idempotent
-(skipped if the manifest already exists unless ``overwrite=True``) and so the
-query side can discover shard dirs without re-listing.
+in-region. ``manifest.json`` records what was indexed (shard dirs, url-index side
+table, provenance/efficiency stats) so a build is idempotent and the query side
+can discover shard dirs without re-listing. The actual index bytes are uploaded
+per-chunk by the pipeline (bounded disk); this module writes the sidecar.
 """
 
 import json
 import logging
-import os
 import subprocess
+from dataclasses import dataclass
 
 import fsspec
-from marin.utils import fsspec_exists
 
-from experiments.infinigram.build import BuildResult
-from experiments.infinigram.gcs_io import upload_dir
 from experiments.infinigram.resolve import ResolvedTarget
-from experiments.infinigram.stage import StagedCorpus
 
 logger = logging.getLogger(__name__)
 
 MANIFEST_NAME = "manifest.json"
 
 
-def _manifest_url(index_dir: str) -> str:
+def manifest_url(index_dir: str) -> str:
     return f"{index_dir.rstrip('/')}/{MANIFEST_NAME}"
 
 
@@ -39,42 +36,45 @@ def _git_sha() -> str:
         return "unknown"
 
 
-def upload_index(build: BuildResult, resolved: ResolvedTarget, staged: StagedCorpus, *, overwrite: bool = False) -> str:
-    """Copy ``build``'s index dir to the target's canonical GCS location.
+@dataclass
+class IndexStats:
+    """Aggregated build stats across all chunks of one index."""
 
-    Returns the destination index dir. Raises if it already exists and
-    ``overwrite`` is False.
-    """
+    doc_count: int = 0
+    provenance_matched: int = 0
+    index_bytes: int = 0
+
+
+def write_manifest(
+    index_dir: str,
+    resolved: ResolvedTarget,
+    *,
+    shard_dir_urls: list[str],
+    url_index_url: str,
+    stats: IndexStats,
+    num_chunks: int,
+) -> None:
+    """Write ``manifest.json`` for a fully-uploaded index."""
     target = resolved.target
-    index_dir = target.index_dir
-    manifest_url = _manifest_url(index_dir)
-
-    if fsspec_exists(manifest_url) and not overwrite:
-        raise FileExistsError(f"{manifest_url} exists; pass overwrite=True to rebuild {target.name}")
-
-    logger.info("Uploading %s -> %s", build.save_dir, index_dir)
-    upload_dir(build.save_dir, index_dir)
-
-    def _shard_url(local_shard_dir: str) -> str:
-        rel = os.path.relpath(local_shard_dir, build.save_dir)
-        return index_dir.rstrip("/") if rel == "." else f"{index_dir.rstrip('/')}/{rel}"
-
     manifest = {
         "dataset": target.dataset,
         "collection": target.collection.value,
         "region": target.region,
-        "shard_dirs": [_shard_url(d) for d in build.shard_dirs],
-        "url_index": f"{index_dir.rstrip('/')}/{os.path.basename(staged.url_index_path)}",
+        "shard_dirs": shard_dir_urls,
+        "num_chunks": num_chunks,
+        "url_index": url_index_url,
         "num_input_shards": resolved.shard_count,
         "input_bytes": resolved.total_bytes,
-        "index_bytes": build.index_bytes,
-        "doc_count": staged.doc_count,
+        "index_bytes": stats.index_bytes,
+        "index_ratio": round(stats.index_bytes / resolved.total_bytes, 4) if resolved.total_bytes else None,
+        "doc_count": stats.doc_count,
         "provenance_joined": bool(target.provenance_globs),
-        "provenance_matched": staged.matched_provenance,
+        "provenance_matched": stats.provenance_matched,
         "source_shard_urls_sample": list(resolved.shard_urls[:5]),
         "git_sha": _git_sha(),
     }
-    with fsspec.open(manifest_url, "w") as f:
+    with fsspec.open(manifest_url(index_dir), "w") as f:
         json.dump(manifest, f, indent=2)
-    logger.info("Wrote manifest %s", manifest_url)
-    return index_dir
+    logger.info(
+        "Wrote manifest %s (%d shard dirs, index_ratio=%s)", index_dir, len(shard_dir_urls), manifest["index_ratio"]
+    )

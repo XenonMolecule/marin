@@ -23,11 +23,11 @@ from iris.client.client import IrisClient
 from iris.cluster.constraints import Constraint, ConstraintOp, WellKnownAttribute, preemptible_constraint
 from iris.cluster.types import Entrypoint, EnvironmentSpec, ResourceSpec
 from iris.rpc import job_pb2
-from marin.utils import fsspec_exists
+from marin.utils import fsspec_exists, fsspec_glob
 
 from experiments.infinigram.bm25_build import bm25_index_dir
 from experiments.infinigram.bm25_query import MANIFEST_NAME
-from experiments.infinigram.resolve import resolve_target
+from experiments.infinigram.resolve import resolve_prefix
 from experiments.infinigram.targets import Collection, IndexTarget, all_targets, get_target
 
 logger = logging.getLogger(__name__)
@@ -99,10 +99,18 @@ def _is_built(target: IndexTarget) -> bool:
 
 
 def _is_landed(target: IndexTarget) -> bool:
-    """True if the target's source documents resolve to >=1 in-region shard now."""
+    """True if the target's source glob matches >=1 shard now.
+
+    Existence-only (a single list op) -- deliberately does NOT sum shard sizes
+    like ``resolve_target`` does, so polling a 10k-shard corpus costs one glob,
+    not thousands of stat calls. The child re-resolves fully (with sizes) when it
+    actually builds.
+    """
+    src = target.source
     try:
-        resolve_target(target)
-        return True
+        if src.prefix is not None:
+            return bool(resolve_prefix(src.prefix))
+        return any(fsspec_glob(pattern) for pattern in src.globs)
     except Exception as e:
         logger.info("%s not landed yet: %s", target.name, str(e)[:100])
         return False

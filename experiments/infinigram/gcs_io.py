@@ -51,6 +51,11 @@ def download_dir(gs_dir: str, dest_dir: str) -> None:
     _run(one, remotes)
 
 
+def upload_file(local_path: str, gs_url: str) -> None:
+    """Upload a single local file to a gs:// URL."""
+    _gcs().put_file(local_path, gs_url)
+
+
 def upload_dir(local_dir: str, gs_dir: str) -> None:
     """Upload a local directory tree to ``gs_dir``, preserving structure."""
     fs = _gcs()
