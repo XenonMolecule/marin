@@ -18,6 +18,7 @@ import shutil
 
 import fsspec
 from marin.utils import fsspec_exists
+from zephyr.readers import load_file
 
 from experiments.infinigram.build import build_index, plan_chunks
 from experiments.infinigram.gcs_io import download_dir, download_file, upload_dir, upload_file
@@ -104,6 +105,13 @@ def _total_mem_gib() -> int:
 def _free_disk_gib(path: str) -> int:
     st = os.statvfs(path)
     return (st.f_bavail * st.f_frsize) // 1024**3
+
+
+def _source_has_url(shard_url: str) -> bool:
+    """Whether the corpus already carries url inline (peek the first record)."""
+    for rec in load_file(shard_url):
+        return bool(rec.get("url"))
+    return False
 
 
 def _mark(index_dir: str, phase: str) -> None:
@@ -222,9 +230,12 @@ def build_index_for_target(
         len(chunks),
     )
 
-    # Build the provenance map ONCE (not per chunk) -- only if some chunk still needs it.
+    # Build the provenance map ONCE (not per chunk), and only if some chunk needs
+    # it AND the source is text-only. Sources that already carry url inline (e.g.
+    # filtered subsets) skip the join, which would otherwise waste ~40 min reading
+    # the raw provenance tier for no gain.
     prov_map: dict[str, dict] | None = None
-    if target.provenance_globs and pending:
+    if target.provenance_globs and pending and not _source_has_url(resolved.shard_urls[0]):
         _mark(index_dir, "building_provenance_map")
         wanted = collect_wanted_hashes(resolved.shard_urls)
         prov_map = build_provenance_map(target.provenance_globs, wanted)

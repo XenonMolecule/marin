@@ -161,11 +161,10 @@ DATASETS: dict[str, DatasetSpec] = {
             full=IndexSource.at(
                 "gs://marin-us-central2/documents/baseline_dclm_decon/10364warcs_core_v2/survivors/data-*.jsonl.gz"
             ),
-            small=IndexSource.under(
-                "gs://marin-us-central2/documents/baseline_dclm_decon/300warcs*/survivors/data-*.jsonl.gz",
-                landed=False,
-            ),
-            notes="SMALL 300-WARC decon subset not yet landed as a document tree.",
+            # SMALL = the exact 300-WARC subset the models trained on (non-deduped
+            # filtered subset; carries url + warc_record_id inline, no join needed).
+            small=IndexSource.under("gs://marin-us-central2/filtered_subsets/dclm_random_300warcs-*/data-*.jsonl.gz"),
+            notes="SMALL = filtered_subsets/dclm_random_300warcs (the trained 300-WARC corpus).",
         ),
         DatasetSpec(
             dataset="nemotron_full",
@@ -174,9 +173,9 @@ DATASETS: dict[str, DatasetSpec] = {
                 "gs://marin-us-central2/documents/baseline_nemotron_decon/10364warcs_core_v2/survivors/data-*.jsonl.gz"
             ),
             small=IndexSource.under(
-                "gs://marin-us-central2/documents/baseline_nemotron_decon/300warcs*/survivors/data-*.jsonl.gz",
-                landed=False,
+                "gs://marin-us-central2/filtered_subsets/nemotron_full_random_300warcs-*/data-*.jsonl.gz"
             ),
+            notes="SMALL = filtered_subsets/nemotron_full_random_300warcs (the trained 300-WARC corpus).",
         ),
         DatasetSpec(
             dataset="fineweb",
@@ -222,12 +221,12 @@ DATASETS: dict[str, DatasetSpec] = {
                 "gs://marin-us-central1/documents/baseline_high_quality_decon_deduped/"
                 "10364warcs/deduped/data-*.jsonl.gz"
             ),
+            # SMALL = the trained 300-WARC subset (carries url inline -> no join).
             small=IndexSource.under(
-                "gs://marin-us-central1/documents/baseline_high_quality_decon_deduped/"
-                "300warcs/deduped/data-*.jsonl.gz",
-                landed=False,
+                "gs://marin-us-central1/filtered_subsets/high_quality_random_300warcs-*/data-*.jsonl.gz"
             ),
             provenance_globs=_llm_provenance_globs("high_quality"),
+            notes="SMALL = filtered_subsets/high_quality_random_300warcs (trained corpus, url inline).",
         ),
         DatasetSpec(
             dataset="llm_pipeline_v1",

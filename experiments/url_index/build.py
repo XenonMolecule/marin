@@ -78,6 +78,13 @@ def _upload(local_path: str, dest: str) -> None:
         shutil.copyfileobj(src, dst)
 
 
+def _has_inline_url(shard: str) -> bool:
+    """Whether the first record of ``shard`` already carries a ``url`` (no join needed)."""
+    for rec in _read_records(shard):
+        return bool(rec.get("url"))
+    return False
+
+
 def _read_records(shard: str) -> Iterator[dict]:
     """Stream JSON records from a ``.jsonl(.gz|.zst)`` shard, thread-free.
 
@@ -233,8 +240,11 @@ def build_target(target: IndexTarget, *, local_root: str, overwrite: bool = Fals
 
     resolved = resolve_target(target)  # region-checked shard URLs
 
+    # Recover url/ids by text-hash join only for text-only tiers. Some tiers of a
+    # provenance-carrying dataset (e.g. high_quality's trained 300-WARC subset)
+    # keep url inline -- detect that and skip the (expensive) raw-batch join.
     prov_map: dict[str, dict] = {}
-    if target.provenance_globs:
+    if target.provenance_globs and not _has_inline_url(resolved.shard_urls[0]):
         wanted = _collect_wanted_hashes(resolved.shard_urls)
         prov_map = build_provenance_map(target.provenance_globs, wanted)
         del wanted
