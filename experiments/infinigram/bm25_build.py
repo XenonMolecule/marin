@@ -53,10 +53,12 @@ BM25_INDEX_ROOT_TEMPLATE = "{bucket}/bm25_indices/{collection}/{dataset}"
 TEXT_BYTES_BUDGET = 2 * 1024**3
 
 # Per-document metadata stored in (and returned by) the index. ``doc_id`` is a
-# corpus-global running index; the rest is provenance recovered upstream. A short
-# text preview makes hits human-inspectable and lets the smoke test assert on
-# retrieved content without a second lookup.
-METADATA_FIELDS = ("doc_id", *PROVENANCE_FIELDS, "id")
+# corpus-global running index; provenance fields (url / warc ids) are recovered
+# upstream; ``source_doc_id`` / ``modernbert_prob`` ride along when the source
+# carries them (e.g. fastpipe bands, whose url is joinable later by doc_id). A
+# short text preview makes hits human-inspectable and lets the smoke test assert
+# on retrieved content without a second lookup.
+METADATA_FIELDS = ("doc_id", *PROVENANCE_FIELDS, "id", "source_doc_id", "modernbert_prob")
 PREVIEW_CHARS = 200
 
 # bm25s tokenizer settings. English stopwords help precision; we deliberately skip
@@ -134,9 +136,16 @@ def build_subindex(texts: list[str], meta: list[dict], shard_dir: str) -> Bm25Sh
 
 
 def _make_meta(rec: dict, doc_id: int) -> dict:
-    """Metadata row for a document: provenance fields present on ``rec`` + preview."""
+    """Metadata row for a document: provenance fields present on ``rec`` + preview.
+
+    The source's own ``doc_id`` (a stable join key, e.g. fastpipe's) is preserved
+    as ``source_doc_id`` before ``doc_id`` is overwritten with the corpus-global
+    running index.
+    """
     text = rec.get("text") or ""
     row = {f: rec[f] for f in METADATA_FIELDS if rec.get(f) is not None}
+    if rec.get("doc_id") is not None:
+        row["source_doc_id"] = rec["doc_id"]
     row["doc_id"] = doc_id
     row["preview"] = text[:PREVIEW_CHARS]
     return row

@@ -32,6 +32,29 @@ from experiments.infinigram.targets import REGION_BUCKET, Collection, IndexSourc
 
 _C1 = "us-central1"
 _C2 = "us-central2"
+_E5 = "us-east5"
+
+# fastpipe_v3 keep-top-X% quality bands @ 300 WARCs (pinned us-east5). The bands
+# are dedup+decon so url was stripped; they carry text + doc_id + modernbert_prob.
+# url is recoverable later via a doc_id join to documents/fast_curation/ survivors.
+_FASTPIPE_BAND_DIR = {
+    100: "baseline_fastpipe_v3_decon_deduped",
+    80: "baseline_fastpipe_v3_80_decon_deduped",
+    60: "baseline_fastpipe_v3_60_decon_deduped",
+    40: "baseline_fastpipe_v3_40_decon_deduped",
+    20: "baseline_fastpipe_v3_20_decon_deduped",
+}
+
+
+def _fastpipe_specs() -> list["Bm25DatasetSpec"]:
+    return [
+        Bm25DatasetSpec(
+            dataset=f"fastpipe_v3_{pct}",
+            region=_E5,
+            small=IndexSource.at(f"gs://marin-us-east5/documents/{d}/300warcs/deduped/data-*.jsonl.gz"),
+        )
+        for pct, d in _FASTPIPE_BAND_DIR.items()
+    ]
 
 
 @dataclass(frozen=True)
@@ -148,6 +171,7 @@ BM25_SPECS: dict[str, Bm25DatasetSpec] = {
                 landed=False,
             ),
         ),
+        *_fastpipe_specs(),
     ]
 }
 
