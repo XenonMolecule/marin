@@ -156,6 +156,28 @@ def test_build_emits_expected_columns_and_counts(two_datasets):
     con.close()
 
 
+def test_subset_filter_restricts_to_manifest_warcs(tmp_path):
+    tmp = str(tmp_path)
+    # A 10k-style tier carrying file_path; keep only docs from the manifest WARCs.
+    docs = [
+        {"url": "http://a.com/1", "warc_record_id": "r1", "text": "keep a", "file_path": "s3://commoncrawl/WARC-A.gz"},
+        {"url": "http://b.com/2", "warc_record_id": "r2", "text": "drop b", "file_path": "s3://commoncrawl/WARC-B.gz"},
+        {"url": "http://c.com/3", "warc_record_id": "r3", "text": "keep c", "file_path": "s3://commoncrawl/WARC-A.gz"},
+    ]
+    shard = os.path.join(tmp, "src.jsonl.gz")
+    _write_shard(shard, docs)
+    manifest = os.path.join(tmp, "manifest.txt")
+    with open(manifest, "w") as f:
+        f.write("# header\ns3://commoncrawl/WARC-A.gz\n")
+
+    sub = build.build_subset_filter("file_path", manifest, None)
+    assert sub.field == "file_path" and "s3://commoncrawl/WARC-A.gz" in sub.keys
+    target = IndexTarget(dataset="ds", collection=Collection.SMALL, region="us-central1", source=IndexSource.at("x"))
+    resolved = ResolvedTarget(target=target, shard_urls=(shard,), shard_bytes=(0,))
+    rows = list(build._iter_rows(resolved, {}, subset=sub))
+    assert {r["url_key"] for r in rows} == {"a.com/1", "c.com/3"}  # WARC-B dropped
+
+
 def test_keys_only_skips_text_store(tmp_path):
     tmp = str(tmp_path)
     docs = [_doc("http://u1.com/", "r1", "raw universe text")]

@@ -20,6 +20,7 @@ final artifacts, which are uploaded to GCS.
 """
 
 import argparse
+import dataclasses
 import gc
 import json
 import logging
@@ -36,7 +37,7 @@ from marin.utils import fsspec_glob
 
 from experiments.infinigram.provenance import build_provenance_map, content_hash
 from experiments.infinigram.resolve import ResolvedTarget, resolve_target
-from experiments.infinigram.targets import Collection, IndexTarget, get_target
+from experiments.infinigram.targets import REGION_BUCKET, Collection, IndexTarget, get_target
 from experiments.url_index import layout
 from experiments.url_index.keys import (
     _normalize_record_id,
@@ -85,6 +86,64 @@ def _has_inline_url(shard: str) -> bool:
     return False
 
 
+# --- WARC-subset filtering (build a 300-WARC index from a 10k extraction) -----
+# Mirrors experiments/baseline_collection/subset_random100_10k.py: restrict a 10k
+# tier to a random-N WARC manifest by a per-record join field.
+
+_CC_PREFIXES = ("s3://commoncrawl/", "gs://commoncrawl/", "https://data.commoncrawl.org/")
+
+
+def _normalize_warc_path(s: str) -> str:
+    s = s.strip()
+    for p in _CC_PREFIXES:
+        if s.startswith(p):
+            return s[len(p) :]
+    return s
+
+
+def _load_manifest_warcs(manifest_path: str) -> set[str]:
+    """WARC paths from a manifest, dropping blanks and ``#`` provenance headers."""
+    with open(manifest_path) as f:
+        return {ln.strip() for ln in f if ln.strip() and not ln.startswith("#")}
+
+
+@dataclasses.dataclass(frozen=True)
+class SubsetFilter:
+    """Keep only docs whose ``field`` value is in ``keys`` (the random-N WARC subset)."""
+
+    field: str
+    keys: frozenset[str]
+
+
+def build_subset_filter(field: str, manifest_path: str, metadata_glob: str | None) -> SubsetFilter:
+    """A :class:`SubsetFilter` restricting a 10k tier to ``manifest_path``'s WARCs.
+
+    ``file_path``/``warc_file`` tiers carry the WARC path inline -> match the
+    manifest directly. ``url``/``warc_record_id`` tiers need the 10k WARC metadata
+    (``metadata_glob``) to map subset WARCs -> the field values to keep.
+    """
+    warc_set = _load_manifest_warcs(manifest_path)
+    if not warc_set:
+        raise ValueError(f"empty subset manifest {manifest_path}")
+    if field in ("file_path", "warc_file"):
+        return SubsetFilter(field=field, keys=frozenset(warc_set))
+    if metadata_glob is None:
+        raise ValueError(f"subset field {field!r} needs --subset-metadata")
+    shards = fsspec_glob(metadata_glob)
+    if not shards:
+        raise ValueError(f"no metadata shards at {metadata_glob}")
+    keys: set[str] = set()
+    logger.info("Building subset key set (field=%s) from %d metadata shards", field, len(shards))
+    for shard in shards:
+        for rec in _read_records(shard):
+            if rec.get("warc_file") in warc_set:
+                v = rec.get(field)
+                if v:
+                    keys.add(v)
+    logger.info("Subset key set: %d %s values for %d WARCs", len(keys), field, len(warc_set))
+    return SubsetFilter(field=field, keys=frozenset(keys))
+
+
 def _read_records(shard: str) -> Iterator[dict]:
     """Stream JSON records from a ``.jsonl(.gz|.zst)`` shard, thread-free.
 
@@ -118,15 +177,25 @@ def _collect_wanted_hashes(shard_urls: tuple[str, ...]) -> set[str]:
     return wanted
 
 
-def _iter_rows(resolved: ResolvedTarget, prov_map: dict[str, dict], *, keys_only: bool = False) -> "list[dict]":
+def _iter_rows(
+    resolved: ResolvedTarget,
+    prov_map: dict[str, dict],
+    *,
+    keys_only: bool = False,
+    subset: SubsetFilter | None = None,
+) -> "list[dict]":
     """Yield one key-row per document, recovering url/id from provenance when text-only.
 
     In ``keys_only`` mode the ``text`` string is dropped after its hash/length are
     computed, so the staging parquet stays small even for ~500M-doc raw tiers.
+    When ``subset`` is set, only docs whose ``subset.field`` value is in the subset
+    key set are emitted (restricting a 10k tier to a random-N WARC sample).
     """
     gcs = fsspec.filesystem("gcs") if resolved.shard_urls and resolved.shard_urls[0].startswith("gs://") else None
     for i, shard in enumerate(resolved.shard_urls):
         for rec in _read_records(shard):
+            if subset is not None and rec.get(subset.field) not in subset.keys:
+                continue
             text = _doc_text(rec)
             if not text:
                 continue
@@ -230,7 +299,29 @@ def _emit_artifacts(staging_path: str, dataset: str, local_out: str, *, keys_onl
     return (layout.KEYS_NAME,) if keys_only else (layout.KEYS_NAME, layout.META_NAME, layout.TEXT_NAME)
 
 
-def build_target(target: IndexTarget, *, local_root: str, overwrite: bool = False, keys_only: bool = False) -> dict:
+def _resolve(target: IndexTarget, source_glob: str | None) -> ResolvedTarget:
+    """Resolve the target's registry source, or ``source_glob`` when overriding it."""
+    if source_glob is None:
+        return resolve_target(target)
+    shards = tuple(sorted(fsspec_glob(source_glob)))
+    if not shards:
+        raise ValueError(f"--source-glob matched no shards: {source_glob}")
+    bucket = REGION_BUCKET[target.region]
+    bad = [s for s in shards if not s.startswith(f"{bucket}/")]
+    if bad:
+        raise ValueError(f"--source-glob shards outside region {target.region}: {bad[:2]}")
+    return ResolvedTarget(target=target, shard_urls=shards, shard_bytes=tuple(0 for _ in shards))
+
+
+def build_target(
+    target: IndexTarget,
+    *,
+    local_root: str,
+    overwrite: bool = False,
+    keys_only: bool = False,
+    source_glob: str | None = None,
+    subset: SubsetFilter | None = None,
+) -> dict:
     """Build and upload the URL-index artifacts for ``target``. Returns the stats dict."""
     out_dir = layout.index_dir(target.region, target.collection, target.dataset)
     sentinel = layout.KEYS_NAME if keys_only else layout.TEXT_NAME
@@ -238,7 +329,7 @@ def build_target(target: IndexTarget, *, local_root: str, overwrite: bool = Fals
         logger.info("%s already built at %s (use --overwrite to rebuild)", target.name, out_dir)
         return {"skipped": True, "out_dir": out_dir}
 
-    resolved = resolve_target(target)  # region-checked shard URLs
+    resolved = _resolve(target, source_glob)  # region-checked shard URLs
 
     # Recover url/ids by text-hash join only for text-only tiers. Some tiers of a
     # provenance-carrying dataset (e.g. high_quality's trained 300-WARC subset)
@@ -254,7 +345,9 @@ def build_target(target: IndexTarget, *, local_root: str, overwrite: bool = Fals
     with tempfile.NamedTemporaryFile(dir=local_root, suffix=".parquet", delete=False) as tmp:
         staging_path = tmp.name
     try:
-        doc_count, url_present = _write_unsorted(_iter_rows(resolved, prov_map, keys_only=keys_only), staging_path)
+        doc_count, url_present = _write_unsorted(
+            _iter_rows(resolved, prov_map, keys_only=keys_only, subset=subset), staging_path
+        )
         # Free the provenance map (can be GiBs for one-call tiers) before the emit pass.
         prov_map.clear()
         gc.collect()
@@ -270,6 +363,7 @@ def build_target(target: IndexTarget, *, local_root: str, overwrite: bool = Fals
             "text_only_tier": bool(target.provenance_globs),
             "keys_only": keys_only,
             "shard_count": resolved.shard_count,
+            "subset_field": subset.field if subset else None,
             "out_dir": out_dir,
         }
         for name in names:
@@ -297,6 +391,14 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="Only write keys.parquet (coverage), skip the text store. For huge raw tiers.",
     )
+    p.add_argument("--source-glob", default=None, help="Override the registry source with this gs:// glob.")
+    p.add_argument(
+        "--subset-manifest",
+        default=None,
+        help="Restrict to the WARCs in this manifest (build a random-N subset of a 10k tier).",
+    )
+    p.add_argument("--subset-field", default=None, help="Join field: file_path | warc_file | url | warc_record_id.")
+    p.add_argument("--subset-metadata", default=None, help="10k WARC metadata glob (for url/warc_record_id joins).")
     return p.parse_args()
 
 
@@ -304,7 +406,19 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     args = _parse_args()
     target = get_target(args.dataset, Collection(args.collection))
-    build_target(target, local_root=args.local_root, overwrite=args.overwrite, keys_only=args.keys_only)
+    subset = None
+    if args.subset_manifest:
+        if not args.subset_field:
+            raise SystemExit("--subset-manifest requires --subset-field")
+        subset = build_subset_filter(args.subset_field, args.subset_manifest, args.subset_metadata)
+    build_target(
+        target,
+        local_root=args.local_root,
+        overwrite=args.overwrite,
+        keys_only=args.keys_only,
+        source_glob=args.source_glob,
+        subset=subset,
+    )
 
 
 if __name__ == "__main__":
