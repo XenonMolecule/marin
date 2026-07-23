@@ -69,12 +69,33 @@ fi
 # zephyr). The compiler is invoked by full path, with PATH scoped to its subshell.
 export LD_LIBRARY_PATH="${ENV_PREFIX}/lib:${LD_LIBRARY_PATH:-}"
 
+# The prebuilt cpp_indexing (built with gcc-5) needs libcilkrts.so.5 (the Cilk
+# runtime, removed from gcc>=8), which modern libgcc-ng lacks. Without it the final
+# compression step silently fails -> a huge, unqueryable index. We vendor the .so
+# (from psi4's gcc-5) so it ships in the job bundle -- no fragile runtime download.
+if [[ ! -f "${ENV_PREFIX}/lib/libcilkrts.so.5" ]]; then
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  VENDORED="${SCRIPT_DIR}/vendor/libcilkrts.so.5.0.0"
+  if [[ -f "${VENDORED}" ]]; then
+    cp "${VENDORED}" "${ENV_PREFIX}/lib/libcilkrts.so.5.0.0"
+    ln -sf libcilkrts.so.5.0.0 "${ENV_PREFIX}/lib/libcilkrts.so.5"
+    log "installed vendored libcilkrts.so.5"
+  else
+    log "WARN: vendored libcilkrts.so.5.0.0 not found at ${VENDORED}"
+  fi
+fi
+
 # 3. vendored infini-gram-mini checkout
 if [[ ! -d "${INFINIGRAM_MINI_DIR}/.git" ]]; then
   log "cloning infini-gram-mini @ ${INFINIGRAM_MINI_SHA}"
   git clone "${INFINIGRAM_MINI_REPO}" "${INFINIGRAM_MINI_DIR}"
   git -C "${INFINIGRAM_MINI_DIR}" checkout "${INFINIGRAM_MINI_SHA}"
 fi
+# indexing.py runs the final ./cpp_indexing compression with `2>/dev/null` AND
+# never checks its return code, so a failed compression silently yields a huge,
+# unqueryable (uncompressed) index. Un-suppress it so errors surface.
+sed -i 's| 2>/dev/null||g' "${INFINIGRAM_MINI_DIR}/src/indexing.py" || true
+
 # Committed sdsl shared libs must be loadable by the compiled cpp_engine.
 export LD_LIBRARY_PATH="${INFINIGRAM_MINI_DIR}/sdsl/lib:${LD_LIBRARY_PATH}"
 
@@ -100,5 +121,44 @@ if [[ "${COMPILE_ENGINE}" == "1" && -f "${INFINIGRAM_MINI_DIR}/engine/src/cpp_en
 fi
 
 export INFINIGRAM_MINI_DIR
+
+# Full round-trip self-test (faithful env: sdsl on LD_LIBRARY_PATH, engine built).
+# Builds a tiny index, then loads the engine and counts -- always reports sizes +
+# count to stderr and exits 1 so the diagnostic is visible in the job summary
+# (task logs are unavailable on this cluster).
+if [[ "${INFINIGRAM_SELFTEST:-0}" == "1" ]]; then
+  ST="${WORK_ROOT}/selftest"; rm -rf "${ST}"; mkdir -p "${ST}/data"
+  python - "${ST}/data/x.jsonl.gz" <<'PY'
+import gzip, sys
+with gzip.open(sys.argv[1], "wt") as f:
+    for _ in range(5000):
+        f.write('{"text":"the quick brown fox jumps over the lazy dog. the the united states of america."}\n')
+PY
+  ULIM=$(python -c 'import resource;print(resource.getrlimit(resource.RLIMIT_NOFILE)[1])')
+  python "${INFINIGRAM_MINI_DIR}/src/indexing.py" --data_dir "${ST}/data" --save_dir "${ST}/idx" \
+    --temp_dir "${ST}/tmp" --mem 4 --cpus 2 --ulimit "${ULIM}" >"${ST}/idx.log" 2>&1 || true
+  # Write a full diagnostic to GCS (job task logs are unavailable on this cluster).
+  INFINIGRAM_MINI_DIR="${INFINIGRAM_MINI_DIR}" python - "${ST}/idx" "${ST}/idx.log" <<'PY' || true
+import json, os, sys, traceback
+idx, logp = sys.argv[1], sys.argv[2]
+rep = {"sizes": {}, "indexing_log_tail": open(logp).read()[-3000:] if os.path.exists(logp) else ""}
+for n in os.listdir(idx) if os.path.isdir(idx) else []:
+    rep["sizes"][n] = os.path.getsize(os.path.join(idx, n))
+try:
+    from experiments.infinigram.query import _load_engine_class
+    eng = _load_engine_class()(index_dirs=[idx], load_to_ram=False, get_metadata=True)
+    rep["count_the"] = eng.count("the")
+    rep["find_the"] = str(eng.find("the"))[:500]
+except Exception:
+    rep["engine_error"] = traceback.format_exc()[-2000:]
+import fsspec
+with fsspec.open("gs://marin-us-central2/infinigram_selftest.json", "w") as f:
+    json.dump(rep, f, indent=2)
+print("wrote diagnostic to gs://marin-us-central2/infinigram_selftest.json")
+PY
+  echo "SELFTEST DONE" >&2
+  exit 1
+fi
+
 log "handing off to pipeline: $*"
 exec python -m experiments.infinigram.pipeline "$@"
