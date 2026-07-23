@@ -26,16 +26,16 @@ logger = logging.getLogger(__name__)
 # Per-shard corpus cap (the paper indexes <=700 GiB per shard under 2 TiB RAM).
 SHARD_BYTES_THRESHOLD = 700 * 1024**3
 
-# Files indexing.py writes into each shard's save_dir on success.
+# Files a SUCCESSFUL indexing.py leaves in save_dir. The final `cpp_indexing`
+# compression step consumes the intermediate *.sdsl (suffix array / BWT) files and
+# emits the compressed FM-indexes `data.fm9` / `meta.fm9` (+ offsets). Their
+# presence is what proves compression actually ran (its absence = the silent
+# libcilkrts failure that leaves a huge, unqueryable index).
 _INDEX_FILES = (
-    "text_data.sdsl",
+    "data.fm9",
+    "meta.fm9",
     "data_offset",
-    "sa_data.sdsl",
-    "bwt_data.sdsl",
-    "text_meta.sdsl",
     "meta_offset",
-    "sa_meta.sdsl",
-    "bwt_meta.sdsl",
 )
 
 
