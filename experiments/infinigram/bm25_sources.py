@@ -107,13 +107,25 @@ BM25_SPECS: dict[str, Bm25DatasetSpec] = {
             ),
             small_provenance=_llm_provenance_globs("llm_pipeline_v1"),
         ),
+        # llm_simple_v1 (one-call twin pipeline): 300 dedup + decon, text-only.
+        Bm25DatasetSpec(
+            dataset="llm_simple_v1",
+            region=_C1,
+            small=IndexSource.at(
+                "gs://marin-us-central1/documents/baseline_llm_simple_v1_decon_deduped/"
+                "300warcs/deduped/data-*.jsonl.gz"
+            ),
+            small_provenance=_llm_provenance_globs("llm_simple_v1"),
+        ),
         # fineweb_edu: RAW filtered at 10k (no 300 training run).
         Bm25DatasetSpec(
             dataset="fineweb_edu",
             region=_C2,
             full=IndexSource.under("gs://marin-us-central2/filtered/dclm_400m_1x_10k_fineweb_edu-*/*.jsonl.gz"),
         ),
-        # fineweb_cc: 10k tier path not yet confirmed in GCS (registry guess).
+        # fineweb_cc: BLOCKED. Training documents do not exist in GCS -- only
+        # baseline_fineweb_cc/smoke_CC-MAIN-2013-20 is present (fineweb was never
+        # produced at 10k/300, per the user). landed=False so the launcher skips it.
         Bm25DatasetSpec(
             dataset="fineweb",
             region=_C2,
@@ -122,7 +134,11 @@ BM25_SPECS: dict[str, Bm25DatasetSpec] = {
                 landed=False,
             ),
         ),
-        # resiliparse: deduped training tier still being located (candidates empty).
+        # resiliparse: BLOCKED. The DEDUPED training documents were cleaned up after
+        # tokenization (baseline_resiliparse_deduped is empty); only the tokenized
+        # cache survives + the RAW extraction (extracted/dclm_400m_1x_10k_resiliparse-
+        # f0887f). Left landed=False pending a user call: index the raw superset, or
+        # regenerate the deduped docs.
         Bm25DatasetSpec(
             dataset="resiliparse",
             region=_C2,
