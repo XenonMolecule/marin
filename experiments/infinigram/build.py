@@ -60,27 +60,22 @@ def plan_shards(byte_count: int) -> int:
     return max(1, -(-byte_count // SHARD_BYTES_THRESHOLD))
 
 
-# Peak local disk during a chunk build ~= staged corpus (1x) + FM-index (~0.44x)
-# + suffix-array/BWT construction temp (~1.5x). Keep each chunk's corpus under
-# disk_budget / this factor so the whole chunk fits the CPU VM's ephemeral disk.
-DISK_FACTOR = 3.2
+def plan_chunks(shard_bytes: list[int], chunk_byte_budget: int) -> list[list[int]]:
+    """Group shard indices into contiguous chunks each under ``chunk_byte_budget``.
 
-
-def plan_chunks(shard_bytes: list[int], disk_budget_bytes: int) -> list[list[int]]:
-    """Group shard indices into contiguous chunks that each fit the disk budget.
-
-    Each chunk is built, uploaded as its own index shard dir, and cleared before
-    the next — bounding peak disk to one chunk. A single shard larger than the
-    budget gets its own chunk (shards are atomic). Returns lists of shard indices.
+    ``chunk_byte_budget`` is a GZIP-byte budget (the caller derives it from the
+    tighter of the disk and memory limits). Each chunk is built, uploaded as its
+    own index shard dir, and cleared before the next — bounding both peak disk and
+    the indexer's peak RAM to a single chunk. A single shard larger than the budget
+    gets its own chunk (shards are atomic). Returns lists of shard indices.
     """
-    if disk_budget_bytes <= 0:
-        raise ValueError(f"disk_budget_bytes must be positive, got {disk_budget_bytes}")
-    chunk_budget = max(1, int(disk_budget_bytes / DISK_FACTOR))
+    if chunk_byte_budget <= 0:
+        raise ValueError(f"chunk_byte_budget must be positive, got {chunk_byte_budget}")
     chunks: list[list[int]] = []
     cur: list[int] = []
     cur_sum = 0
     for i, b in enumerate(shard_bytes):
-        if cur and cur_sum + b > chunk_budget:
+        if cur and cur_sum + b > chunk_byte_budget:
             chunks.append(cur)
             cur, cur_sum = [], 0
         cur.append(i)

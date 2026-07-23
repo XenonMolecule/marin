@@ -21,9 +21,10 @@ from marin.utils import fsspec_exists
 
 from experiments.infinigram.build import build_index, plan_chunks
 from experiments.infinigram.gcs_io import download_dir, upload_dir, upload_file
+from experiments.infinigram.provenance import build_provenance_map
 from experiments.infinigram.query import index_dirs_for, smoke_test_index
 from experiments.infinigram.resolve import ResolvedTarget, resolve_target
-from experiments.infinigram.stage import stage_corpus
+from experiments.infinigram.stage import collect_wanted_hashes, stage_corpus
 from experiments.infinigram.targets import Collection, IndexTarget, get_target
 from experiments.infinigram.upload import IndexStats, manifest_url, write_manifest
 
@@ -33,6 +34,10 @@ logger = logging.getLogger(__name__)
 _MEM_HEADROOM_GIB = 8
 # Leave this much disk free (staging scratch, OS) when sizing the chunk budget.
 _DISK_HEADROOM_GIB = 10
+# Peak disk per chunk ~= staged gz (1x) + decompressed data (~3.5x) + build temp
+# (~parts/merged) + index; empirically a ~12.7 GB gz corpus indexes through
+# make-part on ~100 GB disk, so cap chunk gz at free_disk / this.
+_DISK_FACTOR = 8.0
 
 
 def _read_int(path: str) -> int | None:
@@ -111,16 +116,26 @@ def _mark(index_dir: str, phase: str) -> None:
         logger.warning("progress marker %s failed: %s", phase, e)
 
 
-# infini-gram-mini's indexing.py splits the corpus into batches so that peak SA
-# RAM stays near the `--mem` argument (each of `cpus` parallel jobs handles
-# ~mem/(12*cpus) bytes at ~12x RAM, so cpus jobs sum to ~mem); a bigger corpus
-# just uses more batches, not more RAM. On top of --mem sits prepare()/rust
-# overhead, so we budget --mem at a fraction of the container to leave slack.
-_MEM_SAFETY = 0.5
+# The `--mem` arg only bounds indexing.py's make-part step; the merge/concat step
+# peaks at ~3x the DECOMPRESSED corpus regardless of --mem, so total RAM is set by
+# corpus size, not --mem. We therefore cap each chunk's gzip bytes so the merge
+# fits the container: decompressed ~= GZ_INFLATE x gz, merge ~= MERGE_FACTOR x
+# decompressed, kept under MEM_SAFETY x container. --mem itself (make-part budget)
+# is a moderate fraction of the container.
+_MEM_SAFETY = 0.8
+_GZ_INFLATE = 3.5  # decompressed / gzip
+_MERGE_FACTOR = 3.0  # indexer peak RAM / decompressed (paper: ~700GB shard on 2TiB)
+_INDEX_MEM_FRACTION = 0.2  # --mem (make-part budget) as a fraction of container
 
 
 def _index_mem_gib(container_mem_gib: int) -> int:
-    return max(4, int(container_mem_gib * _MEM_SAFETY))
+    return max(4, int(container_mem_gib * _INDEX_MEM_FRACTION))
+
+
+def _mem_chunk_budget_bytes(container_mem_gib: int) -> int:
+    """Max gzip bytes per chunk so the indexer's merge fits the container RAM."""
+    usable = container_mem_gib * _MEM_SAFETY * 1024**3
+    return max(1, int(usable / (_MERGE_FACTOR * _GZ_INFLATE)))
 
 
 def build_index_for_target(
@@ -150,20 +165,35 @@ def build_index_for_target(
     if fsspec_exists(manifest_url(index_dir)) and not overwrite:
         raise FileExistsError(f"{manifest_url(index_dir)} exists; pass overwrite=True to rebuild {target.name}")
 
-    budget = int((disk_budget_gib or max(1, _free_disk_gib(local_root) - _DISK_HEADROOM_GIB)) * 1024**3)
-    chunks = plan_chunks(list(resolved.shard_bytes), budget)
+    disk_gib = disk_budget_gib or max(1, _free_disk_gib(local_root) - _DISK_HEADROOM_GIB)
+    disk_chunk_bytes = int(disk_gib * 1024**3 / _DISK_FACTOR)
+    mem_chunk_bytes = _mem_chunk_budget_bytes(container_mem_gib)
+    chunk_budget = min(disk_chunk_bytes, mem_chunk_bytes)
+    chunks = plan_chunks(list(resolved.shard_bytes), chunk_budget)
     single = len(chunks) == 1
     logger.info(
-        "%s: %d shards, %.1f GiB -> %d chunk(s); %d cpus, --mem %d GiB (of %d container), disk budget %.0f GiB",
+        "%s: %d shards, %.1f GiB -> %d chunk(s) (chunk<=%.1f GiB gz: disk %.1f / mem %.1f); "
+        "%d cpus, --mem %d GiB of %d container",
         target.name,
         resolved.shard_count,
         resolved.total_bytes / 1024**3,
         len(chunks),
+        chunk_budget / 1024**3,
+        disk_chunk_bytes / 1024**3,
+        mem_chunk_bytes / 1024**3,
         cpus,
         mem_gib,
         container_mem_gib,
-        budget / 1024**3,
     )
+
+    # Build the provenance map ONCE over the whole corpus (not per chunk) so the
+    # huge raw provenance tier is read a single time even when we chunk.
+    prov_map: dict[str, dict] | None = None
+    if target.provenance_globs:
+        _mark(index_dir, "building_provenance_map")
+        wanted = collect_wanted_hashes(resolved.shard_urls)
+        prov_map = build_provenance_map(target.provenance_globs, wanted)
+        _mark(index_dir, f"provenance_map_{len(prov_map)}of{len(wanted)}")
 
     stats = IndexStats()
     shard_dir_urls: list[str] = []
@@ -182,7 +212,7 @@ def build_index_for_target(
             chunk_work = os.path.join(local_root, f"work_{c:03d}")
 
             _mark(index_dir, f"chunk{c:03d}_staging")
-            with stage_corpus(chunk_resolved, chunk_work) as staged:
+            with stage_corpus(chunk_resolved, chunk_work, prov_map=prov_map) as staged:
                 _mark(index_dir, f"chunk{c:03d}_staged_{staged.doc_count}docs")
                 # temp under chunk_work so it is reclaimed between chunks (bounds disk).
                 built = build_index(

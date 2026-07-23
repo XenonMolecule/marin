@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pytest
 
-from experiments.infinigram.build import DISK_FACTOR, SHARD_BYTES_THRESHOLD, plan_chunks, plan_shards
+from experiments.infinigram.build import SHARD_BYTES_THRESHOLD, plan_chunks, plan_shards
 from experiments.infinigram.resolve import _assert_in_region, _bucket_of, resolve_prefix
 from experiments.infinigram.targets import (
     DATASETS,
@@ -95,16 +95,15 @@ def test_plan_shards(byte_count, expected):
 
 def test_plan_chunks_single_when_it_fits():
     gib = 1024**3
-    # 13 GiB corpus, 90 GiB disk -> budget/DISK_FACTOR ~= 28 GiB -> one chunk
-    assert plan_chunks([gib] * 13, 90 * gib) == [list(range(13))]
+    # 13 GiB corpus, 25 GiB per-chunk budget -> one chunk
+    assert plan_chunks([gib] * 13, 25 * gib) == [list(range(13))]
 
 
 def test_plan_chunks_splits_large_corpus_within_budget():
     gib = 1024**3
     shard_bytes = [10 * gib] * 57  # ~570 GiB like resiliparse
-    chunks = plan_chunks(shard_bytes, 90 * gib)
-    # every chunk's corpus must be under the per-chunk budget
-    budget = int(90 * gib / DISK_FACTOR)
+    budget = 25 * gib
+    chunks = plan_chunks(shard_bytes, budget)
     assert len(chunks) > 1
     for chunk in chunks:
         assert sum(shard_bytes[i] for i in chunk) <= budget
@@ -115,7 +114,7 @@ def test_plan_chunks_splits_large_corpus_within_budget():
 def test_plan_chunks_oversized_shard_gets_own_chunk():
     gib = 1024**3
     # a single shard bigger than the whole budget still becomes its own chunk
-    chunks = plan_chunks([100 * gib], 90 * gib)
+    chunks = plan_chunks([100 * gib], 25 * gib)
     assert chunks == [[0]]
 
 

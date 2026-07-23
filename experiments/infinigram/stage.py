@@ -65,8 +65,11 @@ def _doc_text(rec: dict, text_field: str) -> str | None:
     return rec.get(text_field) or rec.get("generated_text")
 
 
-def _collect_wanted_hashes(shard_urls: tuple[str, ...], text_field: str) -> set[str]:
-    """First pass over the (text-only) corpus: the text hashes needing provenance."""
+def collect_wanted_hashes(shard_urls: tuple[str, ...], text_field: str = "text") -> set[str]:
+    """The text hashes of a (text-only) corpus that need provenance attached.
+
+    Read once up front so the provenance map can be built a single time and shared
+    across all chunks (avoids re-reading the huge raw provenance tier per chunk)."""
     wanted: set[str] = set()
     for url in shard_urls:
         for rec in load_file(url):
@@ -77,8 +80,18 @@ def _collect_wanted_hashes(shard_urls: tuple[str, ...], text_field: str) -> set[
 
 
 @contextmanager
-def stage_corpus(resolved: ResolvedTarget, local_root: str, *, text_field: str = "text") -> Iterator[StagedCorpus]:
+def stage_corpus(
+    resolved: ResolvedTarget,
+    local_root: str,
+    *,
+    text_field: str = "text",
+    prov_map: dict[str, dict] | None = None,
+) -> Iterator[StagedCorpus]:
     """Stream ``resolved``'s shards to local disk and yield a :class:`StagedCorpus`.
+
+    ``prov_map`` (content-hash -> provenance) is used to reattach url/warc ids for
+    text-only tiers. Pass a prebuilt map (shared across chunks); if None and the
+    target has provenance globs, one is built for this call's shards.
 
     Cleans up the staged data dir on exit (the index itself lives elsewhere).
     """
@@ -87,10 +100,11 @@ def stage_corpus(resolved: ResolvedTarget, local_root: str, *, text_field: str =
     os.makedirs(data_dir, exist_ok=True)
     url_index_path = os.path.join(local_root, URL_INDEX_NAME)
 
-    prov_map: dict[str, dict] = {}
-    if target.provenance_globs:
-        wanted = _collect_wanted_hashes(resolved.shard_urls, text_field)
-        prov_map = build_provenance_map(target.provenance_globs, wanted)
+    if prov_map is None:
+        prov_map = {}
+        if target.provenance_globs:
+            wanted = collect_wanted_hashes(resolved.shard_urls, text_field)
+            prov_map = build_provenance_map(target.provenance_globs, wanted)
 
     uidx_dir = os.path.join(local_root, "_uidx")
     os.makedirs(uidx_dir, exist_ok=True)
