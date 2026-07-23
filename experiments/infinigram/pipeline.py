@@ -20,7 +20,7 @@ import fsspec
 from marin.utils import fsspec_exists
 
 from experiments.infinigram.build import build_index, plan_chunks
-from experiments.infinigram.gcs_io import download_dir, upload_dir, upload_file
+from experiments.infinigram.gcs_io import download_dir, download_file, upload_dir, upload_file
 from experiments.infinigram.provenance import build_provenance_map
 from experiments.infinigram.query import index_dirs_for, smoke_test_index
 from experiments.infinigram.resolve import ResolvedTarget, resolve_target
@@ -127,7 +127,13 @@ _GZ_INFLATE = 3.5  # decompressed / gzip
 # indexer merge loads the full suffix array (~5x decompressed) into RAM; measured
 # empirically higher (a 12 GB gz chunk OOM'd a 160 GB box), so budget conservatively.
 _MERGE_FACTOR = 8.0  # indexer peak RAM / decompressed
-_INDEX_MEM_FRACTION = 0.15  # --mem (make-part budget) as a fraction of container
+# --mem (make-part budget) as a fraction of container. Higher = fewer, larger
+# batches = faster indexing; must stay under the container (make-part peaks ~--mem)
+# with room for the merge (~MEM_SAFETY x container is reserved for that).
+_INDEX_MEM_FRACTION = 0.35
+# Hard cap on chunk size so each chunk builds fast (~10 min) and preemption on the
+# only big-RAM (preemptible) nodes loses at most one small chunk.
+_MAX_CHUNK_GZ_BYTES = 5 * 1024**3
 
 
 def _index_mem_gib(container_mem_gib: int) -> int:
@@ -137,7 +143,7 @@ def _index_mem_gib(container_mem_gib: int) -> int:
 def _mem_chunk_budget_bytes(container_mem_gib: int) -> int:
     """Max gzip bytes per chunk so the indexer's merge fits the container RAM."""
     usable = container_mem_gib * _MEM_SAFETY * 1024**3
-    return max(1, int(usable / (_MERGE_FACTOR * _GZ_INFLATE)))
+    return min(_MAX_CHUNK_GZ_BYTES, max(1, int(usable / (_MERGE_FACTOR * _GZ_INFLATE))))
 
 
 def build_index_for_target(
@@ -148,6 +154,8 @@ def build_index_for_target(
     mem_gib: int | None = None,
     container_mem_gib: int | None = None,
     disk_budget_gib: int | None = None,
+    num_workers: int = 1,
+    worker_index: int = 0,
     overwrite: bool = False,
     verify: bool = True,
 ) -> str:
@@ -165,89 +173,150 @@ def build_index_for_target(
     resolved = resolve_target(target)
     index_dir = target.index_dir
     if fsspec_exists(manifest_url(index_dir)) and not overwrite:
-        raise FileExistsError(f"{manifest_url(index_dir)} exists; pass overwrite=True to rebuild {target.name}")
+        logger.info("%s already complete (manifest exists); nothing to do.", target.name)
+        return index_dir
+    # Only a single-worker build may auto-clear; under striding, clearing would wipe
+    # other workers' chunks, so the launcher pre-clears once before fanning out.
+    if overwrite and num_workers == 1:
+        _clear_index_dir(index_dir)
 
+    # Chunk boundaries must be STABLE across preemption restarts, so derive the
+    # budget only from the explicitly-passed container mem + disk budget (never the
+    # node's free disk, which varies by where a restart lands).
     disk_gib = disk_budget_gib or max(1, _free_disk_gib(local_root) - _DISK_HEADROOM_GIB)
     disk_chunk_bytes = int(disk_gib * 1024**3 / _DISK_FACTOR)
     mem_chunk_bytes = _mem_chunk_budget_bytes(container_mem_gib)
     chunk_budget = min(disk_chunk_bytes, mem_chunk_bytes)
     chunks = plan_chunks(list(resolved.shard_bytes), chunk_budget)
     single = len(chunks) == 1
+
+    def _shard_url(c: int) -> str:
+        return index_dir.rstrip("/") if single else f"{index_dir.rstrip('/')}/{c:03d}"
+
     logger.info(
-        "%s: %d shards, %.1f GiB -> %d chunk(s) (chunk<=%.1f GiB gz: disk %.1f / mem %.1f); "
-        "%d cpus, --mem %d GiB of %d container",
+        "%s: %d shards, %.1f GiB -> %d chunk(s) (chunk<=%.1f GiB gz); %d cpus, --mem %d of %d container",
         target.name,
         resolved.shard_count,
         resolved.total_bytes / 1024**3,
         len(chunks),
         chunk_budget / 1024**3,
-        disk_chunk_bytes / 1024**3,
-        mem_chunk_bytes / 1024**3,
         cpus,
         mem_gib,
         container_mem_gib,
     )
 
-    # Build the provenance map ONCE over the whole corpus (not per chunk) so the
-    # huge raw provenance tier is read a single time even when we chunk.
+    # This worker owns chunks c where c % num_workers == worker_index (lets many
+    # jobs share one huge corpus). Resume skips chunks already done by any worker.
+    pending = [
+        c
+        for c in range(len(chunks))
+        if c % num_workers == worker_index and not fsspec_exists(_chunk_done_url(_shard_url(c)))
+    ]
+    logger.info(
+        "%s: worker %d/%d owns %d pending chunks of %d total",
+        target.name,
+        worker_index,
+        num_workers,
+        len(pending),
+        len(chunks),
+    )
+
+    # Build the provenance map ONCE (not per chunk) -- only if some chunk still needs it.
     prov_map: dict[str, dict] | None = None
-    if target.provenance_globs:
+    if target.provenance_globs and pending:
         _mark(index_dir, "building_provenance_map")
         wanted = collect_wanted_hashes(resolved.shard_urls)
         prov_map = build_provenance_map(target.provenance_globs, wanted)
         _mark(index_dir, f"provenance_map_{len(prov_map)}of{len(wanted)}")
 
-    stats = IndexStats()
-    shard_dir_urls: list[str] = []
     chunk_reports: list[dict] = []
-    combined_url_index = os.path.join(local_root, "url_index.jsonl.gz")
+    for c in pending:
+        idxs = chunks[c]
+        shard_url = _shard_url(c)
+        chunk_resolved = ResolvedTarget(
+            target=target,
+            shard_urls=tuple(resolved.shard_urls[i] for i in idxs),
+            shard_bytes=tuple(resolved.shard_bytes[i] for i in idxs),
+        )
+        shard_local = os.path.join(local_root, "index", f"{c:03d}")
+        chunk_work = os.path.join(local_root, f"work_{c:03d}")
 
-    with open(combined_url_index, "wb") as combined:
-        for c, idxs in enumerate(chunks):
-            chunk_resolved = ResolvedTarget(
-                target=target,
-                shard_urls=tuple(resolved.shard_urls[i] for i in idxs),
-                shard_bytes=tuple(resolved.shard_bytes[i] for i in idxs),
+        _mark(index_dir, f"chunk{c:03d}_staging")
+        with stage_corpus(chunk_resolved, chunk_work, prov_map=prov_map) as staged:
+            _mark(index_dir, f"chunk{c:03d}_staged_{staged.doc_count}docs")
+            built = build_index(
+                staged, shard_local, mem_gib=mem_gib, cpus=cpus, temp_dir=os.path.join(chunk_work, "_tmp")
             )
-            shard_local = os.path.join(local_root, "index") if single else os.path.join(local_root, "index", f"{c:03d}")
-            shard_url = index_dir.rstrip("/") if single else f"{index_dir.rstrip('/')}/{c:03d}"
-            chunk_work = os.path.join(local_root, f"work_{c:03d}")
+            _mark(index_dir, f"chunk{c:03d}_built")
+            if verify:
+                chunk_reports.append(_verify_chunk(list(built.shard_dirs), c))
+            upload_dir(shard_local, shard_url)
+            upload_file(staged.url_index_path, f"{shard_url.rstrip('/')}/url_index.jsonl.gz")
+            _write_chunk_done(
+                shard_url,
+                {"doc_count": staged.doc_count, "matched": staged.matched_provenance, "index_bytes": built.index_bytes},
+            )
+            _mark(index_dir, f"chunk{c:03d}_uploaded")
+        shutil.rmtree(shard_local, ignore_errors=True)
+        shutil.rmtree(chunk_work, ignore_errors=True)
 
-            _mark(index_dir, f"chunk{c:03d}_staging")
-            with stage_corpus(chunk_resolved, chunk_work, prov_map=prov_map) as staged:
-                _mark(index_dir, f"chunk{c:03d}_staged_{staged.doc_count}docs")
-                # temp under chunk_work so it is reclaimed between chunks (bounds disk).
-                built = build_index(
-                    staged, shard_local, mem_gib=mem_gib, cpus=cpus, temp_dir=os.path.join(chunk_work, "_tmp")
-                )
-                _mark(index_dir, f"chunk{c:03d}_built")
-                stats.doc_count += staged.doc_count
-                stats.provenance_matched += staged.matched_provenance
-                stats.index_bytes += built.index_bytes
-                with open(staged.url_index_path, "rb") as uf:  # gzip streams concatenate
-                    shutil.copyfileobj(uf, combined)
-                upload_dir(shard_local, shard_url)
-                _mark(index_dir, f"chunk{c:03d}_uploaded")
-                shard_dir_urls.append(shard_url)
-                if verify:
-                    chunk_reports.append(_verify_chunk(list(built.shard_dirs), c))
-                    _mark(index_dir, f"chunk{c:03d}_verified")
-            shutil.rmtree(shard_local, ignore_errors=True)
-            shutil.rmtree(chunk_work, ignore_errors=True)
+    # Finalize (url-index reassembly + manifest) only once EVERY chunk is done --
+    # under striding another worker may still be building. Whichever worker sees the
+    # last chunk complete writes the manifest (idempotent if two race).
+    if not all(fsspec_exists(_chunk_done_url(_shard_url(c))) for c in range(len(chunks))):
+        logger.info("%s: this worker finished its chunks; others still building -- not finalizing", target.name)
+        return index_dir
+
+    stats = IndexStats()
+    for c in range(len(chunks)):
+        info = _read_chunk_done(_shard_url(c))
+        stats.doc_count += info["doc_count"]
+        stats.provenance_matched += info["matched"]
+        stats.index_bytes += info["index_bytes"]
 
     url_index_url = f"{index_dir.rstrip('/')}/url_index.jsonl.gz"
+    combined_url_index = os.path.join(local_root, "url_index.jsonl.gz")
+    with open(combined_url_index, "wb") as combined:
+        for c in range(len(chunks)):
+            part = os.path.join(local_root, f"uidx_{c:03d}.jsonl.gz")
+            download_file(f"{_shard_url(c).rstrip('/')}/url_index.jsonl.gz", part)
+            with open(part, "rb") as pf:
+                shutil.copyfileobj(pf, combined)
+            os.remove(part)
     upload_file(combined_url_index, url_index_url)
     write_manifest(
         index_dir,
         resolved,
-        shard_dir_urls=shard_dir_urls,
+        shard_dir_urls=[_shard_url(c) for c in range(len(chunks))],
         url_index_url=url_index_url,
         stats=stats,
         num_chunks=len(chunks),
     )
-    if verify:
+    if verify and chunk_reports:
         _record_validation(index_dir, chunk_reports)
     return index_dir
+
+
+def _chunk_done_url(shard_url: str) -> str:
+    return f"{shard_url.rstrip('/')}/.chunk_done.json"
+
+
+def _write_chunk_done(shard_url: str, info: dict) -> None:
+    with fsspec.open(_chunk_done_url(shard_url), "w") as f:
+        json.dump(info, f)
+
+
+def _read_chunk_done(shard_url: str) -> dict:
+    with fsspec.open(_chunk_done_url(shard_url), "r") as f:
+        return json.load(f)
+
+
+def _clear_index_dir(index_dir: str) -> None:
+    """Delete an index dir's contents for a clean rebuild (fresh --overwrite)."""
+    fs = fsspec.filesystem("gcs")
+    if fs.exists(index_dir):
+        fs.rm(index_dir, recursive=True)
+        logger.info("cleared %s for rebuild", index_dir)
 
 
 def _verify_chunk(shard_dirs: list[str], chunk: int) -> dict:
@@ -298,6 +367,14 @@ def _parse_args() -> argparse.Namespace:
         help="Container RAM limit (else cgroup); used to size per-job --mem.",
     )
     p.add_argument("--mem-gib", type=int, default=None, help="Override the PER-CPU-JOB --mem passed to indexing.py.")
+    p.add_argument(
+        "--disk-budget-gib",
+        type=int,
+        default=None,
+        help="Disk budget for chunk sizing (pass to keep chunks stable across restarts).",
+    )
+    p.add_argument("--num-workers", type=int, default=1, help="Total workers sharing this index's chunks.")
+    p.add_argument("--worker-index", type=int, default=0, help="This worker's index in [0, num-workers).")
     p.add_argument("--overwrite", action="store_true", help="Rebuild even if an index already exists.")
     p.add_argument("--no-verify", action="store_true", help="Skip the post-upload smoke test.")
     p.add_argument("--verify-only", action="store_true", help="Validate an already-uploaded index; do not build.")
@@ -319,6 +396,9 @@ def main() -> None:
         cpus=args.cpus,
         mem_gib=args.mem_gib,
         container_mem_gib=args.container_mem_gib,
+        disk_budget_gib=args.disk_budget_gib,
+        num_workers=args.num_workers,
+        worker_index=args.worker_index,
         overwrite=args.overwrite,
         verify=not args.no_verify,
     )

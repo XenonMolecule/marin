@@ -56,6 +56,12 @@ def upload_file(local_path: str, gs_url: str) -> None:
     _gcs().put_file(local_path, gs_url)
 
 
+def download_file(gs_url: str, local_path: str) -> None:
+    """Download a single gs:// file to a local path (parent dirs created)."""
+    os.makedirs(os.path.dirname(local_path), exist_ok=True)
+    _gcs().get_file(gs_url, local_path)
+
+
 def upload_dir(local_dir: str, gs_dir: str) -> None:
     """Upload a local directory tree to ``gs_dir``, preserving structure."""
     fs = _gcs()

@@ -48,7 +48,11 @@ from experiments.url_index.keys import (
 logger = logging.getLogger(__name__)
 
 # Rows buffered before flushing a row group to the local unsorted parquet.
-_BATCH_ROWS = 50_000
+_BATCH_ROWS = 20_000
+
+# Reclaim Python + fsspec caches every this many shards. Datasets can have tens of
+# thousands of shards (nemotron ~24k); without this, per-shard residue accumulates.
+_GC_EVERY_SHARDS = 100
 
 # Arrow schema of the per-doc row (unsorted staging + drives every downstream artifact).
 _ROW_SCHEMA = pa.schema(
@@ -94,7 +98,8 @@ def _iter_rows(resolved: ResolvedTarget, prov_map: dict[str, dict], *, keys_only
     In ``keys_only`` mode the ``text`` string is dropped after its hash/length are
     computed, so the staging parquet stays small even for ~500M-doc raw tiers.
     """
-    for shard in resolved.shard_urls:
+    gcs = fsspec.filesystem("gcs") if resolved.shard_urls and resolved.shard_urls[0].startswith("gs://") else None
+    for i, shard in enumerate(resolved.shard_urls):
         for rec in load_file(shard):
             text = _doc_text(rec)
             if not text:
@@ -119,6 +124,10 @@ def _iter_rows(resolved: ResolvedTarget, prov_map: dict[str, dict], *, keys_only
                 "dom_h": u64(dom) if dom else None,
                 "text": "" if keys_only else text,
             }
+        if gcs is not None and (i + 1) % _GC_EVERY_SHARDS == 0:
+            gcs.invalidate_cache()
+            gc.collect()
+            pa.default_memory_pool().release_unused()
 
 
 def _write_unsorted(rows_iter, staging_path: str) -> tuple[int, int]:
