@@ -26,12 +26,13 @@ import logging
 import os
 import shutil
 import tempfile
+from collections.abc import Iterator
 
 import fsspec
 import pyarrow as pa
 import pyarrow.parquet as pq
+from fsspec.core import url_to_fs
 from marin.utils import fsspec_glob
-from zephyr.readers import load_file
 
 from experiments.infinigram.provenance import build_provenance_map, content_hash
 from experiments.infinigram.resolve import ResolvedTarget, resolve_target
@@ -77,6 +78,24 @@ def _upload(local_path: str, dest: str) -> None:
         shutil.copyfileobj(src, dst)
 
 
+def _read_records(shard: str) -> Iterator[dict]:
+    """Stream JSON records from a ``.jsonl(.gz|.zst)`` shard, thread-free.
+
+    ``zephyr.load_file`` opens with ``cache_type='background'``, which spawns a
+    gcsfs prefetch thread (+16 MiB buffers) per file. Across tens of thousands of
+    shards (nemotron ~24k) those live threads/buffers accumulate and OOM-kill the
+    container -- gc cannot reclaim them. We read with ``cache_type='none'`` for
+    bounded, prefetch-free sequential streaming.
+    """
+    compression = "gzip" if shard.endswith(".gz") else "zstd" if shard.endswith(".zst") else None
+    fs, path = url_to_fs(shard)
+    with fs.open(path, "rb", cache_type="none", compression=compression) as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                yield json.loads(line)
+
+
 def _doc_text(rec: dict) -> str | None:
     return rec.get("text") or rec.get("generated_text")
 
@@ -85,7 +104,7 @@ def _collect_wanted_hashes(shard_urls: tuple[str, ...]) -> set[str]:
     """Text hashes of a text-only tier that need provenance (first of two passes)."""
     wanted: set[str] = set()
     for url in shard_urls:
-        for rec in load_file(url):
+        for rec in _read_records(url):
             text = _doc_text(rec)
             if text:
                 wanted.add(content_hash(text))
@@ -100,7 +119,7 @@ def _iter_rows(resolved: ResolvedTarget, prov_map: dict[str, dict], *, keys_only
     """
     gcs = fsspec.filesystem("gcs") if resolved.shard_urls and resolved.shard_urls[0].startswith("gs://") else None
     for i, shard in enumerate(resolved.shard_urls):
-        for rec in load_file(shard):
+        for rec in _read_records(shard):
             text = _doc_text(rec)
             if not text:
                 continue
