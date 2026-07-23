@@ -65,7 +65,9 @@ def analyze(collection: Collection, datasets: list[str], out_prefix: str, local_
         consolidate.build_index(meta_paths, collection, db_local)
         _upload(db_local, f"{out_prefix}/url_lookup_{col}.duckdb")
 
-    for key in ("rid_h", "text_h"):
+    # url_h is the universal cross-dataset key (every doc has a url); rid_h works
+    # only for tiers carrying warc_record_id; text_h compares identical extracted text.
+    for key in ("url_h", "rid_h", "text_h"):
         ds_list, sizes, rows = coverage.compute(keys_paths, key)
         cov_dir = os.path.join(local_dir, f"cov_{col}_{key}")
         coverage._write_csvs(ds_list, sizes, rows, cov_dir, key)

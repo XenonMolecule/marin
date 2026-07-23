@@ -152,7 +152,7 @@ def test_build_emits_expected_columns_and_counts(two_datasets):
     keycols = [
         c[0] for c in con.execute(f"DESCRIBE SELECT * FROM read_parquet('{a_dir}/{layout.KEYS_NAME}')").fetchall()
     ]
-    assert set(keycols) == {"dataset", "rid_h", "text_h", "dom_h"}
+    assert set(keycols) == {"dataset", "url_h", "rid_h", "text_h", "dom_h"}
     con.close()
 
 
@@ -221,6 +221,22 @@ def test_coverage_matches_bruteforce(two_datasets):
     assert ab["b_only"] == len(b_rids - a_rids) == 1
     assert ab["containment_a_in_b"] == pytest.approx(2 / 3)
     assert ab["jaccard"] == pytest.approx(2 / 4)
+
+
+def test_coverage_url_key_works_without_record_id(tmp_path):
+    # nemotron/fineweb_edu/resiliparse carry url but no warc_record_id -> url_h is
+    # the universal coverage key; rid_h would be null and exclude them.
+    tmp = str(tmp_path)
+    a = _build_local(tmp, "no_rid", [{"url": "http://x.com/1", "text": "t1"}, {"url": "http://y.com/2", "text": "t2"}])
+    b = _build_local(tmp, "with_rid", [_doc("http://x.com/1", "r9", "u"), _doc("http://z.com/3", "r10", "v")])
+    keys = [f"{a}/{layout.KEYS_NAME}", f"{b}/{layout.KEYS_NAME}"]
+    _ds, sizes, rows = coverage.compute(keys, "url_h")
+    assert sizes == {"no_rid": 2, "with_rid": 2}
+    ab = next(r for r in rows if r["a"] == "no_rid" and r["b"] == "with_rid")
+    assert ab["intersection"] == 1  # x.com/1 shared
+    # rid_h excludes the no_rid dataset entirely (all rid_h null)
+    _ds2, sizes2, _ = coverage.compute(keys, "rid_h")
+    assert "no_rid" not in sizes2 and sizes2.get("with_rid") == 2
 
 
 def test_coverage_text_hash_disjoint_for_different_extractors(two_datasets):

@@ -65,6 +65,7 @@ _ROW_SCHEMA = pa.schema(
         ("snapshot", pa.string()),
         ("warc_file", pa.string()),
         ("text_len", pa.int64()),
+        ("url_h", pa.uint64()),
         ("rid_h", pa.uint64()),
         ("text_h", pa.uint64()),
         ("dom_h", pa.uint64()),
@@ -214,6 +215,7 @@ def _iter_rows(
                 "snapshot": rec.get("snapshot") or "",
                 "warc_file": rec.get("warc_file") or "",
                 "text_len": len(text),
+                "url_h": u64(uk) if uk else None,
                 "rid_h": u64(rid) if rid else None,
                 "text_h": text_hash_u64(text),
                 "dom_h": u64(dom) if dom else None,
@@ -251,7 +253,7 @@ def _write_unsorted(rows_iter, staging_path: str) -> tuple[int, int]:
     return doc_count, url_present
 
 
-_KEYS_COLS = ["rid_h", "text_h", "dom_h"]
+_KEYS_COLS = ["url_h", "rid_h", "text_h", "dom_h"]
 _META_COLS = ["url_key", "domain", "warc_record_id", "snapshot", "warc_file", "text_len"]
 
 
