@@ -134,20 +134,17 @@ BM25_SPECS: dict[str, Bm25DatasetSpec] = {
                 landed=False,
             ),
         ),
-        # resiliparse: BLOCKED. The DEDUPED training documents were cleaned up after
-        # tokenization (baseline_resiliparse_deduped is empty); only the tokenized
-        # cache survives + the RAW extraction (extracted/dclm_400m_1x_10k_resiliparse-
-        # f0887f). Left landed=False pending a user call: index the raw superset, or
-        # regenerate the deduped docs.
+        # resiliparse = the COMPLETE, unfiltered lookup index (recover sources every
+        # other pipeline dropped). Use the RAW 10k extraction (url inline, no dedup/
+        # decon/quality filter -> maximal coverage). The deduped tier was cleaned up
+        # and is NOT wanted here anyway. FULL confirmed (10364 shards, url inline);
+        # SMALL 300 is being subset from the 10k by another thread -> poll for it.
         Bm25DatasetSpec(
             dataset="resiliparse",
             region=_C2,
-            full=IndexSource.at(
-                "gs://marin-us-central2/documents/baseline_resiliparse_deduped/10364warcs/reshape/data-*.jsonl.gz",
-                landed=False,
-            ),
-            small=IndexSource.at(
-                "gs://marin-us-central2/documents/baseline_resiliparse_deduped/300warcs/reshape/data-*.jsonl.gz",
+            full=IndexSource.at("gs://marin-us-central2/extracted/dclm_400m_1x_10k_resiliparse-f0887f/*.jsonl.gz"),
+            small=IndexSource.under(
+                "gs://marin-us-central2/filtered_subsets/resiliparse_random_300warcs-*/data-*.jsonl.gz",
                 landed=False,
             ),
         ),
