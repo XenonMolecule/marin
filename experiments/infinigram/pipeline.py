@@ -131,9 +131,10 @@ _MERGE_FACTOR = 8.0  # indexer peak RAM / decompressed
 # batches = faster indexing; must stay under the container (make-part peaks ~--mem)
 # with room for the merge (~MEM_SAFETY x container is reserved for that).
 _INDEX_MEM_FRACTION = 0.35
-# Hard cap on chunk size so each chunk builds fast (~10 min) and preemption on the
-# only big-RAM (preemptible) nodes loses at most one small chunk.
-_MAX_CHUNK_GZ_BYTES = 5 * 1024**3
+# Hard cap on chunk size. Big-RAM containers only fit on preemptible/reserved TPU
+# nodes that get reclaimed roughly every ~30 min, so chunks MUST finish faster than
+# that or resume never accumulates. ~2 GB gz builds+compresses in ~10-12 min.
+_MAX_CHUNK_GZ_BYTES = 2 * 1024**3
 
 
 def _index_mem_gib(container_mem_gib: int) -> int:
