@@ -26,8 +26,9 @@ from experiments.infinigram.targets import Collection
 
 logger = logging.getLogger(__name__)
 
-# Test child: enough disk to mirror an index for mmap; indexes are <=~12 GiB.
-TEST_RESOURCES = {"cpu": 4.0, "memory": "24g", "disk": "40g"}
+# Test child: enough disk to mirror an index for mmap. resiliparse-300 is ~31 GiB,
+# so give generous disk (still under the 100 GiB node cap).
+TEST_RESOURCES = {"cpu": 4.0, "memory": "24g", "disk": "80g"}
 
 
 def _submit(client: IrisClient, dataset: str, collection: Collection) -> str:
