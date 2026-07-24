@@ -193,6 +193,48 @@ def test_min_field_filters_quality_band(tmp_path):
     assert {r["url_key"] for r in rows} == {"b.com/2", "c.com/3"}  # 0.2 dropped
 
 
+def test_resumable_build_resumes_and_matches(tmp_path):
+    # Two source shards; resumable build writes per-shard parts + concats. A second
+    # run (parts present) must skip work and produce the identical output.
+    tmp = str(tmp_path)
+    out_dir = os.path.join(tmp, "out")
+    s1 = os.path.join(tmp, "s1.jsonl.gz")
+    s2 = os.path.join(tmp, "s2.jsonl.gz")
+    _write_shard(s1, [_doc("http://a.com/1", "r1", "aa"), _doc("http://b.com/2", "r2", "bb")])
+    _write_shard(s2, [_doc("http://c.com/3", "r3", "cc")])
+    target = IndexTarget(dataset="ds", collection=Collection.SMALL, region="us-central1", source=IndexSource.at("x"))
+    resolved = ResolvedTarget(target=target, shard_urls=(s1, s2), shard_bytes=(0, 0))
+    n, up, names = build._resumable_emit(
+        resolved,
+        "ds",
+        out_dir,
+        keys_only=False,
+        prov_map={},
+        subset=None,
+        min_field=None,
+        min_value=0.0,
+        overwrite=False,
+    )
+    assert n == 3 and up == 3 and set(names) == {"keys.parquet", "meta.parquet", "text.parquet"}
+    con = duckdb.connect()
+    urls = {r[0] for r in con.execute(f"SELECT url_key FROM read_parquet('{out_dir}/meta.parquet')").fetchall()}
+    assert urls == {"a.com/1", "b.com/2", "c.com/3"}
+    # second run: markers exist -> skips shard work, same result
+    n2, _up2, _ = build._resumable_emit(
+        resolved,
+        "ds",
+        out_dir,
+        keys_only=False,
+        prov_map={},
+        subset=None,
+        min_field=None,
+        min_value=0.0,
+        overwrite=False,
+    )
+    assert n2 == 3
+    con.close()
+
+
 def test_keys_only_skips_text_store(tmp_path):
     tmp = str(tmp_path)
     docs = [_doc("http://u1.com/", "r1", "raw universe text")]

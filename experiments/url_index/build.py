@@ -190,6 +190,61 @@ def _collect_wanted_hashes(shard_urls: tuple[str, ...]) -> set[str]:
     return wanted
 
 
+def _row_for_rec(
+    rec: dict,
+    prov_map: dict[str, dict],
+    subset: SubsetFilter | None,
+    min_field: str | None,
+    min_value: float,
+    keys_only: bool,
+) -> dict | None:
+    """One key-row for a document, or None if it's filtered out."""
+    if subset is not None and rec.get(subset.field) not in subset.keys:
+        return None
+    if min_field is not None and float(rec.get(min_field, float("-inf"))) < min_value:
+        return None
+    text = _doc_text(rec)
+    if not text:
+        return None
+    if prov_map:
+        prov = prov_map.get(content_hash(text))
+        if prov:
+            rec = {**rec, **prov}
+    url = rec.get("url") or ""
+    rid = _normalize_record_id(rec.get("warc_record_id") or "")
+    uk = url_key(url)
+    dom = domain_of(url)
+    return {
+        "url_key": uk,
+        "domain": dom,
+        "warc_record_id": rid,
+        "snapshot": rec.get("snapshot") or "",
+        "warc_file": rec.get("warc_file") or "",
+        "text_len": len(text),
+        "url_h": u64(uk) if uk else None,
+        "rid_h": u64(rid) if rid else None,
+        "text_h": text_hash_u64(text),
+        "dom_h": u64(dom) if dom else None,
+        "text": "" if keys_only else text,
+    }
+
+
+def _shard_rows(
+    shard: str,
+    prov_map: dict[str, dict],
+    *,
+    keys_only: bool,
+    subset: SubsetFilter | None,
+    min_field: str | None,
+    min_value: float,
+) -> "list[dict]":
+    """Yield key-rows for the documents of one source shard."""
+    for rec in _read_records(shard):
+        row = _row_for_rec(rec, prov_map, subset, min_field, min_value, keys_only)
+        if row is not None:
+            yield row
+
+
 def _iter_rows(
     resolved: ResolvedTarget,
     prov_map: dict[str, dict],
@@ -199,46 +254,12 @@ def _iter_rows(
     min_field: str | None = None,
     min_value: float = 0.0,
 ) -> "list[dict]":
-    """Yield one key-row per document, recovering url/id from provenance when text-only.
-
-    In ``keys_only`` mode the ``text`` string is dropped after its hash/length are
-    computed, so the staging parquet stays small even for ~500M-doc raw tiers.
-    When ``subset`` is set, only docs whose ``subset.field`` value is in the subset
-    key set are emitted (restricting a 10k tier to a random-N WARC sample). When
-    ``min_field`` is set, only docs with ``rec[min_field] >= min_value`` are kept
-    (e.g. a fastpipe ModernBERT-prob quality band).
-    """
+    """Yield key-rows across all shards (non-resumable path, used by tests)."""
     gcs = fsspec.filesystem("gcs") if resolved.shard_urls and resolved.shard_urls[0].startswith("gs://") else None
     for i, shard in enumerate(resolved.shard_urls):
-        for rec in _read_records(shard):
-            if subset is not None and rec.get(subset.field) not in subset.keys:
-                continue
-            if min_field is not None and float(rec.get(min_field, float("-inf"))) < min_value:
-                continue
-            text = _doc_text(rec)
-            if not text:
-                continue
-            if prov_map:
-                prov = prov_map.get(content_hash(text))
-                if prov:
-                    rec = {**rec, **prov}
-            url = rec.get("url") or ""
-            rid = _normalize_record_id(rec.get("warc_record_id") or "")
-            uk = url_key(url)
-            dom = domain_of(url)
-            yield {
-                "url_key": uk,
-                "domain": dom,
-                "warc_record_id": rid,
-                "snapshot": rec.get("snapshot") or "",
-                "warc_file": rec.get("warc_file") or "",
-                "text_len": len(text),
-                "url_h": u64(uk) if uk else None,
-                "rid_h": u64(rid) if rid else None,
-                "text_h": text_hash_u64(text),
-                "dom_h": u64(dom) if dom else None,
-                "text": "" if keys_only else text,
-            }
+        yield from _shard_rows(
+            shard, prov_map, keys_only=keys_only, subset=subset, min_field=min_field, min_value=min_value
+        )
         if gcs is not None and (i + 1) % _GC_EVERY_SHARDS == 0:
             gcs.invalidate_cache()
             gc.collect()
@@ -319,6 +340,95 @@ def _emit_artifacts(staging_path: str, dataset: str, local_out: str, *, keys_onl
     return (layout.KEYS_NAME,) if keys_only else (layout.KEYS_NAME, layout.META_NAME, layout.TEXT_NAME)
 
 
+def _write_table_gcs(table: pa.Table, dest: str) -> None:
+    """Write a pyarrow table to a gs:// (or local) parquet path."""
+    with fsspec.open(dest, "wb") as f:
+        pq.write_table(table, f, compression="zstd")
+
+
+def _concat_parts(part_glob: str, dest: str, count_nonnull: str | None = None) -> tuple[int, int]:
+    """Stream all part parquets matching ``part_glob`` into one ``dest`` file.
+
+    Returns ``(rows, nonnull)`` where ``nonnull`` counts non-null ``count_nonnull``
+    values (0 when unset). Memory-bounded: one row-group batch at a time.
+    """
+    parts = sorted(fsspec_glob(part_glob))
+    rows = nonnull = 0
+    with fsspec.open(dest, "wb") as out:
+        writer: pq.ParquetWriter | None = None
+        for p in parts:
+            with fsspec.open(p, "rb") as fh:
+                pf = pq.ParquetFile(fh)
+                for batch in pf.iter_batches(batch_size=_BATCH_ROWS):
+                    table = pa.Table.from_batches([batch])
+                    if writer is None:
+                        writer = pq.ParquetWriter(out, table.schema, compression="zstd")
+                    writer.write_table(table)
+                    rows += table.num_rows
+                    if count_nonnull:
+                        nonnull += table.num_rows - table.column(count_nonnull).null_count
+        if writer is not None:
+            writer.close()
+    return rows, nonnull
+
+
+def _resumable_emit(
+    resolved: ResolvedTarget,
+    dataset: str,
+    out_dir: str,
+    *,
+    keys_only: bool,
+    prov_map: dict[str, dict],
+    subset: SubsetFilter | None,
+    min_field: str | None,
+    min_value: float,
+    overwrite: bool,
+) -> tuple[int, int, tuple[str, ...]]:
+    """Process shards into per-shard parts on GCS (skip-existing) then concat.
+
+    Each source shard becomes ``_parts/{keys,meta,text}/shard-NNNNNN.parquet`` plus
+    a ``.done`` marker. A restart skips shards whose marker exists, so a preemption
+    costs only the in-flight shard -- making large 10k builds survive the scheduler.
+    """
+    parts = f"{out_dir}/_parts"
+    outs = ["keys"] if keys_only else ["keys", "meta", "text"]
+    cols = {"keys": _KEYS_COLS, "meta": _META_COLS, "text": [*_META_COLS, "text"]}
+    gcs = fsspec.filesystem("gcs") if resolved.shard_urls and resolved.shard_urls[0].startswith("gs://") else None
+    for i, shard in enumerate(resolved.shard_urls):
+        marker = f"{parts}/shard-{i:06d}.done"
+        if not overwrite and fsspec_exists(marker):
+            continue
+        table = pa.Table.from_pylist(
+            list(
+                _shard_rows(
+                    shard, prov_map, keys_only=keys_only, subset=subset, min_field=min_field, min_value=min_value
+                )
+            ),
+            schema=_ROW_SCHEMA,
+        )
+        for out in outs:
+            _write_table_gcs(_projected(table, dataset, cols[out]), f"{parts}/{out}/shard-{i:06d}.parquet")
+        with fsspec.open(marker, "wt") as f:
+            f.write("ok")
+        if gcs is not None and (i + 1) % _GC_EVERY_SHARDS == 0:
+            logger.info("processed %d/%d shards", i + 1, resolved.shard_count)
+            gcs.invalidate_cache()
+            gc.collect()
+            pa.default_memory_pool().release_unused()
+
+    names: list[str] = []
+    doc_count = url_present = 0
+    for out in outs:
+        dest_name = {"keys": layout.KEYS_NAME, "meta": layout.META_NAME, "text": layout.TEXT_NAME}[out]
+        n, nn = _concat_parts(
+            f"{parts}/{out}/shard-*.parquet", f"{out_dir}/{dest_name}", "url_h" if out == "keys" else None
+        )
+        if out == "keys":
+            doc_count, url_present = n, nn
+        names.append(dest_name)
+    return doc_count, url_present, tuple(names)
+
+
 def _resolve(target: IndexTarget, source_glob: str | None, source_warc_manifest: str | None) -> ResolvedTarget:
     """Resolve the target's registry source, or a ``source_glob`` override.
 
@@ -357,8 +467,13 @@ def build_target(
     subset: SubsetFilter | None = None,
     min_field: str | None = None,
     min_value: float = 0.0,
+    resumable: bool = False,
 ) -> dict:
-    """Build and upload the URL-index artifacts for ``target``. Returns the stats dict."""
+    """Build and upload the URL-index artifacts for ``target``. Returns the stats dict.
+
+    ``resumable`` writes per-shard parts to GCS with skip-existing so a preempted
+    build resumes instead of restarting -- needed for large 10k tiers.
+    """
     out_dir = layout.index_dir(target.region, target.collection, target.dataset)
     sentinel = layout.KEYS_NAME if keys_only else layout.TEXT_NAME
     if not overwrite and fsspec_glob(f"{out_dir}/{sentinel}"):
@@ -376,40 +491,57 @@ def build_target(
         prov_map = build_provenance_map(target.provenance_globs, wanted)
         del wanted
 
-    os.makedirs(local_root, exist_ok=True)
-    local_out = tempfile.mkdtemp(dir=local_root, prefix="out-")
-    with tempfile.NamedTemporaryFile(dir=local_root, suffix=".parquet", delete=False) as tmp:
-        staging_path = tmp.name
-    try:
-        doc_count, url_present = _write_unsorted(
-            _iter_rows(resolved, prov_map, keys_only=keys_only, subset=subset, min_field=min_field, min_value=min_value),
-            staging_path,
-        )
-        # Free the provenance map (can be GiBs for one-call tiers) before the emit pass.
-        prov_map.clear()
-        gc.collect()
-        names = _emit_artifacts(staging_path, target.dataset, local_out, keys_only=keys_only)
+    stats = {
+        "dataset": target.dataset,
+        "collection": target.collection.value,
+        "region": target.region,
+        "text_only_tier": bool(target.provenance_globs),
+        "keys_only": keys_only,
+        "shard_count": resolved.shard_count,
+        "subset_field": subset.field if subset else None,
+        "out_dir": out_dir,
+    }
 
-        stats = {
-            "dataset": target.dataset,
-            "collection": target.collection.value,
-            "region": target.region,
-            "doc_count": doc_count,
-            "url_present": url_present,
-            "url_match_rate": round(url_present / doc_count, 6) if doc_count else 0.0,
-            "text_only_tier": bool(target.provenance_globs),
-            "keys_only": keys_only,
-            "shard_count": resolved.shard_count,
-            "subset_field": subset.field if subset else None,
-            "out_dir": out_dir,
-        }
-        for name in names:
-            _upload(os.path.join(local_out, name), f"{out_dir}/{name}")
-        with fsspec.open(f"{out_dir}/{layout.STATS_NAME}", "wt") as f:
-            json.dump(stats, f, indent=2)
-    finally:
-        os.unlink(staging_path)
-        shutil.rmtree(local_out, ignore_errors=True)
+    if resumable:
+        doc_count, url_present, _names = _resumable_emit(
+            resolved,
+            target.dataset,
+            out_dir,
+            keys_only=keys_only,
+            prov_map=prov_map,
+            subset=subset,
+            min_field=min_field,
+            min_value=min_value,
+            overwrite=overwrite,
+        )
+    else:
+        os.makedirs(local_root, exist_ok=True)
+        local_out = tempfile.mkdtemp(dir=local_root, prefix="out-")
+        with tempfile.NamedTemporaryFile(dir=local_root, suffix=".parquet", delete=False) as tmp:
+            staging_path = tmp.name
+        try:
+            doc_count, url_present = _write_unsorted(
+                _iter_rows(
+                    resolved, prov_map, keys_only=keys_only, subset=subset, min_field=min_field, min_value=min_value
+                ),
+                staging_path,
+            )
+            prov_map.clear()
+            gc.collect()
+            names = _emit_artifacts(staging_path, target.dataset, local_out, keys_only=keys_only)
+            for name in names:
+                _upload(os.path.join(local_out, name), f"{out_dir}/{name}")
+        finally:
+            os.unlink(staging_path)
+            shutil.rmtree(local_out, ignore_errors=True)
+
+    stats.update(
+        doc_count=doc_count,
+        url_present=url_present,
+        url_match_rate=round(url_present / doc_count, 6) if doc_count else 0.0,
+    )
+    with fsspec.open(f"{out_dir}/{layout.STATS_NAME}", "wt") as f:
+        json.dump(stats, f, indent=2)
 
     logger.info(
         "Built %s: %d docs (url_match_rate=%.4f) -> %s", target.name, doc_count, stats["url_match_rate"], out_dir
@@ -427,6 +559,11 @@ def _parse_args() -> argparse.Namespace:
         "--keys-only",
         action="store_true",
         help="Only write keys.parquet (coverage), skip the text store. For huge raw tiers.",
+    )
+    p.add_argument(
+        "--resumable",
+        action="store_true",
+        help="Per-shard parts on GCS with skip-existing, so preemption resumes. For large 10k tiers.",
     )
     p.add_argument("--source-glob", default=None, help="Override the registry source with this gs:// glob.")
     p.add_argument(
@@ -480,6 +617,7 @@ def main() -> None:
         subset=subset,
         min_field=args.min_field,
         min_value=args.min_value,
+        resumable=args.resumable,
     )
 
 
