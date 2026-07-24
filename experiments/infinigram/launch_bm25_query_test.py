@@ -26,9 +26,10 @@ from experiments.infinigram.targets import Collection
 
 logger = logging.getLogger(__name__)
 
-# Test child: enough disk to mirror an index for mmap. resiliparse-300 is ~31 GiB,
-# so give generous disk (still under the 100 GiB node cap).
-TEST_RESOURCES = {"cpu": 4.0, "memory": "24g", "disk": "80g"}
+# Test child: enough disk to mirror an index for mmap, and enough RAM to open it.
+# bm25s holds corpus metadata ~proportional to doc count, so a 12 M-doc index
+# (resiliparse-300) needs well above the 24 GiB the smaller indexes used.
+TEST_RESOURCES = {"cpu": 4.0, "memory": "64g", "disk": "80g"}
 
 
 def _submit(client: IrisClient, dataset: str, collection: Collection) -> str:
