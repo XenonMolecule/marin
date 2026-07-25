@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 # Test child: disk to hold the index (downloaded once), RAM for that one-time
 # download + bounded batched querying. resiliparse-300 is ~31 GiB.
-TEST_RESOURCES = {"cpu": 4.0, "memory": "48g", "disk": "80g"}
+TEST_RESOURCES = {"cpu": 4.0, "memory": "96g", "disk": "80g"}
 
 
 def _submit(client: IrisClient, dataset: str, collection: Collection) -> str:
