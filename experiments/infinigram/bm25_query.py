@@ -218,23 +218,22 @@ def open_bm25_index(
         dirs.extend(shard_dirs_for(t))
     cache_root = cache_root or tempfile.mkdtemp(prefix="bm25-idx-")
 
-    if not stream_from_gcs:
-        # One-time download to local disk; queries then hit local files only.
-        local: list[str] = []
-        for d in dirs:
-            dest = os.path.join(cache_root, d.replace("gs://", "")) if d.startswith("gs://") else d
-            if d.startswith("gs://"):
-                download_dir(d, dest)
-            local.append(dest)
-        dirs = local
-    logger.info(
-        "Opened BM25 index over %d sub-index dir(s) [batch_size=%d, stream_from_gcs=%s]: %s",
-        len(dirs),
-        batch_size,
-        stream_from_gcs,
-        [t.name for t in targets],
-    )
-    return BatchedBm25Index(dirs, batch_size=batch_size, mmap=mmap, cache_root=cache_root)
+    if stream_from_gcs:
+        # Giant index (too big for disk): mirror each batch on demand, delete after.
+        # Disk-bounded but slow (re-download + reload per query). Prefer a big-disk host.
+        logger.info("Opened %d-sub-index index (stream_from_gcs): %s", len(dirs), [t.name for t in targets])
+        return BatchedBm25Index(dirs, batch_size=batch_size, mmap=mmap, cache_root=cache_root)
+
+    # Fast path: mirror the whole index to local disk ONCE, then load all sub-indices
+    # ONCE and keep them open (mmap) so repeated queries need no re-download or reload.
+    local: list[str] = []
+    for d in dirs:
+        dest = os.path.join(cache_root, d.replace("gs://", "")) if d.startswith("gs://") else d
+        if d.startswith("gs://"):
+            download_dir(d, dest)
+        local.append(dest)
+    logger.info("Opened %d-sub-index index (loaded once, mmap): %s", len(local), [t.name for t in targets])
+    return load_local_index(local, mmap=mmap)
 
 
 def smoke_test_index(shard_dirs: list[str], *, doc_count: int) -> dict:
