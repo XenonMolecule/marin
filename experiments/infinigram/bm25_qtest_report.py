@@ -27,9 +27,11 @@ def main() -> None:
             with fsspec.open(path, "r") as f:
                 d = json.load(f)
             name = f"{d['dataset']}-{d['collection']}"
-            per_q = {q: {"h": r["hits"], "url": r["top_url"]} for q, r in d["queries"].items()}
-            logger.info("QTEST %s docs=%s %s", name, d.get("num_docs"), json.dumps(per_q))
-            summary[name] = {"docs": d.get("num_docs"), "q": per_q}
+            per_q = {q: {"h": r["hits"], "url": r["top_url"], "ms": r.get("query_ms")} for q, r in d["queries"].items()}
+            logger.info(
+                "QTEST %s docs=%s dl_s=%s %s", name, d.get("num_docs"), d.get("download_seconds"), json.dumps(per_q)
+            )
+            summary[name] = {"docs": d.get("num_docs"), "download_s": d.get("download_seconds"), "q": per_q}
     raise RuntimeError(f"QTEST_REPORT {json.dumps(summary)}")
 
 
