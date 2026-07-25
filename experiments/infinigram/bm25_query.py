@@ -20,6 +20,7 @@ import heapq
 import json
 import logging
 import os
+import shutil
 import tempfile
 import time
 from dataclasses import dataclass
@@ -93,46 +94,77 @@ class Bm25Index:
 
 
 class BatchedBm25Index:
-    """Query many sub-indices with bounded memory.
+    """Query many sub-indices with bounded disk AND memory.
 
-    Loading every sub-index at once makes RAM scale with total docs (a 12M-doc /
-    39-sub-index corpus OOMs a 64 GiB worker). This instead loads at most
-    ``batch_size`` sub-indices at a time, queries them, frees them, and merges the
-    pooled top-k -- so peak RAM is ~``batch_size`` sub-indices regardless of index
-    size, making even the huge complete-coverage indexes queryable on a modest
-    worker. Sub-indices are (re)loaded per ``search``; that is fine for interactive
-    lookups (add caching upstream for high query throughput).
+    Downloading and loading every sub-index at once makes both disk and RAM scale
+    with total index size -- infeasible for the large indexes (the 31 GiB / 39-sub-
+    index resiliparse-300 OOM'd just localizing; the complete 10k index is ~2 TB,
+    which no 100 GiB-disk worker can hold). Instead, for each batch of at most
+    ``batch_size`` sub-indices we: mirror just that batch to local disk, load,
+    query, then delete the batch's local files before moving on. Peak disk and RAM
+    stay ~``batch_size`` sub-indices regardless of index size. Sub-indices are
+    re-downloaded per ``search`` -- fine for interactive lookups; keep the object
+    for a whole session or cache upstream for high throughput.
     """
 
-    def __init__(self, local_dirs: list[str], *, batch_size: int = 6, mmap: bool = True):
-        if not local_dirs:
+    def __init__(
+        self,
+        dirs: list[str],
+        *,
+        batch_size: int = 2,
+        mmap: bool = True,
+        cache_root: str | None = None,
+    ):
+        if not dirs:
             raise ValueError("BatchedBm25Index needs at least one sub-index dir")
-        self._dirs = local_dirs
+        self._dirs = dirs  # gs:// (mirrored per batch) or already-local
         self._batch_size = batch_size
         self._mmap = mmap
+        self._cache_root = cache_root or tempfile.mkdtemp(prefix="bm25-batch-")
+
+    def _local_dest(self, d: str) -> str:
+        return os.path.join(self._cache_root, d.replace("gs://", "")) if d.startswith("gs://") else d
+
+    def _mirror(self, batch: list[str]) -> list[str]:
+        """Mirror a batch's gs:// dirs to local disk (already-local dirs pass through)."""
+        local = []
+        for d in batch:
+            dest = self._local_dest(d)
+            if d.startswith("gs://"):
+                download_dir(d, dest)
+            local.append(dest)
+        return local
+
+    def _cleanup(self, batch: list[str]) -> None:
+        for d in batch:
+            if d.startswith("gs://"):
+                shutil.rmtree(self._local_dest(d), ignore_errors=True)
+
+    def _batches(self):
+        for i in range(0, len(self._dirs), self._batch_size):
+            yield self._dirs[i : i + self._batch_size]
 
     @property
     def num_docs(self) -> int:
-        """Total docs, counted in batches WITHOUT loading corpus (cheap)."""
+        """Total docs, one batch at a time WITHOUT loading corpus (cheap)."""
         total = 0
-        for i in range(0, len(self._dirs), self._batch_size):
-            rs = [
-                _require_bm25s().BM25.load(d, load_corpus=False, mmap=True) for d in self._dirs[i : i + self._batch_size]
-            ]
+        for batch in self._batches():
+            local = self._mirror(batch)
+            rs = [_require_bm25s().BM25.load(d, load_corpus=False, mmap=True) for d in local]
             total += sum(r.scores["num_docs"] for r in rs)
             del rs
+            self._cleanup(batch)
             gc.collect()
         return total
 
     def search(self, query: str, k: int = 10) -> list[Bm25Hit]:
         pooled: list[Bm25Hit] = []
-        for i in range(0, len(self._dirs), self._batch_size):
-            retrievers = [
-                _require_bm25s().BM25.load(d, load_corpus=True, mmap=self._mmap)
-                for d in self._dirs[i : i + self._batch_size]
-            ]
+        for batch in self._batches():
+            local = self._mirror(batch)
+            retrievers = [_require_bm25s().BM25.load(d, load_corpus=True, mmap=self._mmap) for d in local]
             pooled.extend(Bm25Index(retrievers).search(query, k))
-            del retrievers  # free this batch before loading the next
+            del retrievers
+            self._cleanup(batch)  # free this batch's disk before the next
             gc.collect()
         return heapq.nlargest(k, pooled, key=lambda h: h.score)
 
@@ -148,19 +180,6 @@ def shard_dirs_for(target: IndexTarget) -> list[str]:
         raise FileNotFoundError(f"no BM25 index for {target.name} (missing {manifest_url}); build it first.")
     with fsspec.open(manifest_url, "r") as f:
         return list(json.load(f)["shard_dirs"])
-
-
-def _localize(shard_dirs: list[str], cache_root: str) -> list[str]:
-    """Mirror gs:// sub-index dirs to local disk (bm25s mmap needs local files)."""
-    local: list[str] = []
-    for d in shard_dirs:
-        if not d.startswith("gs://"):
-            local.append(d)
-            continue
-        dest = os.path.join(cache_root, d.replace("gs://", ""))
-        download_dir(d, dest)
-        local.append(dest)
-    return local
 
 
 def load_local_index(shard_dirs: list[str], *, mmap: bool = True) -> Bm25Index:
@@ -193,15 +212,15 @@ def open_bm25_index(
     for t in targets:
         dirs.extend(shard_dirs_for(t))
 
-    cache_root = cache_root or tempfile.mkdtemp(prefix="bm25-idx-")
-    local_dirs = _localize(dirs, cache_root)
     logger.info(
-        "Opening BM25 index over %d sub-index dir(s) [batch_size=%d]: %s",
-        len(local_dirs),
+        "Opening BM25 index over %d sub-index dir(s) [batch_size=%d, per-batch mirror]: %s",
+        len(dirs),
         batch_size,
         [t.name for t in targets],
     )
-    return BatchedBm25Index(local_dirs, batch_size=batch_size, mmap=mmap)
+    # Pass gs:// dirs straight through: BatchedBm25Index mirrors each batch to
+    # local disk on demand and deletes it after, so disk/RAM stay bounded.
+    return BatchedBm25Index(dirs, batch_size=batch_size, mmap=mmap, cache_root=cache_root)
 
 
 def smoke_test_index(shard_dirs: list[str], *, doc_count: int) -> dict:
