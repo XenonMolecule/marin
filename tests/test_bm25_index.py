@@ -147,6 +147,25 @@ def test_stream_build_empty_corpus_returns_no_shards(tmp_path):
     assert len(empty.shards) == 0
 
 
+def test_batched_index_bounds_memory_and_matches_eager(tmp_path):
+    # Batched querying (one sub-index at a time) must return the same merged
+    # top-k -- with url -- as loading all sub-indices at once.
+    from experiments.infinigram.bm25_query import BatchedBm25Index
+
+    build = stream_build(_per_doc_shards(_docs_with_ids()), str(tmp_path / "idx"), text_bytes_budget=1)
+    dirs = [s.shard_dir for s in build.shards]
+    assert len(dirs) == len(_DOCS)  # one sub-index per doc
+
+    batched = BatchedBm25Index(dirs, batch_size=1, mmap=False)
+    assert batched.num_docs == len(_DOCS)
+    hits = batched.search("united states independence", k=5)
+    assert hits[0].metadata["url"] == "http://example.com/usa"
+    assert sorted(h.metadata["doc_id"] for h in hits) == list(range(len(_DOCS)))
+    # Same top hit as the eager index.
+    eager = load_local_index(dirs, mmap=False)
+    assert batched.search("brown fox", k=1)[0].metadata["url"] == eager.search("brown fox", k=1)[0].metadata["url"]
+
+
 def test_smoke_test_reports_metrics(tmp_path):
     build = stream_build(_one_shard(_docs_with_ids()), str(tmp_path / "idx"))
     report = smoke_test_index([s.shard_dir for s in build.shards], doc_count=build.doc_count)

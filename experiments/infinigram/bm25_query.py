@@ -15,6 +15,7 @@ Switching which dataset you search is a one-liner: :func:`open_bm25_index` maps 
 """
 
 import argparse
+import gc
 import heapq
 import json
 import logging
@@ -91,6 +92,51 @@ class Bm25Index:
         return heapq.nlargest(k, pooled, key=lambda h: h.score)
 
 
+class BatchedBm25Index:
+    """Query many sub-indices with bounded memory.
+
+    Loading every sub-index at once makes RAM scale with total docs (a 12M-doc /
+    39-sub-index corpus OOMs a 64 GiB worker). This instead loads at most
+    ``batch_size`` sub-indices at a time, queries them, frees them, and merges the
+    pooled top-k -- so peak RAM is ~``batch_size`` sub-indices regardless of index
+    size, making even the huge complete-coverage indexes queryable on a modest
+    worker. Sub-indices are (re)loaded per ``search``; that is fine for interactive
+    lookups (add caching upstream for high query throughput).
+    """
+
+    def __init__(self, local_dirs: list[str], *, batch_size: int = 6, mmap: bool = True):
+        if not local_dirs:
+            raise ValueError("BatchedBm25Index needs at least one sub-index dir")
+        self._dirs = local_dirs
+        self._batch_size = batch_size
+        self._mmap = mmap
+
+    @property
+    def num_docs(self) -> int:
+        """Total docs, counted in batches WITHOUT loading corpus (cheap)."""
+        total = 0
+        for i in range(0, len(self._dirs), self._batch_size):
+            rs = [
+                _require_bm25s().BM25.load(d, load_corpus=False, mmap=True) for d in self._dirs[i : i + self._batch_size]
+            ]
+            total += sum(r.scores["num_docs"] for r in rs)
+            del rs
+            gc.collect()
+        return total
+
+    def search(self, query: str, k: int = 10) -> list[Bm25Hit]:
+        pooled: list[Bm25Hit] = []
+        for i in range(0, len(self._dirs), self._batch_size):
+            retrievers = [
+                _require_bm25s().BM25.load(d, load_corpus=True, mmap=self._mmap)
+                for d in self._dirs[i : i + self._batch_size]
+            ]
+            pooled.extend(Bm25Index(retrievers).search(query, k))
+            del retrievers  # free this batch before loading the next
+            gc.collect()
+        return heapq.nlargest(k, pooled, key=lambda h: h.score)
+
+
 def _manifest_url(index_dir: str) -> str:
     return f"{index_dir.rstrip('/')}/{MANIFEST_NAME}"
 
@@ -130,11 +176,14 @@ def open_bm25_index(
     also: list[tuple[str, Collection]] | None = None,
     cache_root: str | None = None,
     mmap: bool = True,
-) -> Bm25Index:
+    batch_size: int = 6,
+) -> BatchedBm25Index:
     """Open the BM25 index for ``(dataset, collection)`` (optionally several) to query.
 
-    Mirrors the uploaded sub-indices locally, memory-maps them, and returns a
-    ready :class:`Bm25Index`. Passing ``also`` searches multiple corpora jointly.
+    Mirrors the uploaded sub-indices to local disk and returns a
+    :class:`BatchedBm25Index`, which queries them in memory-bounded batches so RAM
+    stays flat regardless of index size (needed for the multi-million-doc indexes).
+    Passing ``also`` searches multiple corpora jointly.
     """
     targets = [get_bm25_target(dataset, collection)]
     for ds, col in also or []:
@@ -146,8 +195,13 @@ def open_bm25_index(
 
     cache_root = cache_root or tempfile.mkdtemp(prefix="bm25-idx-")
     local_dirs = _localize(dirs, cache_root)
-    logger.info("Opening BM25 index over %d sub-index dir(s): %s", len(local_dirs), [t.name for t in targets])
-    return load_local_index(local_dirs, mmap=mmap)
+    logger.info(
+        "Opening BM25 index over %d sub-index dir(s) [batch_size=%d]: %s",
+        len(local_dirs),
+        batch_size,
+        [t.name for t in targets],
+    )
+    return BatchedBm25Index(local_dirs, batch_size=batch_size, mmap=mmap)
 
 
 def smoke_test_index(shard_dirs: list[str], *, doc_count: int) -> dict:
