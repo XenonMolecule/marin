@@ -146,24 +146,28 @@ def build_subset_filter(field: str, manifest_path: str, metadata_glob: str | Non
     return SubsetFilter(field=field, keys=frozenset(keys))
 
 
-def _read_records(shard: str) -> Iterator[dict]:
-    """Stream records from a ``.jsonl(.gz|.zst)`` or ``.parquet`` shard, thread-free.
+_READ_BLOCK = 32 * 1024 * 1024  # 32 MiB prefetch block
 
-    ``zephyr.load_file`` opens with ``cache_type='background'``, which spawns a
-    gcsfs prefetch thread (+16 MiB buffers) per file. Across tens of thousands of
-    shards (nemotron ~24k) those live threads/buffers accumulate and OOM-kill the
-    container -- gc cannot reclaim them. We read with ``cache_type='none'`` for
-    bounded, prefetch-free sequential streaming.
+
+def _read_records(shard: str) -> Iterator[dict]:
+    """Stream records from a ``.jsonl(.gz|.zst)`` or ``.parquet`` shard.
+
+    Uses ``cache_type='readahead'`` (synchronous 32 MiB prefetch) -- fast on large
+    shards (65 MiB gzip files would otherwise fetch in thousands of tiny GCS
+    round-trips), and unlike ``zephyr.load_file``'s ``'background'`` cache it spawns
+    NO prefetch threads, so opening tens of thousands of shards (nemotron ~24k)
+    doesn't accumulate live thread/buffer residue and OOM the container. Only one
+    file is open at a time, so the buffer is bounded and released on close.
     """
     fs, path = url_to_fs(shard)
     if shard.endswith(".parquet"):
-        with fs.open(path, "rb", cache_type="none") as fh:
+        with fs.open(path, "rb", cache_type="readahead", block_size=_READ_BLOCK) as fh:
             pf = pq.ParquetFile(fh)
             for batch in pf.iter_batches():
                 yield from batch.to_pylist()
         return
     compression = "gzip" if shard.endswith(".gz") else "zstd" if shard.endswith(".zst") else None
-    with fs.open(path, "rb", cache_type="none", compression=compression) as f:
+    with fs.open(path, "rb", cache_type="readahead", block_size=_READ_BLOCK, compression=compression) as f:
         for line in f:
             line = line.strip()
             if line:
