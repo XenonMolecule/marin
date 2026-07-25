@@ -176,7 +176,7 @@ def open_bm25_index(
     also: list[tuple[str, Collection]] | None = None,
     cache_root: str | None = None,
     mmap: bool = True,
-    batch_size: int = 6,
+    batch_size: int = 2,
 ) -> BatchedBm25Index:
     """Open the BM25 index for ``(dataset, collection)`` (optionally several) to query.
 
