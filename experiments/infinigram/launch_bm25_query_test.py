@@ -26,10 +26,9 @@ from experiments.infinigram.targets import Collection
 
 logger = logging.getLogger(__name__)
 
-# Test child: disk to mirror an index for mmap; RAM stays modest because
-# open_bm25_index queries sub-indices in bounded batches (BatchedBm25Index), so
-# even the 12 M-doc / 39-sub-index resiliparse-300 fits well under this.
-TEST_RESOURCES = {"cpu": 4.0, "memory": "24g", "disk": "80g"}
+# Test child: disk to hold the index (downloaded once), RAM for that one-time
+# download + bounded batched querying. resiliparse-300 is ~31 GiB.
+TEST_RESOURCES = {"cpu": 4.0, "memory": "48g", "disk": "80g"}
 
 
 def _submit(client: IrisClient, dataset: str, collection: Collection) -> str:

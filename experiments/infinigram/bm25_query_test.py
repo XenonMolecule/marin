@@ -12,6 +12,7 @@ result is visible via ``iris job bug-report`` while finelog is down.
 import argparse
 import json
 import logging
+import time
 
 import fsspec
 
@@ -50,19 +51,24 @@ def main() -> None:
         logger.info("STEP %s", step)
 
     crumb("start")
+    t0 = time.monotonic()
     index = open_bm25_index(args.dataset, Collection(args.collection), batch_size=args.batch_size)
-    crumb(f"localized batch_size={args.batch_size}")
+    download_seconds = round(time.monotonic() - t0, 1)
+    crumb(f"downloaded index in {download_seconds}s (one-time)")
 
     results = {}
     for q in _QUERIES:
+        tq = time.monotonic()
         hits = index.search(q, k=3)
+        query_ms = round((time.monotonic() - tq) * 1000)
         top = hits[0] if hits else None
         results[q] = {
             "hits": len(hits),
             "top_score": round(top.score, 3) if top else None,
             "top_url": top.metadata.get("url") if top else None,
+            "query_ms": query_ms,
         }
-        crumb(f"queried {q!r} -> {len(hits)} hits, url={results[q]['top_url']}")
+        crumb(f"queried {q!r} in {query_ms}ms -> {len(hits)} hits, url={results[q]['top_url']}")
 
     if not any(r["hits"] > 0 for r in results.values()):
         raise AssertionError(f"NO hits for any query on {args.dataset}-{args.collection}")
@@ -70,7 +76,13 @@ def main() -> None:
     num_docs = index.num_docs if args.count_docs else None
     # Write results to GCS (in-region) so they survive bm25s's atexit stderr, which
     # otherwise clobbers the last line captured by bug-report.
-    payload = {"dataset": args.dataset, "collection": args.collection, "num_docs": num_docs, "queries": results}
+    payload = {
+        "dataset": args.dataset,
+        "collection": args.collection,
+        "num_docs": num_docs,
+        "download_seconds": download_seconds,
+        "queries": results,
+    }
     with fsspec.open(f"{base}.json", "w") as f:
         json.dump(payload, f, indent=2)
     crumb("done")

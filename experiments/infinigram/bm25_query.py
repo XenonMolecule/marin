@@ -196,12 +196,17 @@ def open_bm25_index(
     cache_root: str | None = None,
     mmap: bool = True,
     batch_size: int = 2,
+    stream_from_gcs: bool = False,
 ) -> BatchedBm25Index:
     """Open the BM25 index for ``(dataset, collection)`` (optionally several) to query.
 
-    Mirrors the uploaded sub-indices to local disk and returns a
-    :class:`BatchedBm25Index`, which queries them in memory-bounded batches so RAM
-    stays flat regardless of index size (needed for the multi-million-doc indexes).
+    By default the whole index is mirrored to local disk **once** and queries run
+    against those local files (fast mmap reads); :class:`BatchedBm25Index` loads at
+    most ``batch_size`` sub-indices into RAM at a time, so query RAM stays flat
+    while latency stays low (no per-query download). This requires the index to fit
+    the worker's disk -- true for every index except the ~2 TB complete-coverage
+    one, for which ``stream_from_gcs=True`` mirrors each batch on demand and deletes
+    it (disk-bounded but slow -- that giant wants a dedicated big-disk host).
     Passing ``also`` searches multiple corpora jointly.
     """
     targets = [get_bm25_target(dataset, collection)]
@@ -211,15 +216,24 @@ def open_bm25_index(
     dirs: list[str] = []
     for t in targets:
         dirs.extend(shard_dirs_for(t))
+    cache_root = cache_root or tempfile.mkdtemp(prefix="bm25-idx-")
 
+    if not stream_from_gcs:
+        # One-time download to local disk; queries then hit local files only.
+        local: list[str] = []
+        for d in dirs:
+            dest = os.path.join(cache_root, d.replace("gs://", "")) if d.startswith("gs://") else d
+            if d.startswith("gs://"):
+                download_dir(d, dest)
+            local.append(dest)
+        dirs = local
     logger.info(
-        "Opening BM25 index over %d sub-index dir(s) [batch_size=%d, per-batch mirror]: %s",
+        "Opened BM25 index over %d sub-index dir(s) [batch_size=%d, stream_from_gcs=%s]: %s",
         len(dirs),
         batch_size,
+        stream_from_gcs,
         [t.name for t in targets],
     )
-    # Pass gs:// dirs straight through: BatchedBm25Index mirrors each batch to
-    # local disk on demand and deletes it after, so disk/RAM stay bounded.
     return BatchedBm25Index(dirs, batch_size=batch_size, mmap=mmap, cache_root=cache_root)
 
 
