@@ -260,6 +260,21 @@ DATASETS: dict[str, DatasetSpec] = {
             notes="SMALL (deduped 300warcs) landed; FULL 10k still processing.",
         ),
         DatasetSpec(
+            dataset="llm_pipeline_v1_1",
+            region=_C1,
+            full=IndexSource.at(
+                "gs://marin-us-central1/documents/baseline_llm_pipeline_v1_1_decon_deduped/"
+                "10364warcs/deduped/data-*.jsonl.gz",
+                landed=False,
+            ),
+            # SMALL: v1_1 decon_deduped 300warcs tree carries url inline (no join).
+            small=IndexSource.at(
+                "gs://marin-us-central1/documents/baseline_llm_pipeline_v1_1_decon_deduped/"
+                "300warcs/deduped/data-*.jsonl.gz"
+            ),
+            notes="llm_pipeline_v1 re-run (v1_1); dedup+decon trained tier, url inline.",
+        ),
+        DatasetSpec(
             dataset="llm_simple_v1",
             region=_C1,
             full=IndexSource.at(
