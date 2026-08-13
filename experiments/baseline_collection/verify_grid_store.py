@@ -34,7 +34,6 @@ from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 import pyarrow.parquet as pq
 from levanter.store.cache import TreeCache
-from marin.utils import fsspec_glob
 
 from experiments.baseline_collection import grid_store
 from experiments.baseline_collection.grid_corpora import GRID_CORPORA, NUM_TOPICS, Stage, stage_output_dir
@@ -43,6 +42,7 @@ from experiments.baseline_collection.grid_tokenize import tokenize_dir
 from experiments.datakit.cluster.quality.fast_transformer.artifact import BUCKET_EDGES
 from experiments.datakit.store.datakit_store import ClusteredStoreData
 from experiments.datakit.store.store_compat import read_artifact, sp_open
+from experiments.fsspec_paths import fsspec_glob
 
 logger = logging.getLogger(__name__)
 

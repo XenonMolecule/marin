@@ -138,7 +138,7 @@ def _label(stages: str, quality_model: str | None = "unused") -> None:
 
 def _read_stage_tables(stage: Stage) -> dict[str, dict]:
     """Every output table for ``stage``, keyed by shard stem."""
-    from marin.utils import fsspec_glob
+    from experiments.fsspec_paths import fsspec_glob
 
     directory = grid_corpora.stage_output_dir(DATASET, stage)
     pattern = f"{directory}/outputs/main/*.parquet" if stage is Stage.QUALITY else f"{directory}/*.parquet"
@@ -247,7 +247,7 @@ def test_merge_rejects_broken_copartitioning(corpus, stub_models):
     """A truncated attribute table must fail the merge rather than skew the grid."""
     _label("topic,quality")
     directory = grid_corpora.stage_output_dir(DATASET, Stage.QUALITY)
-    from marin.utils import fsspec_glob
+    from experiments.fsspec_paths import fsspec_glob
 
     victim = sorted(fsspec_glob(f"{directory}/outputs/main/*.parquet"))[0]
     table = pq.read_table(victim)

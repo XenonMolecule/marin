@@ -1,3 +1,6 @@
+# Copyright The Marin Authors
+# SPDX-License-Identifier: Apache-2.0
+
 """Offline integration test for the Levanter ModernBERT classifier training path.
 
 Builds tiny pre-tokenized ClassificationExamples (no tokenizer download, no network) and runs
@@ -14,7 +17,7 @@ from levanter.distributed import DistributedConfig
 from levanter.layers.attention import AttentionMask
 from levanter.main.train_classifier import train_classifier
 from levanter.models.modernbert import ClassificationExample, ModernBertConfig
-from levanter.optim import AdamConfig
+from levanter.optim.config import AdamConfig
 from levanter.tracker import NoopConfig
 from levanter.trainer import TrainerConfig
 

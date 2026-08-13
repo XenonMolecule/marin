@@ -15,8 +15,7 @@ landed flags are trusted again.
 
 import logging
 
-from marin.utils import fsspec_glob
-
+from experiments.fsspec_paths import fsspec_glob
 from experiments.infinigram.resolve import resolve_prefix
 from experiments.infinigram.targets import all_targets
 

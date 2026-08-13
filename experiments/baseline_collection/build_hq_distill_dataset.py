@@ -63,10 +63,11 @@ import logging
 import re
 from collections.abc import Iterator
 
-from fray import ResourceConfig
+from fray.types import ResourceConfig
 from marin.datakit.normalize import DEFAULT_MAX_WHITESPACE_RUN_CHARS, generate_id
 from rigging.log_setup import configure_logging
-from zephyr import Dataset, ZephyrContext
+from zephyr.dataset import Dataset
+from zephyr.execution import ZephyrContext
 from zephyr.readers import load_jsonl
 
 logger = logging.getLogger(__name__)
@@ -225,7 +226,7 @@ def _html_dir_warc_hashes() -> set[str]:
     output distill covers exactly that pool — htmljoin would otherwise emit null-HTML
     rows for WARCs absent from HTML_DIR.
     """
-    from marin.utils import fsspec_glob
+    from experiments.fsspec_paths import fsspec_glob
 
     hashes = set()
     for f in fsspec_glob(f"{HTML_DIR}/data-*.jsonl.gz"):
@@ -428,7 +429,8 @@ def _negatives_for_metadata_file(meta_path: str) -> Iterator[dict]:
 
 def run_negatives(tag: str | None, limit_files: int | None) -> None:
     import pyarrow as pa
-    from marin.utils import fsspec_glob
+
+    from experiments.fsspec_paths import fsspec_glob
 
     schema = pa.schema([(c, pa.string()) for c in _FINAL_COLUMNS])
     all_files = sorted(fsspec_glob(f"{_meta_staging(tag)}/*.jsonl.gz"))
@@ -546,7 +548,8 @@ def _parquet_dir_stats(dirpath: str) -> dict | None:
     """Footer-only (rows, bytes, shards, raw_html null_count) for a parquet dir, or None if empty."""
     import fsspec
     import pyarrow.parquet as pq
-    from marin.utils import fsspec_glob
+
+    from experiments.fsspec_paths import fsspec_glob
 
     files = sorted(fsspec_glob(f"{dirpath}/*.parquet"))
     if not files:

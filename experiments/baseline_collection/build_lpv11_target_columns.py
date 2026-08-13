@@ -49,9 +49,9 @@ from concurrent.futures import ThreadPoolExecutor
 import fsspec
 import pyarrow as pa
 import pyarrow.parquet as pq
-from marin.utils import fsspec_glob
 
 from experiments.baseline_collection.decode_warcs_clean import _normalize_record_id, _warc_path_hash
+from experiments.fsspec_paths import fsspec_glob
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)

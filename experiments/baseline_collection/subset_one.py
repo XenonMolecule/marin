@@ -35,12 +35,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import fsspec
-from fray import ResourceConfig
+from fray.types import ResourceConfig
 from levanter.data.text import TextLmDatasetFormat
 from marin.processing.tokenize.tokenize import TokenizeConfig, tokenize
 from rigging.filesystem import marin_prefix
-from zephyr import Dataset, ZephyrContext
-from zephyr.execution import zephyr_worker_ctx
+from zephyr.dataset import Dataset
+from zephyr.execution import ZephyrContext, zephyr_worker_ctx
 
 logger = logging.getLogger(__name__)
 

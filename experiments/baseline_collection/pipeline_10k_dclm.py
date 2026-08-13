@@ -27,11 +27,12 @@ Usage::
         -- python experiments/baseline_collection/pipeline_10k_dclm.py
 """
 
-from fray import ResourceConfig
+from fray.types import ResourceConfig
 from marin.execution.executor import ExecutorStep, executor_main, this_output_path
 from marin.execution.remote import remote
 from marin.transform.extract_text_from_html import ExtractTextConfig
-from zephyr import Dataset, ZephyrContext
+from zephyr.dataset import Dataset
+from zephyr.execution import ZephyrContext
 
 from experiments.baseline_collection.filter_dclm import FilterDclmConfig, filter_dclm
 from experiments.defaults import default_tokenize

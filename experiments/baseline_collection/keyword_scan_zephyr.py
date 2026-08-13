@@ -28,8 +28,9 @@ import os
 import sys
 from collections import Counter, defaultdict
 
-from fray import ResourceConfig
-from zephyr import Dataset, ZephyrContext
+from fray.types import ResourceConfig
+from zephyr.dataset import Dataset
+from zephyr.execution import ZephyrContext
 
 from experiments.baseline_collection.keyword_corpus_scan import (
     _TOKEN_RE,

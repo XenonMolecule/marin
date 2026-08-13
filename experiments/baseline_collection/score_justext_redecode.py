@@ -38,10 +38,10 @@ import time
 from collections.abc import Iterator
 
 import fsspec
-from fray import ResourceConfig
-from marin.utils import fsspec_glob
+from fray.types import ResourceConfig
 from rigging.log_setup import configure_logging
-from zephyr import Dataset, ZephyrContext
+from zephyr.dataset import Dataset
+from zephyr.execution import ZephyrContext
 
 from experiments.baseline_collection.decode_warcs_clean import (
     REPLACEMENT,
@@ -49,6 +49,7 @@ from experiments.baseline_collection.decode_warcs_clean import (
     _load_manifest,
     _warc_path_hash,
 )
+from experiments.fsspec_paths import fsspec_glob
 
 logger = logging.getLogger(__name__)
 
@@ -204,7 +205,10 @@ def _process_warc(warc_path: str) -> Iterator[dict]:
             if n % 100 == 0:  # per-doc progress so a stall is visible long before the WARC finishes
                 logger.info(
                     "WARC %s: %d sample docs done (%.1f docs/s, %d timeouts)",
-                    warc_hash, n, n / jt_time if jt_time else 0.0, runner.n_timeout,
+                    warc_hash,
+                    n,
+                    n / jt_time if jt_time else 0.0,
+                    runner.n_timeout,
                 )
             yield {"warc_record_id": rid, "raw_html": html, "text_justext": text}
         if n:

@@ -1,3 +1,6 @@
+# Copyright The Marin Authors
+# SPDX-License-Identifier: Apache-2.0
+
 """Compute the frozen train/val/test WARC split for the cascade-filtered distill
 dataset and write it to GCS as JSON.
 
@@ -8,11 +11,11 @@ the original bal350k chat set — zero leakage, identical splits. Runs in us-cen
 
 Output JSON: {"val": [...], "test": [...], "train": [...]}  (WARC indices 0..2999)
 """
+
 import argparse
 import json
 
 import fsspec
-from marin.utils import fsspec_glob
 
 from experiments.baseline_collection.fasttext_useful_classifier import (
     USEFUL_DIR,
@@ -21,13 +24,17 @@ from experiments.baseline_collection.fasttext_useful_classifier import (
 from experiments.baseline_collection.fasttext_useful_classifier import (
     _shard_snapshots as shard_snapshots,
 )
+from experiments.fsspec_paths import fsspec_glob
 
 K_HOLDOUT = 1
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--out", default="gs://marin-us-central2/datasets/high_quality_3000_distill_chat_bal350k_cascade/_split_manifest.json")
+    ap.add_argument(
+        "--out",
+        default="gs://marin-us-central2/datasets/high_quality_3000_distill_chat_bal350k_cascade/_split_manifest.json",
+    )
     args = ap.parse_args()
 
     useful_shards = sorted(fsspec_glob(f"{USEFUL_DIR}/*.parquet"))

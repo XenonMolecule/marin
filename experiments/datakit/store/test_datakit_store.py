@@ -25,8 +25,8 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
-from fray import ResourceConfig
 from fray.local_backend import LocalClient
+from fray.types import ResourceConfig
 from levanter.store.cache import TreeCache
 
 from experiments.datakit.store.datakit_store import build_clustered_store

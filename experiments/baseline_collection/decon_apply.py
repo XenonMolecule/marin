@@ -36,10 +36,11 @@ from __future__ import annotations
 import argparse
 import logging
 
-from fray import ResourceConfig
+from fray.types import ResourceConfig
 from marin.processing.classification.decon import NGramConfig, _bloom_hash, extract_features
 from marin.processing.classification.deduplication.dedup_commons import DEFAULT_FILETYPES, _collect_input_files
-from zephyr import Dataset, ZephyrContext
+from zephyr.dataset import Dataset
+from zephyr.execution import ZephyrContext
 from zephyr.readers import load_file
 
 from experiments.baseline_collection.decon_inspect import _get_index, _read_jsonl

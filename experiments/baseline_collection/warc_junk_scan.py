@@ -16,8 +16,9 @@ from __future__ import annotations
 import argparse
 import sys
 
-from fray import ResourceConfig
-from zephyr import Dataset, ZephyrContext
+from fray.types import ResourceConfig
+from zephyr.dataset import Dataset
+from zephyr.execution import ZephyrContext
 
 DECODED = "gs://marin-us-east5/documents/bert_pipeline/decoded_10k"
 OUT = "gs://marin-us-east5/scratch/provenance_10k_devset/warc_junk"

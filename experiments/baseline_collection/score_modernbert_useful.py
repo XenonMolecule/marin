@@ -44,8 +44,9 @@ import numpy as np
 from haliax import Axis
 from levanter.layers.attention import AttentionMask
 from levanter.models.modernbert import ModernBertConfig, load_hf_sequence_classifier
-from marin.utils import fsspec_glob
 from transformers import AutoTokenizer
+
+from experiments.fsspec_paths import fsspec_glob
 
 logger = logging.getLogger(__name__)
 

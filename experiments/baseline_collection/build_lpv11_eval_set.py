@@ -58,7 +58,6 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import requests
 import warcio
-from marin.utils import fsspec_glob
 
 from experiments.baseline_collection.download_warcs import (
     _fetch_warc_bytes,
@@ -68,6 +67,7 @@ from experiments.baseline_collection.download_warcs import (
 )
 from experiments.baseline_collection.pipelines.preprocessing import preprocess_html_for_extraction
 from experiments.baseline_collection.run_extract_standalone import _normalize_record_id
+from experiments.fsspec_paths import fsspec_glob
 
 logger = logging.getLogger(__name__)
 

@@ -13,8 +13,9 @@ import itertools
 import json
 import logging
 
-from marin.utils import fsspec_glob
 from zephyr.readers import load_file
+
+from experiments.fsspec_paths import fsspec_glob
 
 logger = logging.getLogger(__name__)
 

@@ -43,7 +43,7 @@ from fray.cluster import ResourceConfig
 from levanter.checkpoint import CheckpointerConfig
 from levanter.layers.rotary import Llama3RotaryEmbeddingsConfig
 from levanter.models.qwen import Qwen3Config
-from levanter.optim import AdamHConfig
+from levanter.optim.adamh import AdamHConfig
 from levanter.tracker.wandb import WandbConfig
 from levanter.trainer import TrainerConfig
 from levanter.utils.mesh import MeshConfig

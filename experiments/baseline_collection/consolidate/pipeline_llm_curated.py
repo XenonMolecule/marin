@@ -32,10 +32,11 @@ import logging
 from dataclasses import dataclass
 
 import fsspec
-from fray import ResourceConfig
+from fray.types import ResourceConfig
 from marin.execution.executor import ExecutorStep, executor_main, this_output_path
 from marin.execution.remote import remote
-from zephyr import Dataset, ZephyrContext
+from zephyr.dataset import Dataset
+from zephyr.execution import ZephyrContext
 from zephyr.readers import load_jsonl
 
 from experiments.defaults import default_tokenize

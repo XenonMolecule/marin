@@ -34,9 +34,9 @@ from dataclasses import dataclass
 
 import fsspec
 import pyarrow.parquet as pq
-from fray import ResourceConfig
-from zephyr import Dataset, ZephyrContext
-from zephyr.execution import zephyr_worker_ctx
+from fray.types import ResourceConfig
+from zephyr.dataset import Dataset
+from zephyr.execution import ZephyrContext, zephyr_worker_ctx
 
 logger = logging.getLogger(__name__)
 

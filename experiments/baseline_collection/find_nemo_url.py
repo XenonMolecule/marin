@@ -30,9 +30,9 @@ import hashlib
 import logging
 import sys
 
-from fray import ResourceConfig
-from zephyr import Dataset, ZephyrContext
-from zephyr.execution import zephyr_worker_ctx
+from fray.types import ResourceConfig
+from zephyr.dataset import Dataset
+from zephyr.execution import ZephyrContext, zephyr_worker_ctx
 
 from experiments.baseline_collection.provenance_audit_10k import SOURCES
 

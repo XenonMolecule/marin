@@ -9,7 +9,8 @@ import json
 import logging
 
 import fsspec
-from marin.utils import fsspec_exists, fsspec_glob
+
+from experiments.fsspec_paths import fsspec_exists, fsspec_glob
 
 logger = logging.getLogger(__name__)
 

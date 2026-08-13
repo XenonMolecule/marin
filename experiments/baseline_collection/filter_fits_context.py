@@ -30,8 +30,12 @@ from collections.abc import Iterator
 import draccus
 import fsspec
 import transformers
-from marin.utils import fsspec_glob
-from zephyr import Dataset, ZephyrContext, load_jsonl, zephyr_worker_ctx
+from zephyr.dataset import Dataset
+from zephyr.execution import ZephyrContext
+from zephyr.readers import load_jsonl
+from zephyr.worker_context import zephyr_worker_ctx
+
+from experiments.fsspec_paths import fsspec_glob
 
 logger = logging.getLogger(__name__)
 

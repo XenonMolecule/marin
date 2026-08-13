@@ -1,3 +1,6 @@
+# Copyright The Marin Authors
+# SPDX-License-Identifier: Apache-2.0
+
 # Copyright The Levanter Authors
 # SPDX-License-Identifier: Apache-2.0
 
@@ -37,7 +40,7 @@ from levanter.models.modernbert import (
     ModernBertForMaskedLM,
     ModernBertForSequenceClassification,
 )
-from levanter.optim import AdamConfig
+from levanter.optim.config import AdamConfig
 from levanter.tracker import NoopConfig
 from levanter.trainer import Trainer, TrainerConfig
 from levanter.utils.jax_utils import parameter_count
@@ -275,9 +278,7 @@ def train_classifier(
         final_model = inference_mode(info.state.model, True)
 
     if eval_texts is not None and eval_labels is not None:
-        probs = score_texts(
-            final_model, eval_texts, tokenizer, model_config.max_Pos, model_config.pad_token_id
-        )
+        probs = score_texts(final_model, eval_texts, tokenizer, model_config.max_Pos, model_config.pad_token_id)
         best_f1, best_t = f1_sweep(probs, np.asarray(eval_labels))
         logger.info(f"[eval] best_f1={best_f1:.4f} @ t={best_t:.2f} on {len(eval_labels)} docs")
         levanter.tracker.log_summary({"eval/best_f1": best_f1, "eval/best_threshold": best_t})

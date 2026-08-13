@@ -47,8 +47,9 @@ from dataclasses import dataclass
 import fsspec
 import numpy as np
 import torch
-from marin.utils import fsspec_glob
 from transformers import AutoConfig, AutoModelForSequenceClassification, AutoTokenizer
+
+from experiments.fsspec_paths import fsspec_glob
 
 logger = logging.getLogger(__name__)
 

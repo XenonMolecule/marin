@@ -38,12 +38,13 @@ import argparse
 import json
 import logging
 
-from fray import ResourceConfig
+from fray.types import ResourceConfig
 from marin.processing.classification.decon import NGramConfig, _bloom_hash, extract_features
 from marin.processing.classification.deduplication.dedup_commons import DEFAULT_FILETYPES, _collect_input_files
 from rigging.filesystem import filesystem as marin_filesystem
 from rigging.filesystem import url_to_fs
-from zephyr import Dataset, ZephyrContext
+from zephyr.dataset import Dataset
+from zephyr.execution import ZephyrContext
 from zephyr.readers import load_file
 
 logger = logging.getLogger(__name__)

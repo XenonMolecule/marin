@@ -24,14 +24,13 @@ import fsspec
 import jax
 import jax.numpy as jnp
 import numpy as np
-from haliax import Axis
 from haliax.partitioning import ResourceAxis, set_mesh
 from jax.sharding import Mesh
+from levanter.main.train_classifier import aggregate_sweep, read_frozen_eval, score_texts_chunked
+from levanter.models.modernbert import ModernBertConfig, load_hf_sequence_classifier
 from transformers import AutoTokenizer
 
-from levanter.main.train_classifier import CHUNK_AGGREGATORS, aggregate_sweep, read_frozen_eval, score_texts_chunked
-from levanter.models.modernbert import ModernBertConfig, load_hf_sequence_classifier
-from marin.utils import fsspec_glob
+from experiments.fsspec_paths import fsspec_glob
 
 logger = logging.getLogger(__name__)
 
@@ -75,13 +74,25 @@ def main() -> None:
     hf_config = converter.hf_config_from_hf_checkpoint(hf_ref)
     config = dataclasses.replace(
         ModernBertConfig.from_hf_config(hf_config),
-        max_seq_len=args.ctx, attn_backend=args.backend, num_labels=2, pad_token_id=PAD_TOKEN_ID,
+        max_seq_len=args.ctx,
+        attn_backend=args.backend,
+        num_labels=2,
+        pad_token_id=PAD_TOKEN_ID,
     )
-    logger.info("arch hidden=%d layers=%d; ctx=%d stride=%d backend=%s", config.hidden_dim, config.num_layers, args.ctx, stride, args.backend)
+    logger.info(
+        "arch hidden=%d layers=%d; ctx=%d stride=%d backend=%s",
+        config.hidden_dim,
+        config.num_layers,
+        args.ctx,
+        stride,
+        args.backend,
+    )
 
     # Resumable: score docs in blocks and checkpoint per-doc chunk probs to GCS after each block, so a
     # preemption on the (preemptible-only) v6e pool loses at most one block instead of restarting the eval.
-    partial_path = f"{args.bucket}/checkpoints/modernbert-useful/{args.run_id}/chunked_eval_partial_{args.eval_rows}.json"
+    partial_path = (
+        f"{args.bucket}/checkpoints/modernbert-useful/{args.run_id}/chunked_eval_partial_{args.eval_rows}.json"
+    )
     per_doc: list = []
     if fsspec_glob(partial_path):
         with fsspec.open(partial_path, "r") as fh:
@@ -92,8 +103,14 @@ def main() -> None:
         model = load_hf_sequence_classifier(config, hf_ref, axis_mapping=None, dtype=jnp.bfloat16)
         for s in range(len(per_doc), len(texts), DOC_BLOCK):
             block = score_texts_chunked(
-                model, texts[s : s + DOC_BLOCK], tokenizer, config.max_Pos, PAD_TOKEN_ID,
-                stride=stride, max_doc_tokens=args.max_doc_tokens, batch_size=args.batch_size,
+                model,
+                texts[s : s + DOC_BLOCK],
+                tokenizer,
+                config.max_Pos,
+                PAD_TOKEN_ID,
+                stride=stride,
+                max_doc_tokens=args.max_doc_tokens,
+                batch_size=args.batch_size,
             )
             per_doc.extend(block)
             with fsspec.open(partial_path, "w") as fh:
@@ -101,11 +118,22 @@ def main() -> None:
             logger.info("scored %d/%d docs", len(per_doc), len(texts))
     results, best_agg = aggregate_sweep(per_doc, labels)
     best_f1, best_t = results[best_agg]
-    logger.info("run=%s CHUNKED best_f1=%.4f agg=%s @ t=%.2f  | per-agg: %s",
-                args.run_id, best_f1, best_agg, best_t, {k: round(v[0], 4) for k, v in results.items()})
+    logger.info(
+        "run=%s CHUNKED best_f1=%.4f agg=%s @ t=%.2f  | per-agg: %s",
+        args.run_id,
+        best_f1,
+        best_agg,
+        best_t,
+        {k: round(v[0], 4) for k, v in results.items()},
+    )
     payload = {
-        "run_id": args.run_id, "ctx": args.ctx, "overlap": args.overlap, "n": len(labels),
-        "best_f1": best_f1, "best_agg": best_agg, "best_threshold": best_t,
+        "run_id": args.run_id,
+        "ctx": args.ctx,
+        "overlap": args.overlap,
+        "n": len(labels),
+        "best_f1": best_f1,
+        "best_agg": best_agg,
+        "best_threshold": best_t,
         "per_agg": {k: {"f1": v[0], "threshold": v[1]} for k, v in results.items()},
     }
     with fsspec.open(out_path, "w") as fh:

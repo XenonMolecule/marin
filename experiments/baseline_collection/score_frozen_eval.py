@@ -40,8 +40,9 @@ from levanter.layers.attention import AttentionMask
 from levanter.main.train_classifier import f1_sweep, read_frozen_eval
 from levanter.models.modernbert import ModernBertConfig, load_hf_sequence_classifier
 from levanter.utils.tree_utils import inference_mode
-from marin.utils import fsspec_glob
 from transformers import AutoTokenizer
+
+from experiments.fsspec_paths import fsspec_glob
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +79,17 @@ def score(model, texts: list[str], tokenizer, Pos: Axis, batch_size: int) -> np.
     return out
 
 
-def score_one(run_id: str, ctx: int, bucket: str, texts: list[str], labels: list[int], tokenizer, mesh, batch_size: int, backend: str) -> None:
+def score_one(
+    run_id: str,
+    ctx: int,
+    bucket: str,
+    texts: list[str],
+    labels: list[int],
+    tokenizer,
+    mesh,
+    batch_size: int,
+    backend: str,
+) -> None:
     hf_ref = f"{bucket}/checkpoints/modernbert-useful/{run_id}/hf"
     out_path = f"{bucket}/checkpoints/modernbert-useful/{run_id}/frozen_eval_preds.json"
     # Idempotent: a finished preds JSON means this checkpoint is done. Skip it so a job that gets
@@ -105,9 +116,14 @@ def score_one(run_id: str, ctx: int, bucket: str, texts: list[str], labels: list
     hf_config = converter.hf_config_from_hf_checkpoint(hf_ref)
     config = dataclasses.replace(
         ModernBertConfig.from_hf_config(hf_config),
-        max_seq_len=ctx, attn_backend=backend, num_labels=2, pad_token_id=PAD_TOKEN_ID,
+        max_seq_len=ctx,
+        attn_backend=backend,
+        num_labels=2,
+        pad_token_id=PAD_TOKEN_ID,
     )
-    logger.info("arch: hidden=%d layers=%d heads=%d (from checkpoint)", config.hidden_dim, config.num_layers, config.num_heads)
+    logger.info(
+        "arch: hidden=%d layers=%d heads=%d (from checkpoint)", config.hidden_dim, config.num_layers, config.num_heads
+    )
     with set_mesh(mesh):
         model = load_hf_sequence_classifier(config, hf_ref, axis_mapping=None, dtype=jnp.bfloat16)
         for s in range(len(probs), len(texts), PARTIAL_CHUNK):
@@ -121,7 +137,11 @@ def score_one(run_id: str, ctx: int, bucket: str, texts: list[str], labels: list
     best_f1, best_t = f1_sweep(probs, np.asarray(labels))
     logger.info("re-scored best_f1=%.4f @ t=%.2f (sanity vs recorded wandb value)", best_f1, best_t)
     payload = {
-        "run_id": run_id, "ctx": ctx, "n": len(labels), "best_f1": best_f1, "best_threshold": best_t,
+        "run_id": run_id,
+        "ctx": ctx,
+        "n": len(labels),
+        "best_f1": best_f1,
+        "best_threshold": best_t,
         "preds": [[round(float(pr), 5), int(y)] for pr, y in zip(probs.tolist(), labels, strict=True)],
     }
     with fsspec.open(out_path, "w") as fh:
@@ -144,11 +164,17 @@ def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--run-ids", required=True, help="Comma-separated run-ids to score sequentially on one node.")
     p.add_argument("--ctx", type=int, required=True, help="Eval context length (shared; the checkpoints' training ctx).")
-    p.add_argument("--bucket", required=True, help="Region bucket holding the checkpoints + test set, e.g. gs://marin-us-east5")
+    p.add_argument(
+        "--bucket", required=True, help="Region bucket holding the checkpoints + test set, e.g. gs://marin-us-east5"
+    )
     p.add_argument("--batch-size", type=int, default=32, help="Must be a multiple of the chip count.")
-    p.add_argument("--backend", default="auto", choices=["auto", "vanilla", "splash"],
-                   help="Attention backend. 'vanilla' compiles far faster (no Pallas) and fits at 8192 on "
-                   "big-HBM v5p (95GB) — preferred when a contended node preempts during the slow splash compile.")
+    p.add_argument(
+        "--backend",
+        default="auto",
+        choices=["auto", "vanilla", "splash"],
+        help="Attention backend. 'vanilla' compiles far faster (no Pallas) and fits at 8192 on "
+        "big-HBM v5p (95GB) — preferred when a contended node preempts during the slow splash compile.",
+    )
     args = p.parse_args()
 
     test_glob = f"{args.bucket}/classifiers/useful_fasttext/full_prep_body_strip/test/*.txt.gz"
@@ -156,7 +182,13 @@ def main() -> None:
     if not test_paths:
         raise ValueError(f"no test shards at {test_glob}")
     texts, labels = read_frozen_eval(test_paths, USEFUL_LABEL, rows=EVAL_ROWS)
-    logger.info("frozen eval: %d docs (%d useful) from %d shards; devices=%s", len(texts), sum(labels), len(test_paths), jax.devices())
+    logger.info(
+        "frozen eval: %d docs (%d useful) from %d shards; devices=%s",
+        len(texts),
+        sum(labels),
+        len(test_paths),
+        jax.devices(),
+    )
     tokenizer = AutoTokenizer.from_pretrained(TOKENIZER_REF)
     n_dev = len(jax.devices())
     mesh = Mesh(np.array(jax.devices()).reshape(n_dev, 1), (ResourceAxis.DATA, ResourceAxis.MODEL))

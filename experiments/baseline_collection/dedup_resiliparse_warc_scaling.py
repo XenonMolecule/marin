@@ -78,7 +78,7 @@ import sys
 from collections.abc import Iterator
 
 import fsspec
-from fray import ResourceConfig
+from fray.types import ResourceConfig
 from marin.datakit.normalize import NormalizedData, normalize_step
 from marin.execution.artifact import Artifact
 from marin.execution.step_runner import StepRunner
@@ -89,7 +89,8 @@ from marin.processing.classification.deduplication.fuzzy_dups import (
 )
 from marin.processing.classification.deduplication.fuzzy_minhash import compute_minhash_attrs_step
 from rigging.log_setup import configure_logging
-from zephyr import Dataset, ZephyrContext
+from zephyr.dataset import Dataset
+from zephyr.execution import ZephyrContext
 from zephyr.readers import load_jsonl, load_parquet
 
 logger = logging.getLogger(__name__)
@@ -183,7 +184,7 @@ def _apply_fuzzy_dups(
     attr_dir = next(iter(fuzzy.sources.values())).attr_dir
     main_dir = norm.main_output_dir
 
-    from marin.utils import fsspec_glob
+    from experiments.fsspec_paths import fsspec_glob
 
     src_shards = sorted(fsspec_glob(f"{main_dir.rstrip('/')}/*.parquet"))
     if not src_shards:

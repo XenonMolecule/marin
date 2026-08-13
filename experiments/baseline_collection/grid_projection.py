@@ -61,7 +61,6 @@ from concurrent.futures import ThreadPoolExecutor
 
 import fsspec
 import numpy as np
-from marin.utils import fsspec_glob
 
 from experiments.baseline_collection.grid_corpora import (
     DEFAULT_MAX_LENGTH,
@@ -73,6 +72,7 @@ from experiments.baseline_collection.grid_corpora import (
 )
 from experiments.baseline_collection.grid_label import build_mesh, load_quality, load_topic, score_quality, score_topic
 from experiments.datakit.cluster.quality.fast_transformer.artifact import BUCKET_EDGES
+from experiments.fsspec_paths import fsspec_glob
 from experiments.llama import llama3_tokenizer
 
 logger = logging.getLogger(__name__)

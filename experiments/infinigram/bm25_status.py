@@ -18,8 +18,8 @@ import json
 import logging
 
 import fsspec
-from marin.utils import fsspec_exists
 
+from experiments.fsspec_paths import fsspec_exists
 from experiments.infinigram.bm25_build import bm25_index_dir
 from experiments.infinigram.bm25_query import MANIFEST_NAME
 from experiments.infinigram.bm25_sources import all_bm25_targets as all_targets

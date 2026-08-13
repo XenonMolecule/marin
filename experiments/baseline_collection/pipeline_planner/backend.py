@@ -61,7 +61,8 @@ def _load_doc_index() -> dict[str, dict]:
     if _DOC_INDEX is None:
         import fsspec
         import pyarrow.parquet as pq
-        from marin.utils import fsspec_glob
+
+        from experiments.fsspec_paths import fsspec_glob
 
         idx: dict[str, dict] = {}
         for path in sorted(fsspec_glob(f"{DOC_PARQUET}/*.parquet")):

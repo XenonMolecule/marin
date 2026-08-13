@@ -17,9 +17,9 @@ import os
 import shutil
 
 import fsspec
-from marin.utils import fsspec_exists
 from zephyr.readers import load_file
 
+from experiments.fsspec_paths import fsspec_exists
 from experiments.infinigram.build import build_index, plan_chunks
 from experiments.infinigram.gcs_io import download_dir, download_file, upload_dir, upload_file
 from experiments.infinigram.provenance import build_provenance_map

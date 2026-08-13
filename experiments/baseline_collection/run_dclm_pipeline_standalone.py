@@ -37,7 +37,7 @@ import json
 import logging
 
 import fsspec
-from fray import ResourceConfig
+from fray.types import ResourceConfig
 from levanter.data.text import TextLmDatasetFormat
 from marin.processing.tokenize import TokenizeConfig, tokenize
 from marin.transform.bff_dedup import BffDedupConfig, bff_dedup

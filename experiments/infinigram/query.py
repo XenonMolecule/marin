@@ -21,8 +21,8 @@ import tempfile
 from typing import Any
 
 import fsspec
-from marin.utils import fsspec_exists
 
+from experiments.fsspec_paths import fsspec_exists
 from experiments.infinigram.gcs_io import download_dir
 from experiments.infinigram.targets import Collection, IndexTarget, get_target
 

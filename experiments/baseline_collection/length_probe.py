@@ -22,8 +22,9 @@ import os
 import sys
 
 import fsspec
-from fray import ResourceConfig
-from zephyr import Dataset, ZephyrContext
+from fray.types import ResourceConfig
+from zephyr.dataset import Dataset
+from zephyr.execution import ZephyrContext
 
 WORKSPACE = "gs://marin-us-central2/scratch/provenance_10k"
 RES_SRC = "gs://marin-us-central2/extracted/dclm_400m_1x_10k_resiliparse-f0887f/*.jsonl.gz"

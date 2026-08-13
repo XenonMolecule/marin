@@ -273,7 +273,7 @@ def _tokenize_shards(dataset: str, source: str, tokenizer_name: str):
 
 def pending(dataset: str, shards: list[str]) -> list[str]:
     """Shards without a tokenized output yet, by bulk-listing what exists."""
-    from marin.utils import fsspec_glob
+    from experiments.fsspec_paths import fsspec_glob
 
     directory = posixpath.dirname(tokenize_output(dataset, shards[0]))
     done = {output_stem(p) for p in fsspec_glob(f"{directory}/*.parquet")}

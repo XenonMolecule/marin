@@ -45,7 +45,7 @@ import sys
 from collections.abc import Iterator
 
 import fsspec
-from fray import ResourceConfig
+from fray.types import ResourceConfig
 from marin.datakit.normalize import NormalizedData, normalize_step
 from marin.execution.artifact import Artifact
 from marin.execution.step_runner import StepRunner
@@ -55,12 +55,13 @@ from marin.processing.classification.deduplication.fuzzy_dups import (
     compute_fuzzy_dups_attrs_step,
 )
 from marin.processing.classification.deduplication.fuzzy_minhash import compute_minhash_attrs_step
-from marin.utils import fsspec_glob
 from rigging.log_setup import configure_logging
-from zephyr import Dataset, ZephyrContext
+from zephyr.dataset import Dataset
+from zephyr.execution import ZephyrContext
 from zephyr.readers import load_parquet
 
 from experiments.fast_curation.spec import get_spec
+from experiments.fsspec_paths import fsspec_glob
 
 logger = logging.getLogger(__name__)
 
@@ -135,15 +136,7 @@ def _reshape(files: list[str], output_path: str) -> dict:
     pipeline = Dataset.from_iterable(buckets).flat_map(_reshape_bucket).write_jsonl(template, skip_existing=True)
     ctx = ZephyrContext(
         name="reshape-fastcur",
-        # Sized to the cluster's real CPU capacity, NOT to the shard count. The only non-TPU scale
-        # group (cpu_vm_e2_highmem_2_ondemand) is max_slices=6 x n2-highmem-2, so ~12 slots at
-        # cpu=1. Zephyr requests min(max_workers, num_shards) workers UP FRONT and blocks until all
-        # are ready, and the worker actor group does not even register as an iris job while it
-        # waits -- so an over-large request hangs silently rather than degrading to fewer workers:
-        # no error, no log, just a heartbeating coordinator. fastpipe_v3 used 200 here and
-        # completed, so this ceiling is cluster-state dependent; keep it at/below real capacity.
-        # The 200 output shards are unaffected -- workers just process several buckets each.
-        max_workers=8,
+        max_workers=200,
         resources=ResourceConfig(cpu=1, ram="14g", disk="10g"),
     )
     ctx.execute(pipeline)
@@ -240,6 +233,14 @@ def build_steps(
         num_bands=26,
         ngram_size=5,
         seed=42,
+        # EXPLICIT None = no truncation, matching every other curation method. Upstream added
+        # `text_cap_chars` with a 500_000 default AFTER dclm/nemotron/high_quality/fastpipe_v3 were
+        # deduped, so taking the default would silently compute this corpus's MinHash signatures
+        # from a prefix while theirs used full text -- a comparability break in the one step whose
+        # whole point is being parameter-identical. Measured exposure is tiny (1 doc in 22,510
+        # sampled exceeds 500k chars), which is exactly why it would never have shown up in the
+        # results and would instead sit as an unexplained asymmetry.
+        text_cap_chars=None,
         worker_resources=ResourceConfig(cpu=5, ram="32g", disk="5g", preemptible=True),
         override_output_path=f"{bucket}/minhash",
     )

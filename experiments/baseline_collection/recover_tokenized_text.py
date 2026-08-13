@@ -40,8 +40,9 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 from levanter.store.tree_store import TreeStore
 from marin.datakit.normalize import generate_id
-from marin.utils import fsspec_glob
 from transformers import AutoTokenizer
+
+from experiments.fsspec_paths import fsspec_glob
 
 logger = logging.getLogger(__name__)
 

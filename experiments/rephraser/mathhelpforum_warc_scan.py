@@ -47,7 +47,8 @@ from marin.execution.executor import (
     this_output_path,
     versioned,
 )
-from zephyr import Dataset, ZephyrContext
+from zephyr.dataset import Dataset
+from zephyr.execution import ZephyrContext
 
 logger = logging.getLogger(__name__)
 

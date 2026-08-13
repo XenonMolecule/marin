@@ -65,9 +65,9 @@ from concurrent.futures import ProcessPoolExecutor
 
 import fsspec
 from fsspec.core import url_to_fs
-from marin.utils import fsspec_exists, fsspec_glob
 
 from experiments.baseline_collection.score_resiliparse_rs import install_extractor
+from experiments.fsspec_paths import fsspec_exists, fsspec_glob
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)

@@ -50,9 +50,10 @@ import json
 import logging
 from collections.abc import Iterator
 
-from fray import ResourceConfig
+from fray.types import ResourceConfig
 from rigging.filesystem import url_to_fs
-from zephyr import Dataset, ZephyrContext
+from zephyr.dataset import Dataset
+from zephyr.execution import ZephyrContext
 from zephyr.readers import load_file
 
 logger = logging.getLogger(__name__)

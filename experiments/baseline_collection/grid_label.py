@@ -62,7 +62,6 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 from jax.sharding import Mesh, NamedSharding
 from jax.sharding import PartitionSpec as P
-from marin.utils import fsspec_glob
 
 from experiments.baseline_collection import grid_corpora
 from experiments.baseline_collection.grid_corpora import (
@@ -86,6 +85,7 @@ from experiments.baseline_collection.grid_corpora import (
     write_done,
 )
 from experiments.datakit.cluster.quality.fast_transformer.artifact import BUCKET_EDGES
+from experiments.fsspec_paths import fsspec_glob
 
 logger = logging.getLogger(__name__)
 

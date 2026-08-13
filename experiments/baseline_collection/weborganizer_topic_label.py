@@ -52,7 +52,6 @@ import jax.numpy as jnp
 import numpy as np
 from jax.sharding import Mesh, NamedSharding
 from jax.sharding import PartitionSpec as P
-from marin.utils import fsspec_glob
 
 from experiments.baseline_collection.weborganizer_gte_jax import (
     NUM_HEADS,
@@ -76,6 +75,7 @@ from experiments.baseline_collection.weborganizer_topic_smoke import (
     _softmax,
     load_model,
 )
+from experiments.fsspec_paths import fsspec_glob
 
 logger = logging.getLogger(__name__)
 

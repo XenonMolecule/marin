@@ -28,7 +28,8 @@ import fsspec
 import requests
 import warcio
 from fray.types import ResourceConfig
-from zephyr import Dataset, ZephyrContext
+from zephyr.dataset import Dataset
+from zephyr.execution import ZephyrContext
 
 logger = logging.getLogger(__name__)
 

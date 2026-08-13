@@ -34,7 +34,7 @@ from levanter.layers.attention import AttentionMask
 from levanter.main.train_classifier import _expand_globs, f1_sweep, read_fasttext_shards, read_frozen_eval
 from levanter.models.modernbert import ClassificationExample
 from levanter.models.qwen import Qwen3Config, Qwen3ForSequenceClassification, Qwen3LMHeadModel
-from levanter.optim import AdamConfig, OptimizerConfig
+from levanter.optim.config import AdamConfig, OptimizerConfig
 from levanter.trainer import Trainer, TrainerConfig
 from levanter.utils.jax_utils import parameter_count
 from levanter.utils.tree_utils import inference_mode

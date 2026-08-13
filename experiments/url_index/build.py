@@ -34,8 +34,8 @@ import fsspec
 import pyarrow as pa
 import pyarrow.parquet as pq
 from fsspec.core import url_to_fs
-from marin.utils import fsspec_exists, fsspec_glob
 
+from experiments.fsspec_paths import fsspec_exists, fsspec_glob
 from experiments.infinigram.provenance import build_provenance_map, content_hash
 from experiments.infinigram.resolve import ResolvedTarget, resolve_target
 from experiments.infinigram.targets import DATASETS, REGION_BUCKET, Collection, IndexSource, IndexTarget, get_target

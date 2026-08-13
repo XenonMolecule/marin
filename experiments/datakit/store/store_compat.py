@@ -31,7 +31,8 @@ import json
 from dataclasses import dataclass, field
 
 import fsspec
-from marin.utils import fsspec_glob
+
+from experiments.fsspec_paths import fsspec_glob
 
 
 def sp_open(path: str, mode: str = "rb"):

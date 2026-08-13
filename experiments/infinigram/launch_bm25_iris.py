@@ -24,8 +24,8 @@ from iris.client.client import IrisClient
 from iris.cluster.constraints import Constraint, ConstraintOp, WellKnownAttribute, preemptible_constraint
 from iris.cluster.types import Entrypoint, EnvironmentSpec, ResourceSpec
 from iris.rpc import job_pb2
-from marin.utils import fsspec_exists, fsspec_glob
 
+from experiments.fsspec_paths import fsspec_exists, fsspec_glob
 from experiments.infinigram.bm25_build import bm25_index_dir
 from experiments.infinigram.bm25_query import MANIFEST_NAME
 from experiments.infinigram.bm25_sources import BM25_SPECS, all_bm25_targets, get_bm25_target

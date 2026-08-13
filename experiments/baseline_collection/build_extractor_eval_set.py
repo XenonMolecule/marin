@@ -36,7 +36,6 @@ from enum import StrEnum
 
 import fsspec
 import pyarrow.parquet as pq
-from marin.utils import fsspec_glob
 
 from experiments.baseline_collection.fasttext_useful_classifier import (
     USEFUL_DIR,
@@ -44,6 +43,7 @@ from experiments.baseline_collection.fasttext_useful_classifier import (
     body_strip,
     held_out_indices,
 )
+from experiments.fsspec_paths import fsspec_glob
 
 logger = logging.getLogger(__name__)
 
@@ -167,7 +167,9 @@ def write_jsonl_gz(path: str, records: list[dict]) -> None:
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
 
 
-def build(output_dir: str, n_train: int, n_dev: int, n_test: int, seed: int, k_holdout: int, html_mode: HtmlMode) -> None:
+def build(
+    output_dir: str, n_train: int, n_dev: int, n_test: int, seed: int, k_holdout: int, html_mode: HtmlMode
+) -> None:
     shards = sorted(fsspec_glob(f"{USEFUL_DIR}/*.parquet"))
     logger.info("found %d WARC shards under %s", len(shards), USEFUL_DIR)
 
@@ -339,8 +341,13 @@ def build_new_dev(
         candidate_shards = shards
 
     existing = _existing_warc_ids(output_dir, disjoint_from)
-    logger.info("new_dev: %d shards under %s; %d existing ids to stay disjoint from (%s)",
-                len(candidate_shards), source_dir, len(existing), ",".join(disjoint_from))
+    logger.info(
+        "new_dev: %d shards under %s; %d existing ids to stay disjoint from (%s)",
+        len(candidate_shards),
+        source_dir,
+        len(existing),
+        ",".join(disjoint_from),
+    )
 
     order = candidate_shards[:]
     random.Random(seed + 7).shuffle(order)
@@ -369,7 +376,12 @@ def build_new_dev(
     overlap = {r["warc_record_id"] for r in records} & existing
     if overlap:
         raise RuntimeError(f"new_dev overlaps existing splits on {len(overlap)} warc_record_ids; aborting")
-    logger.info("new_dev: %d records from %d clean WARCs (%d skipped as used); 0 overlap", len(records), used_warcs, skipped_warcs)
+    logger.info(
+        "new_dev: %d records from %d clean WARCs (%d skipped as used); 0 overlap",
+        len(records),
+        used_warcs,
+        skipped_warcs,
+    )
 
     manifest = {
         "source": USEFUL_DIR,
@@ -403,7 +415,9 @@ def main() -> None:
     ap.add_argument("--n-test", type=int, default=1000)
     ap.add_argument("--n-big", type=int, default=100000)
     ap.add_argument("--n-newdev", type=int, default=1000, help="new_dev mode: size of the brand-new dev set.")
-    ap.add_argument("--newdev-name", default="dev2", help="new_dev mode: output basename + split label (e.g. dev2, dev3).")
+    ap.add_argument(
+        "--newdev-name", default="dev2", help="new_dev mode: output basename + split label (e.g. dev2, dev3)."
+    )
     ap.add_argument(
         "--source-dir",
         default=None,

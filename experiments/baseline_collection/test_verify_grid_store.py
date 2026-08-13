@@ -21,8 +21,8 @@ import shutil
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
-from fray import ResourceConfig
 from fray.local_backend import LocalClient
+from fray.types import ResourceConfig
 
 from experiments.baseline_collection import grid_corpora, grid_store, grid_tokenize, verify_grid_store
 from experiments.datakit.store.datakit_store import (

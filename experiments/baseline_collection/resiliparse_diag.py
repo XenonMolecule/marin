@@ -19,8 +19,9 @@ from __future__ import annotations
 import argparse
 import sys
 
-from fray import ResourceConfig
-from zephyr import Dataset, ZephyrContext
+from fray.types import ResourceConfig
+from zephyr.dataset import Dataset
+from zephyr.execution import ZephyrContext
 
 from experiments.baseline_collection.extractors import resiliparse_full, resiliparse_main
 

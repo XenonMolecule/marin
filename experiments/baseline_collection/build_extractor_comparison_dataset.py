@@ -51,10 +51,10 @@ import random
 from collections.abc import Iterator
 from dataclasses import dataclass
 
-from fray import ResourceConfig
-from marin.utils import fsspec_glob
+from fray.types import ResourceConfig
 from rigging.log_setup import configure_logging
-from zephyr import Dataset, ZephyrContext
+from zephyr.dataset import Dataset
+from zephyr.execution import ZephyrContext
 from zephyr.readers import load_jsonl
 
 from experiments.baseline_collection.decode_warcs_clean import (
@@ -64,6 +64,7 @@ from experiments.baseline_collection.decode_warcs_clean import (
     _warc_path_hash,
     body_strip,
 )
+from experiments.fsspec_paths import fsspec_glob
 
 logger = logging.getLogger(__name__)
 

@@ -41,8 +41,9 @@ from haliax.partitioning import ResourceAxis, set_mesh
 from jax.sharding import Mesh
 from levanter.main.train_classifier import read_frozen_eval, score_texts
 from levanter.models.pooled_transformer import PooledTransformerConfig, load_pooled_transformer_classifier
-from marin.utils import fsspec_glob
 from transformers import AutoTokenizer
+
+from experiments.fsspec_paths import fsspec_glob
 
 logger = logging.getLogger(__name__)
 

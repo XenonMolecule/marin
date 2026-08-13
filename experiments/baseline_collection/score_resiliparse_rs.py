@@ -42,7 +42,8 @@ from concurrent.futures.process import BrokenProcessPool
 import fsspec
 import pyarrow as pa
 import pyarrow.parquet as pq
-from marin.utils import fsspec_glob
+
+from experiments.fsspec_paths import fsspec_glob
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)

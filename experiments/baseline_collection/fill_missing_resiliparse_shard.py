@@ -28,10 +28,10 @@ import argparse
 import logging
 import re
 
-from fray import ResourceConfig
+from fray.types import ResourceConfig
 from marin.transform.extract_text_from_html import ExtractTextConfig, _extract_text, _is_non_empty
-from zephyr import Dataset, ZephyrContext
-from zephyr.dataset import GlobSource, resolve_glob
+from zephyr.dataset import Dataset, GlobSource, resolve_glob
+from zephyr.execution import ZephyrContext
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger = logging.getLogger(__name__)

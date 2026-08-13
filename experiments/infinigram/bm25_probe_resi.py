@@ -10,7 +10,7 @@ cleaned up after tokenization". Raises with the listing for bug-report capture.
 
 import logging
 
-from marin.utils import fsspec_glob
+from experiments.fsspec_paths import fsspec_glob
 
 logger = logging.getLogger(__name__)
 

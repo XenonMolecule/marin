@@ -22,10 +22,10 @@ import json
 
 import pyarrow.parquet as pq
 import pytest
-from marin.utils import fsspec_glob
 
 from experiments.baseline_collection import grid_corpora, grid_tokenize
 from experiments.baseline_collection.grid_corpora import Format, GridCorpus, output_stem, read_shard
+from experiments.fsspec_paths import fsspec_glob
 
 DATASET = "dclm_10k"
 N_SHARDS = 3

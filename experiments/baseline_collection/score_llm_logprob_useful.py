@@ -33,10 +33,10 @@ import time
 from collections import Counter
 
 import fsspec
-from marin.utils import fsspec_glob
 
 from experiments.baseline_collection.extraction_specs import get_spec
 from experiments.baseline_collection.run_extract_standalone import MAX_DOC_TOKENS, MAX_OUTPUT_TOKENS
+from experiments.fsspec_paths import fsspec_glob
 
 logger = logging.getLogger(__name__)
 

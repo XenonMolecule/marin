@@ -14,7 +14,7 @@ from functools import lru_cache
 from typing import Any
 
 import jmp
-from fray import ResourceConfig
+from fray.types import ResourceConfig
 from haliax.partitioning import ResourceAxis
 from haliax.quantization import QuantizationConfig
 from levanter.checkpoint import CheckpointerConfig
@@ -30,7 +30,7 @@ from levanter.main.train_dpo import TrainDpoConfig
 from levanter.main.train_lm import TrainLmConfig
 from levanter.models.llama import LlamaConfig
 from levanter.models.lm_model import LmConfig
-from levanter.optim import AdamConfig
+from levanter.optim.config import AdamConfig
 from levanter.schedule import BatchSchedule
 from levanter.tracker.wandb import WandbConfig
 from levanter.trainer import DEFAULT_JAX_CONFIG, TrainerConfig

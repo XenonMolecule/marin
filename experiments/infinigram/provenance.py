@@ -14,8 +14,9 @@ import hashlib
 import logging
 from concurrent.futures import ThreadPoolExecutor
 
-from marin.utils import fsspec_glob
 from zephyr.readers import load_file
+
+from experiments.fsspec_paths import fsspec_glob
 
 logger = logging.getLogger(__name__)
 

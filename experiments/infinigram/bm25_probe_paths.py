@@ -14,8 +14,7 @@ compact summary for bug-report capture (finelog is down).
 
 import logging
 
-from marin.utils import fsspec_glob
-
+from experiments.fsspec_paths import fsspec_glob
 from experiments.infinigram.targets import all_targets
 
 logger = logging.getLogger(__name__)

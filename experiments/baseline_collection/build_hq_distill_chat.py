@@ -57,9 +57,9 @@ from collections.abc import Iterator
 
 import fsspec
 import pyarrow.parquet as pq
-from fray import ResourceConfig
-from marin.utils import fsspec_glob
-from zephyr import Dataset, ZephyrContext
+from fray.types import ResourceConfig
+from zephyr.dataset import Dataset
+from zephyr.execution import ZephyrContext
 
 from experiments.baseline_collection.extraction_specs import get_spec
 from experiments.baseline_collection.fasttext_useful_classifier import (
@@ -71,6 +71,7 @@ from experiments.baseline_collection.fasttext_useful_classifier import (
 from experiments.baseline_collection.fasttext_useful_classifier import (
     _shard_snapshots as shard_snapshots,
 )
+from experiments.fsspec_paths import fsspec_glob
 
 logger = logging.getLogger(__name__)
 

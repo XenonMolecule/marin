@@ -24,8 +24,9 @@ import time
 import fsspec
 import requests
 import warcio
-from fray import ResourceConfig
-from zephyr import Dataset, ZephyrContext
+from fray.types import ResourceConfig
+from zephyr.dataset import Dataset
+from zephyr.execution import ZephyrContext
 
 from experiments.baseline_collection.decode_warcs_clean import (
     HTTP_TIMEOUT,

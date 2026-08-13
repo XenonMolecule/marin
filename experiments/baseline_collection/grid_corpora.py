@@ -29,7 +29,8 @@ from dataclasses import dataclass
 import fsspec
 import pyarrow.parquet as pq
 from marin.datakit.normalize import generate_id
-from marin.utils import fsspec_glob
+
+from experiments.fsspec_paths import fsspec_glob
 
 logger = logging.getLogger(__name__)
 

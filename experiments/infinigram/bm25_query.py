@@ -26,7 +26,8 @@ import time
 from dataclasses import dataclass
 
 import fsspec
-from marin.utils import fsspec_exists
+
+from experiments.fsspec_paths import fsspec_exists
 
 # bm25s is an optional dep (installed only in build/query jobs). Guard the import
 # so the coordinator, which imports MANIFEST_NAME from here, loads without it.

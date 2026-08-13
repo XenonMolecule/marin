@@ -37,14 +37,16 @@ from fray.cluster import ResourceConfig
 from levanter.checkpoint import CheckpointerConfig
 from levanter.data.text import LMMixtureDatasetConfig, TextLmDatasetFormat
 from levanter.main.train_lm import TrainLmConfig
-from levanter.optim import AdamConfig
+from levanter.optim.config import AdamConfig
 from levanter.tracker.wandb import WandbConfig
 from levanter.trainer import TrainerConfig
 from marin.evaluation.evaluation_config import EvalTaskConfig
 from marin.execution.executor import ExecutorStep, executor_main, this_output_path
 from marin.processing.tokenize import lm_data_config
 from marin.training.training import TrainLmOnPodConfig, run_levanter_train_lm
-from zephyr import Dataset, ZephyrContext, load_jsonl
+from zephyr.dataset import Dataset
+from zephyr.execution import ZephyrContext
+from zephyr.readers import load_jsonl
 
 from experiments.defaults import default_tokenize
 from experiments.evals.evals import default_eval

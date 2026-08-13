@@ -24,8 +24,9 @@ import re
 import sys
 
 import fsspec
-from fray import ResourceConfig
-from zephyr import Dataset, ZephyrContext
+from fray.types import ResourceConfig
+from zephyr.dataset import Dataset
+from zephyr.execution import ZephyrContext
 
 DECODED = "gs://marin-us-east5/documents/bert_pipeline/decoded_10k"
 TIMESPAN = "gs://marin-us-east5/documents/internet_timespan_sample/v1"

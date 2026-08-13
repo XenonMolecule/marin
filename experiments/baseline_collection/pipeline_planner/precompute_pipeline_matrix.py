@@ -45,9 +45,9 @@ from concurrent.futures import ProcessPoolExecutor
 import fsspec
 import numpy as np
 import pyarrow.parquet as pq
-from marin.utils import fsspec_glob
 
 from experiments.baseline_collection.pipeline_planner import stage_registry as reg
+from experiments.fsspec_paths import fsspec_glob
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)

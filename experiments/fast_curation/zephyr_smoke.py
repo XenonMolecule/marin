@@ -17,8 +17,9 @@ from __future__ import annotations
 import logging
 import time
 
-from fray import ResourceConfig
-from zephyr import Dataset, ZephyrContext
+from fray.types import ResourceConfig
+from zephyr.dataset import Dataset
+from zephyr.execution import ZephyrContext
 
 logger = logging.getLogger(__name__)
 

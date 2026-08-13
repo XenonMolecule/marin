@@ -36,8 +36,9 @@ from urllib.parse import urlparse
 
 import fsspec
 import pyarrow.parquet as pq
-from fray import ResourceConfig
-from zephyr import Dataset, ZephyrContext
+from fray.types import ResourceConfig
+from zephyr.dataset import Dataset
+from zephyr.execution import ZephyrContext
 
 from experiments.baseline_collection.build_devset import _domain_register
 from experiments.baseline_collection.recover_devset_html_cc import GATE_OUT, OUT, WORKSPACE

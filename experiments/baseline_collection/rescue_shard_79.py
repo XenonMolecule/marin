@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 
 import marin.transform.dclm_filter as df
-from fray import ResourceConfig
+from fray.types import ResourceConfig
 from marin.transform.dclm_filter import DclmFilterConfig, dclm_filter
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")

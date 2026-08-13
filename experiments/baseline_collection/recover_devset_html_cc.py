@@ -36,13 +36,14 @@ import fsspec
 import pyarrow.parquet as pq
 import requests
 import warcio
-from fray import ResourceConfig
+from fray.types import ResourceConfig
 from marin.datakit.download.commoncrawl.cdx_query_columnar import (
     _build_domain_filter,
     _get_parquet_urls,
     _query_single_crawl,
 )
-from zephyr import Dataset, ZephyrContext
+from zephyr.dataset import Dataset
+from zephyr.execution import ZephyrContext
 
 from experiments.baseline_collection.decode_warcs_clean import decode_payload
 
@@ -142,7 +143,7 @@ def _snapshot_from_warc(w: str) -> str:
 def _run_local_targeted(max_workers: int) -> None:
     """Map missing urls -> their WARC (metadata) -> the pool file `data-<hash>.jsonl.gz` (hash =
     _warc_path_hash(warc_file), verified), then read ONLY those files instead of scanning all 4.5 TB."""
-    from zephyr import load_jsonl
+    from zephyr.readers import load_jsonl
 
     from experiments.baseline_collection.sample_internet_timespan import _warc_path_hash
 

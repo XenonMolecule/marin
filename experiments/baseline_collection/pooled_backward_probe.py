@@ -115,7 +115,7 @@ def run_trainer_path(ctx: int, batch: int) -> None:
     from levanter.data.dataset import ListAsyncDataset
     from levanter.distributed import DistributedConfig
     from levanter.main.train_classifier import train_classifier
-    from levanter.optim import AdamConfig
+    from levanter.optim.config import AdamConfig
     from levanter.tracker import NoopConfig
     from levanter.trainer import TrainerConfig
 

@@ -67,11 +67,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import fsspec
-from fray import ResourceConfig
+from fray.types import ResourceConfig
 from marin.execution.executor import ExecutorStep, executor_main, this_output_path
 from marin.execution.remote import remote
-from zephyr import Dataset, ZephyrContext
-from zephyr.execution import zephyr_worker_ctx
+from zephyr.dataset import Dataset
+from zephyr.execution import ZephyrContext, zephyr_worker_ctx
 
 from experiments.baseline_collection.subset_baselines import _glob_files
 from experiments.defaults import default_tokenize

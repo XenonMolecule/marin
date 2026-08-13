@@ -39,7 +39,7 @@ from haliax.partitioning import ResourceAxis
 from levanter.checkpoint import CheckpointerConfig
 from levanter.data.text import ChatLmDatasetFormat, LMMixtureDatasetConfig
 from levanter.main.train_lm import TrainLmConfig
-from levanter.optim import AdamConfig
+from levanter.optim.config import AdamConfig
 from levanter.tracker.wandb import WandbConfig
 from levanter.trainer import TrainerConfig
 from levanter.utils.mesh import MeshConfig

@@ -24,7 +24,8 @@ import logging
 import fsspec
 import numpy as np
 import pyarrow.parquet as pq
-from marin.utils import fsspec_glob
+
+from experiments.fsspec_paths import fsspec_glob
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -69,7 +70,7 @@ def _best_f1(scores: np.ndarray, gold: np.ndarray) -> dict:
                     "fp": fp,
                     "fn": fn,
                 }
-    best["n"] = int(len(y))
+    best["n"] = len(y)
     best["n_useful"] = pos
     return best
 
@@ -82,9 +83,7 @@ def main() -> None:
     with fsspec.open(files[0], "rb") as fh:  # context manager — OpenFile isn't a usable file handle directly
         schema = pq.ParquetFile(fh).schema_arrow
     score_cols = [
-        n
-        for n, t in zip(schema.names, schema.types)
-        if n.startswith(SCORE_PREFIXES) and str(t).startswith("float")
+        n for n, t in zip(schema.names, schema.types) if n.startswith(SCORE_PREFIXES) and str(t).startswith("float")
     ]
     logger.info("scoring %d classifier columns: %s", len(score_cols), score_cols)
 
@@ -122,7 +121,7 @@ def main() -> None:
     print("=== F1 TABLE END ===")
 
     with fsspec.open(RESULT_JSON, "w") as fh:
-        json.dump({"n": int(len(gold)), "n_useful": int(gold.sum()), "columns": results}, fh, indent=2)
+        json.dump({"n": len(gold), "n_useful": int(gold.sum()), "columns": results}, fh, indent=2)
     logger.info("wrote %s", RESULT_JSON)
 
 

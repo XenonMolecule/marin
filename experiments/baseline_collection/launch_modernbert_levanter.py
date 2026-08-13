@@ -26,7 +26,7 @@ from levanter.checkpoint import CheckpointerConfig
 from levanter.layers.attention import AttentionBackend
 from levanter.main.train_classifier import ClassificationDataConfig, TrainClassifierConfig
 from levanter.models.modernbert import ModernBertConfig, PrunedModernBertConfig
-from levanter.optim import AdamConfig
+from levanter.optim.config import AdamConfig
 from levanter.tracker.wandb import WandbConfig
 from levanter.trainer import TrainerConfig
 from marin.execution.remote import remote

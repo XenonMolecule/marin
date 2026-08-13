@@ -359,7 +359,7 @@ def _process_warc_shard(warc_paths_iter: Iterator[str], _shard_info: Any = None)
 
     Called by Zephyr ``map_shard``. Each shard is a single WARC URL string.
     """
-    from zephyr import zephyr_worker_ctx
+    from zephyr.worker_context import zephyr_worker_ctx
 
     ctx = zephyr_worker_ctx()
     config: DownloadAndExtractConfig = ctx.get_shared("config")
@@ -463,8 +463,9 @@ def run_download_and_extract(config: DownloadAndExtractConfig) -> None:
     Output path is determined at runtime from the worker's GCP region.
     Shard-level checkpointing via ``skip_existing=True`` — safe to restart.
     """
-    from fray import ResourceConfig, TpuConfig
-    from zephyr import Dataset, ZephyrContext
+    from fray.types import ResourceConfig, TpuConfig
+    from zephyr.dataset import Dataset
+    from zephyr.execution import ZephyrContext
 
     warc_paths = _load_manifest(config.warc_manifest_path)
     logger.info("Loaded %d WARC paths from %s", len(warc_paths), config.warc_manifest_path)

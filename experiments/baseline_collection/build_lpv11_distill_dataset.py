@@ -53,11 +53,12 @@ from concurrent.futures import ThreadPoolExecutor
 
 import fsspec
 import pyarrow as pa
-from fray import ResourceConfig
+from fray.types import ResourceConfig
 from marin.datakit.normalize import generate_id
-from marin.utils import fsspec_glob
 from rigging.log_setup import configure_logging
-from zephyr import Dataset, ZephyrContext, counters
+from zephyr import counters
+from zephyr.dataset import Dataset
+from zephyr.execution import ZephyrContext
 from zephyr.readers import load_jsonl
 
 from experiments.baseline_collection.build_hq_distill_dataset import (
@@ -66,6 +67,7 @@ from experiments.baseline_collection.build_hq_distill_dataset import (
     remap_to_consolidated,
     warc_hash_from_path,
 )
+from experiments.fsspec_paths import fsspec_glob
 
 logger = logging.getLogger(__name__)
 

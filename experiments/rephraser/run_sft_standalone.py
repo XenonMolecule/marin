@@ -83,7 +83,7 @@ from levanter.data.text import (
 )
 from levanter.layers.rotary import DefaultRotaryEmbeddingsConfig
 from levanter.main.train_lm import TrainLmConfig
-from levanter.optim import AdamConfig
+from levanter.optim.config import AdamConfig
 from levanter.tracker.wandb import WandbConfig
 from levanter.trainer import TrainerConfig
 from marin.training.training import TrainLmOnPodConfig, _prepare_training_run

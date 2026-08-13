@@ -42,7 +42,7 @@ from levanter.store.cache import CacheOptions, TreeCache, build_or_load_cache
 from levanter.models.classification import ClassificationExample, build_classifier, save_classifier
 from levanter.models.lm_model import LmConfig
 from levanter.models.modernbert import ModernBertConfig
-from levanter.optim import AdamConfig, OptimizerConfig
+from levanter.optim.config import AdamConfig, OptimizerConfig
 from levanter.trainer import Trainer, TrainerConfig
 from levanter.utils.jax_utils import parameter_count
 from levanter.utils.tree_utils import inference_mode

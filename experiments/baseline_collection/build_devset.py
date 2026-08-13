@@ -504,8 +504,9 @@ def _fetch_keep(rec: dict) -> dict | None:
 def run_fetch_text(args: argparse.Namespace) -> int:
     """Zephyr pass: attach FULL resiliparse text for the preview-sample urls (fast, distributed)."""
     import pyarrow.parquet as pq
-    from fray import ResourceConfig
-    from zephyr import Dataset, ZephyrContext
+    from fray.types import ResourceConfig
+    from zephyr.dataset import Dataset
+    from zephyr.execution import ZephyrContext
 
     urls_tbl = pq.ParquetDataset(
         f"{WORKSPACE}/devset/preview_urls.parquet".replace("gs://", ""), filesystem=fsspec.filesystem("gcs")
@@ -644,8 +645,9 @@ def run_hard_sample(args: argparse.Namespace) -> int:
 def run_fetch_extractions(args: argparse.Namespace) -> int:
     """Zephyr: fetch one pipeline's extracted text for the hard-sample urls (in that pipeline's region)."""
     import pyarrow.parquet as pq
-    from fray import ResourceConfig
-    from zephyr import Dataset, ZephyrContext
+    from fray.types import ResourceConfig
+    from zephyr.dataset import Dataset
+    from zephyr.execution import ZephyrContext
 
     from experiments.baseline_collection.provenance_audit_10k import SOURCES
 
@@ -803,8 +805,9 @@ def _fetch_decoded(rec: dict) -> dict | None:
 def run_fetch_decoded(args: argparse.Namespace) -> int:
     """Zephyr (us-east5): pull the full text_body for a url list from the decoded_10k HTML store."""
     import pyarrow.parquet as pq
-    from fray import ResourceConfig
-    from zephyr import Dataset, ZephyrContext
+    from fray.types import ResourceConfig
+    from zephyr.dataset import Dataset
+    from zephyr.execution import ZephyrContext
 
     urls = list(
         pq.ParquetDataset(args.urls.replace("gs://", ""), filesystem=fsspec.filesystem("gcs"))
@@ -977,8 +980,9 @@ def run_content_scan(args: argparse.Namespace) -> int:
     """Zephyr: scan the resiliparse universe for docs whose STRUCTURE matches a page-shape register
     (tabular/code) — these registers aren't domain-identifiable, so content is the only signal.
     Emits candidates {url, signal, snippet} above threshold; rank/cap/verify happens downstream."""
-    from fray import ResourceConfig
-    from zephyr import Dataset, ZephyrContext
+    from fray.types import ResourceConfig
+    from zephyr.dataset import Dataset
+    from zephyr.execution import ZephyrContext
 
     from experiments.baseline_collection.provenance_audit_10k import SOURCES
 
@@ -1018,8 +1022,9 @@ def _arxiv_metric(rec: dict) -> dict | None:
 
 def run_arxiv_audit(args: argparse.Namespace) -> int:
     """Zephyr: over one pipeline's whole corpus, measure LaTeX-garbling + listing rate on arxiv docs."""
-    from fray import ResourceConfig
-    from zephyr import Dataset, ZephyrContext
+    from fray.types import ResourceConfig
+    from zephyr.dataset import Dataset
+    from zephyr.execution import ZephyrContext
 
     from experiments.baseline_collection.provenance_audit_10k import SOURCES
 

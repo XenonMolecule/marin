@@ -41,7 +41,7 @@ from levanter.checkpoint import CheckpointerConfig
 from levanter.data.text import LMMixtureDatasetConfig, TextLmDatasetFormat
 from levanter.main.train_lm import TrainLmConfig
 from levanter.models.lm_model import LmConfig
-from levanter.optim import AdamConfig
+from levanter.optim.config import AdamConfig
 from levanter.tracker.wandb import WandbConfig
 from levanter.trainer import TrainerConfig
 from marin.datakit.download.commoncrawl.cdx_query import CDXQueryConfig, query_cdx

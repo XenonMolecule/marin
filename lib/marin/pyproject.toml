@@ -47,6 +47,7 @@ dependencies = [
     "tqdm",
     "tqdm-loggable",
     "wandb>0.24.0",
+    "warcio",
     "marin-zephyr",
 ]
 

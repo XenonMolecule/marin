@@ -53,10 +53,11 @@ import time
 import pyarrow as pa
 import pyarrow.compute as pc
 import pyarrow.parquet as pq
-from fray import ResourceConfig
+from fray.types import ResourceConfig
 from huggingface_hub import HfFileSystem
 from rigging.filesystem import filesystem as marin_filesystem
-from zephyr import Dataset, ZephyrContext
+from zephyr.dataset import Dataset
+from zephyr.execution import ZephyrContext
 
 logger = logging.getLogger(__name__)
 

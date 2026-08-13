@@ -21,8 +21,7 @@ import os
 import shutil
 import tempfile
 
-from marin.utils import fsspec_exists
-
+from experiments.fsspec_paths import fsspec_exists
 from experiments.infinigram.targets import DATASETS, Collection
 from experiments.url_index import consolidate, coverage, layout
 from experiments.url_index.build import _upload

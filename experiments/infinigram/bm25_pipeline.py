@@ -26,9 +26,9 @@ import subprocess
 from collections.abc import Iterator
 
 import fsspec
-from marin.utils import fsspec_exists
 from zephyr.readers import load_file
 
+from experiments.fsspec_paths import fsspec_exists
 from experiments.infinigram.bm25_build import (
     TEXT_BYTES_BUDGET,
     Bm25ShardResult,

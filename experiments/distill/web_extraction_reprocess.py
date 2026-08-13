@@ -81,7 +81,8 @@ from marin.datakit.download.huggingface import DownloadConfig, download_hf
 from marin.execution.executor import ExecutorStep, executor_main, this_output_path, versioned
 from marin.execution.remote import remote
 from marin.generation.inference import TextGenerationInferenceConfig, run_inference
-from marin.utils import fsspec_glob
+
+from experiments.fsspec_paths import fsspec_glob
 
 logger = logging.getLogger(__name__)
 
@@ -437,10 +438,12 @@ def reassemble_messages(config: ReassembleConfig) -> None:
     the standard 3-message chat format matching the original HF dataset schema.
     Drops intermediate columns (prompt, generated_text) from the output.
     """
-    from zephyr import Dataset, ZephyrContext, load_jsonl
+    from zephyr.dataset import Dataset
+    from zephyr.execution import ZephyrContext
+    from zephyr.readers import load_jsonl
 
     def _reassemble_record(record: dict) -> dict:
-        from zephyr import zephyr_worker_ctx
+        from zephyr.worker_context import zephyr_worker_ctx
 
         ctx = zephyr_worker_ctx()
         cfg: ReassembleConfig = ctx.get_shared("reassemble_config")

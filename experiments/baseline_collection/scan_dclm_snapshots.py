@@ -24,7 +24,8 @@ import logging
 
 import fsspec
 import zstandard
-from zephyr import Dataset, ZephyrContext
+from zephyr.dataset import Dataset
+from zephyr.execution import ZephyrContext
 
 logger = logging.getLogger(__name__)
 

@@ -31,7 +31,7 @@ from fray.cluster import ResourceConfig
 from levanter.checkpoint import CheckpointerConfig
 from levanter.layers.rotary import DefaultRotaryEmbeddingsConfig
 from levanter.main.train_decoder_classifier import DecoderClassificationDataConfig, TrainDecoderClassifierConfig
-from levanter.optim import AdamConfig
+from levanter.optim.config import AdamConfig
 from levanter.tracker.wandb import WandbConfig
 from levanter.trainer import TrainerConfig
 from marin.execution.remote import remote

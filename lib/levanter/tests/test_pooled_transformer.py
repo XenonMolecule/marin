@@ -7,7 +7,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 from jax import random
-from test_utils import use_test_mesh
+from levanter.testing.helpers import use_test_mesh
 
 import haliax as hax
 from haliax import Axis

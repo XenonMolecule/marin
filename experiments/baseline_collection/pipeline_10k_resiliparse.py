@@ -30,7 +30,7 @@ Usage (Iris, CPU, us-central2 where the raw pool + nemotron base live)::
         -- python experiments/baseline_collection/pipeline_10k_resiliparse.py
 """
 
-from fray import ResourceConfig
+from fray.types import ResourceConfig
 from marin.execution.executor import ExecutorStep, executor_main, this_output_path
 from marin.execution.remote import remote
 from marin.transform.extract_text_from_html import ExtractTextConfig

@@ -13,8 +13,7 @@ import logging
 import re
 from dataclasses import dataclass
 
-from marin.utils import fsspec_glob, fsspec_size
-
+from experiments.fsspec_paths import fsspec_glob, fsspec_size
 from experiments.infinigram.targets import REGION_BUCKET, IndexTarget
 
 logger = logging.getLogger(__name__)

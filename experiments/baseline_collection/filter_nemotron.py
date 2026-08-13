@@ -54,9 +54,9 @@ import logging
 from dataclasses import dataclass
 
 import fsspec
-from fray import ResourceConfig
-from zephyr import Dataset, ZephyrContext
-from zephyr.execution import zephyr_worker_ctx
+from fray.types import ResourceConfig
+from zephyr.dataset import Dataset
+from zephyr.execution import ZephyrContext, zephyr_worker_ctx
 from zephyr.readers import load_file as zephyr_load_file
 
 logger = logging.getLogger(__name__)
