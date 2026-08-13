@@ -1,0 +1,104 @@
+<!-- Copyright The Marin Authors — SPDX-License-Identifier: Apache-2.0 -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Spec Explorer</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
+</head>
+<body>
+<div class="app">
+  <nav class="rail" id="rail">
+    <div class="brand">SPEC&nbsp;<b>EXPLORER</b></div>
+    <!-- nav buttons injected by app.js -->
+  </nav>
+
+  <div class="main">
+    <header class="topbar">
+      <h1 id="tab-title">Performance</h1>
+      <span class="sub" id="tab-sub">method × eval crossover</span>
+      <span class="spacer"></span>
+      <span class="updated" id="eval-updated">evals: —</span>
+      <button class="btn" id="refresh-eval"><span class="dot"></span> refresh evals</button>
+    </header>
+
+    <div class="content">
+      <!-- PERFORMANCE -->
+      <section class="tab" data-tab="performance">
+        <div class="controls" id="perf-controls"></div>
+        <div class="method-toggle" id="perf-methods"></div>
+        <div class="panel plot-wrap"><div id="perf-plot"></div>
+          <p class="hint" id="perf-caption"></p></div>
+      </section>
+
+      <!-- WINNERS -->
+      <section class="tab" data-tab="winners">
+        <div class="controls" id="win-controls"></div>
+        <div id="win-table"></div>
+      </section>
+
+      <!-- SPECS -->
+      <section class="tab" data-tab="specs">
+        <div class="spec-layout">
+          <div class="panel"><div class="spec-list" id="spec-list"></div></div>
+          <div class="panel spec-detail" id="spec-detail">
+            <div class="empty-state"><div class="big">Select a method</div>
+              <div>Its extraction spec — prompts, phases, budgets — will render here.</div></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- COVERAGE -->
+      <section class="tab" data-tab="coverage">
+        <div class="controls" id="cov-controls"></div>
+        <div id="cov-filter"></div>
+        <div id="cov-workers"></div>
+        <div class="cov-layout">
+          <div class="panel">
+            <div id="cov-heatmap" style="height:540px"></div>
+            <p class="hint" id="cov-caveat"></p>
+          </div>
+          <div class="panel" id="cov-setdiff">
+            <div class="empty-state"><span class="spin"></span></div>
+          </div>
+        </div>
+        <div id="cov-docs"></div>
+      </section>
+
+      <!-- SEARCH -->
+      <section class="tab" data-tab="search">
+        <div class="search-layout">
+          <div class="search-main">
+            <div class="search-bar">
+              <input type="text" id="search-input" placeholder="Search the corpus — e.g. &quot;ocaml tutorials&quot;, &quot;pages with lots of code blocks&quot;, &quot;conspiracy forums&quot;…" />
+              <button class="btn primary" id="search-go">search</button>
+              <button class="btn" id="search-refresh" title="Re-run (ignore cache)">↻</button>
+            </div>
+            <label class="search-opt" title="Also hunt for actual primary sources / real examples (e.g. the literary text itself), not just pages about the topic. Off by default — the plain topic search is usually higher quality.">
+              <input type="checkbox" id="search-example-mode"> example mode <span class="opt-hint">— find primary sources, not just pages about the topic</span>
+            </label>
+            <div id="search-progress"></div>
+            <div id="search-results"></div>
+          </div>
+          <div class="search-side">
+            <div class="setdiff-title">Saved searches</div>
+            <div id="search-saved"></div>
+            <button class="btn" id="search-backport" title="Recompute the kept/dropped cross-reference for every saved search against the current dataset set (e.g. after a new pipeline like llm_pipeline_v1_1 is added). No new Gemini/BM25 calls.">↻ update saved for new datasets</button>
+            <div class="hint" id="search-backport-status" style="margin-top:6px"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- COMPARE -->
+      <section class="tab" data-tab="compare">
+        <div class="controls" id="cmp-controls"></div>
+        <div id="cmp-body"></div>
+      </section>
+    </div>
+  </div>
+</div>
+<script src="/static/app.js"></script>
+</body>
+</html>

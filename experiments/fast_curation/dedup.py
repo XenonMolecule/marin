@@ -37,6 +37,7 @@ Run inside an Iris CPU job in the region holding the consolidated kept_text tree
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import logging
 import os
@@ -73,11 +74,30 @@ _REGION_TO_BUCKET: dict[str, str] = {
 NUM_RESHAPE_SHARDS = 200
 
 
-def _kept_text_shard_paths(spec_id: str, region: str) -> list[str]:
-    """All CONSOLIDATED kept_text parquet files (text + modernbert_prob) for this spec."""
+def _shard_hash(path: str) -> str:
+    """``.../kept_text/data-{warc_hash}.parquet`` -> ``{warc_hash}``."""
+    return os.path.basename(path).removeprefix("data-").removesuffix(".parquet")
+
+
+def _kept_text_shard_paths(spec_id: str, region: str, warc_hashes: set[str] | None = None) -> list[str]:
+    """All CONSOLIDATED kept_text parquet files (text + modernbert_prob) for this spec.
+
+    ``kept_text`` is sharded one parquet per WARC (``data-{warc_hash}.parquet``). When
+    ``warc_hashes`` is given, keep only those shards — the file-level subset that makes an
+    N-of-pool run. Raises if any requested WARC is absent (no silent partial subset)."""
     spec = get_spec(spec_id)
     glob = f"{spec.namespace(_REGION_TO_BUCKET[region])}/kept_text/data-*.parquet"
-    return sorted(fsspec_glob(glob))
+    paths = sorted(fsspec_glob(glob))
+    if warc_hashes is None:
+        return paths
+    kept = [p for p in paths if _shard_hash(p) in warc_hashes]
+    missing = warc_hashes - {_shard_hash(p) for p in paths}
+    if missing:
+        raise FileNotFoundError(
+            f"{len(missing)} of {len(warc_hashes)} requested WARCs absent from kept_text "
+            f"for spec {spec_id!r}; sample {sorted(missing)[:5]}"
+        )
+    return kept
 
 
 def _reshape_records(path: str) -> Iterator[dict]:
@@ -89,16 +109,41 @@ def _reshape_records(path: str) -> Iterator[dict]:
         yield {"text": text, "modernbert_prob": float(record["modernbert_prob"])}
 
 
+def _reshape_bucket(bucket: list[str]) -> Iterator[dict]:
+    """Yield ``{text, modernbert_prob}`` for every kept_text shard in one output shard's bucket."""
+    for path in bucket:
+        yield from _reshape_records(path)
+
+
 def _reshape(files: list[str], output_path: str) -> dict:
     logger.info("Reshape input: %d kept_text parquet shards", len(files))
     n_out = NUM_RESHAPE_SHARDS
+    # Per-shard checkpointing: pre-bucket inputs by output shard (round-robin over the sorted
+    # kept_text ordering) so each Zephyr task reads its own bucket and writes exactly one output
+    # shard via write_jsonl(skip_existing=True). Each shard is durable in GCS the moment its task
+    # finishes, so a coordinator preemption loses only in-flight shards.
+    #
+    # This mirrors the fix already made in dedup_extracted.py: the previous `.reshard(n_out)` path
+    # required ALL 10,364 input tasks to finish before any output shard could land, so nothing was
+    # checkpointed and a preemption discarded the entire reshape.
+    #
+    # Equivalence: same n_out shards holding the same total record set. Only the record-to-shard
+    # assignment differs, and normalize -> minhash -> fuzzy re-hash records globally, so shard
+    # membership is observably irrelevant.
+    buckets = [files[i::n_out] for i in range(n_out)]
     template = f"{output_path}/data-{{shard:05d}}-of-{n_out:05d}.jsonl.gz"
-    pipeline = (
-        Dataset.from_iterable(files).flat_map(_reshape_records).reshard(n_out).write_jsonl(template, skip_existing=True)
-    )
+    pipeline = Dataset.from_iterable(buckets).flat_map(_reshape_bucket).write_jsonl(template, skip_existing=True)
     ctx = ZephyrContext(
         name="reshape-fastcur",
-        max_workers=200,
+        # Sized to the cluster's real CPU capacity, NOT to the shard count. The only non-TPU scale
+        # group (cpu_vm_e2_highmem_2_ondemand) is max_slices=6 x n2-highmem-2, so ~12 slots at
+        # cpu=1. Zephyr requests min(max_workers, num_shards) workers UP FRONT and blocks until all
+        # are ready, and the worker actor group does not even register as an iris job while it
+        # waits -- so an over-large request hangs silently rather than degrading to fewer workers:
+        # no error, no log, just a heartbeating coordinator. fastpipe_v3 used 200 here and
+        # completed, so this ceiling is cluster-state dependent; keep it at/below real capacity.
+        # The 200 output shards are unaffected -- workers just process several buckets each.
+        max_workers=8,
         resources=ResourceConfig(cpu=1, ram="14g", disk="10g"),
     )
     ctx.execute(pipeline)
@@ -164,8 +209,10 @@ def _write_stats(stats_path: str, payload: dict) -> dict:
     return {"success": True, "path": stats_path}
 
 
-def build_steps(spec_id: str, region: str, target_partition_bytes: int) -> list[StepSpec]:
-    kept_files = _kept_text_shard_paths(spec_id, region)
+def build_steps(
+    spec_id: str, region: str, target_partition_bytes: int, warc_hashes: set[str] | None = None
+) -> list[StepSpec]:
+    kept_files = _kept_text_shard_paths(spec_id, region, warc_hashes)
     n = len(kept_files)
     if n == 0:
         raise FileNotFoundError(f"no kept_text parquet for spec {spec_id!r} in {region}; consolidate/project first")
@@ -246,8 +293,21 @@ def main() -> int:
     parser.add_argument("--spec", default="fastpipe_v3")
     parser.add_argument("--region", default="us-east5", choices=sorted(_REGION_TO_BUCKET))
     parser.add_argument("--target-partition-bytes", type=int, default=64 * 1024 * 1024)
+    parser.add_argument(
+        "--warc-manifest",
+        default=None,
+        help="Optional WARC manifest; subset kept_text to these WARCs (sha256(line)[:12]) for an "
+        "N-of-pool run. Output tree becomes baseline_{spec}_deduped/{len(subset)}warcs/. "
+        "Manifest must contain only WARC paths (no comment lines beyond '#').",
+    )
     args = parser.parse_args()
-    StepRunner().run(build_steps(args.spec, args.region, args.target_partition_bytes))
+    warc_hashes = None
+    if args.warc_manifest:
+        with open(args.warc_manifest) as f:
+            lines = [ln.strip() for ln in f if ln.strip() and not ln.startswith("#")]
+        warc_hashes = {hashlib.sha256(ln.encode()).hexdigest()[:12] for ln in lines}
+        logger.info("Subsetting kept_text to %d WARCs from %s", len(warc_hashes), args.warc_manifest)
+    StepRunner().run(build_steps(args.spec, args.region, args.target_partition_bytes, warc_hashes))
     return 0
 
 

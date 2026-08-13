@@ -197,7 +197,10 @@ def main(argv: list[str] | None = None) -> None:
     if args.force_memory_gb is not None:
         import dataclasses
 
-        plans = [dataclasses.replace(p, memory_gb=args.force_memory_gb) for p in plans]
+        # FLOOR, not replace: --force-memory-gb may only RAISE a cell's computed memory,
+        # never lower it below the model-size-scaled safe value (else large cells OOM on
+        # checkpoint save — the d2432 regression, 2026-07-23).
+        plans = [dataclasses.replace(p, memory_gb=max(p.memory_gb, args.force_memory_gb)) for p in plans]
     if args.max_count is not None:
         plans = plans[: args.max_count]
 

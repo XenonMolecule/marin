@@ -1,0 +1,5 @@
+s3://commoncrawl/crawl-data/CC-MAIN-2014-15/segments/1397609535095.9/warc/CC-MAIN-20140416005215-00583-ip-10-147-4-33.ec2.internal.warc.gz
+s3://commoncrawl/crawl-data/CC-MAIN-2015-22/segments/1432207926924.76/warc/CC-MAIN-20150521113206-00338-ip-10-180-206-219.ec2.internal.warc.gz
+s3://commoncrawl/crawl-data/CC-MAIN-2017-43/segments/1508187823309.55/warc/CC-MAIN-20171019141046-20171019161046-00239.warc.gz
+s3://commoncrawl/crawl-data/CC-MAIN-2016-50/segments/1480698542680.76/warc/CC-MAIN-20161202170902-00281-ip-10-31-129-80.ec2.internal.warc.gz
+s3://commoncrawl/crawl-data/CC-MAIN-2017-43/segments/1508187825227.80/warc/CC-MAIN-20171022113105-20171022133105-00624.warc.gz

@@ -25,7 +25,33 @@ Recompute any hash with
 
 ---
 
-## fastpipe_v3  (ACTIVE)
+## lpv11_fastpipe_v1  (ACTIVE, lpv11 line)
+
+- **Status**: new line — the first cascade targeting `llm_pipeline_v1_1` instead of the 8B `high_quality` run.
+- **Hash**: `2224e3e476` → namespace `gs://marin-<region>/documents/fast_curation/lpv11_fastpipe_v1-2224e3e476/`.
+- **Why a separate line, not a v4**: lpv11 and the 8B agree at only **0.325 F1** (keep rates 21.5% vs 4.8%). A cascade mixing an lpv11-trained stage with hq-trained ones would have its filters optimizing for different definitions of "useful". Every stage here is lpv11-targeted; `test_spec.py` asserts it.
+- **Cascade**: `decode → body_strip → fastText → tokenize → pooled → modernbert → resiliparse_rs`
+  | stage | model | threshold |
+  |---|---|---|
+  | fastText | `useful_fasttext_lpv11/body_strip_scale_w640_sub0p22_strat_prep_mc500` | 0.130 |
+  | **pooled** (new) | `mb-clf-lpv11-pooled-10M` | 0.178 |
+  | ModernBERT | `mb-clf-lpv11-base-10M-c8192` | 0.410 |
+  | extract | resiliparse-rs @ `850891b` (Rust `_extract_rs`) | — |
+- **Pooled stage**: runs inside Phase B *before* ModernBERT on the same tokens (both use the ModernBERT tokenizer/pad, so Phase A is unchanged). At 3932.6 vs 21.5 docs/chip/s it costs ~0.7% of the TPU time while culling ~24% of pre-survivors. **`pooled_threshold` IS namespace-defining** — unlike `modernbert_threshold`, a pooled drop means ModernBERT never scores the doc, so there is no stored prob to re-threshold against. Retuning it requires a re-run.
+- **resiliparse-rs vs jusText**: 291.8 vs 9.43 docs/s/core (**31x**), and the better lpv11 approximator (Levenshtein 0.726 vs 0.702; closer on 59.7% of docs). jusText was the pipeline's dominant cost. Pinned by fork commit because the extracted text IS the training text.
+- **Thresholds** are the operating points the cascade planner resolved on the 100k comparison sample (fastText/pooled @ recall 0.95, ModernBERT @ 0.93) → F1 0.850 vs lpv11.
+
+---
+
+## ⚠ Hash-stability note (2026-08-11)
+
+`_namespace_fields()` now **omits unset (None) fields**. Adding an optional field would otherwise change the hash of every spec that predates it, silently re-pointing a live namespace at an empty directory. Adding the pooled/extractor fields moved `fastpipe_v3` `da3893385e → 47cfdfc9d2`, which would have orphaned **3,602 already-extracted WARCs**. `test_spec.py` now pins published hashes so this fails loudly instead.
+
+**`fastpipe_v3`'s real hash is `da3893385e`, NOT the `6855733850` recorded below.** Both namespaces exist in GCS: `6855733850` holds 82 kept parquet (abandoned), `da3893385e` holds ~3,602 (us-east5 3,020 + us-central1 582). A namespace-defining field changed after v3 was documented without a version bump. The section below is left as written for the record; treat `da3893385e` as canonical.
+
+---
+
+## fastpipe_v3  (ACTIVE, hq line)
 
 - **Status**: active — the version run over the full 10,364-WARC pool, multi-region.
 - **Hash**: `6855733850` → namespace `gs://marin-<region>/documents/fast_curation/fastpipe_v3-6855733850/`.

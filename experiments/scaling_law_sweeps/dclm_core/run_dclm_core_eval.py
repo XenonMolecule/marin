@@ -484,6 +484,24 @@ def main():
     )
     p.add_argument("--limit", type=int, default=None, help="Smoke test: cap each task to N examples. None = full eval.")
     p.add_argument("--max-length", type=int, default=2048, help="Max sequence length for eval. DCLM uses 2048.")
+    p.add_argument(
+        "--hub-offline-after-load",
+        action="store_true",
+        help="Set HF_HUB_OFFLINE=1 once the model is loaded, so the 22-task loop never reaches "
+        "the Hub. Removes the shared-token rate limit from the hot path (sustained 429s are the "
+        "dominant cause of 'Failed to load task' deaths at fleet scale). Requires the offline "
+        "dataset cache to be complete: a genuinely absent dataset fails deterministically "
+        "instead of eventually. Off by default; validate on one job before using it on a wave.",
+    )
+    p.add_argument(
+        "--per-device-eval-parallelism",
+        type=int,
+        default=1,
+        help="Sequences scored per device per step. The effective eval batch is this times the "
+        "data-axis size (4 on a 4-chip slice). Loglikelihoods are per-request and independent, so "
+        "raising this changes throughput and memory only, never scores. 1 badly under-batches the "
+        "157M proxy models; raise it for small checkpoints, keep it low for multi-B ones.",
+    )
     p.add_argument("--wandb-project", default="marin-dclm-core", help="WandB project (set empty string to disable).")
     p.add_argument("--wandb-tags", action="append", default=[], help="WandB tag (can be repeated).")
     p.add_argument(
@@ -570,7 +588,7 @@ def main():
         trainer_config = TrainerConfig(
             tracker=wandb_cfg,
             mp=jmp.get_policy("p=bfloat16,c=bfloat16"),
-            per_device_eval_parallelism=1,
+            per_device_eval_parallelism=args.per_device_eval_parallelism,
         )
         # Stagger the cold-start HF Hub hit: when hundreds of evals launch together
         # they thundering-herd AutoConfig resolution and most fail with "couldn't
@@ -605,6 +623,18 @@ def main():
             )
             model = typing.cast(LmHeadModel, inference_mode(model, True))
             logger.info("Model loaded; running %d tasks per-task with checkpointing", len(missing_tasks))
+
+            # The Hub is only needed to resolve the checkpoint's config, which has now
+            # happened. `_prepare_offline_dataset_cache` sets HF_DATASETS_OFFLINE, but modern
+            # `datasets` routes through `huggingface_hub` and honours HF_HUB_OFFLINE instead,
+            # so task construction can still go out and hit the shared token's rate limit --
+            # sustained 429s that outlast lm-eval's ~20 min retry budget are the dominant
+            # cause of `Failed to load task` deaths across a large fleet. Setting it HERE (not
+            # at import, which breaks from_hf's registry probe -- see
+            # feedback_dclm_core_no_hub_offline) makes the task loop hermetic.
+            if args.hub_offline_after_load:
+                os.environ["HF_HUB_OFFLINE"] = "1"
+                logger.info("HF_HUB_OFFLINE=1 set after model load; task loading is now local-only")
 
             for i, task in enumerate(missing_tasks):
                 logger.info(

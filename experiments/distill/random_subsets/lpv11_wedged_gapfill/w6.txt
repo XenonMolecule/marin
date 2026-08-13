@@ -1,0 +1,10 @@
+s3://commoncrawl/crawl-data/CC-MAIN-2018-26/segments/1529267864343.37/warc/CC-MAIN-20180622030142-20180622050142-00159.warc.gz
+s3://commoncrawl/crawl-data/CC-MAIN-2017-47/segments/1510934806310.85/warc/CC-MAIN-20171121021058-20171121041058-00395.warc.gz
+s3://commoncrawl/crawl-data/CC-MAIN-2019-47/segments/1573496670151.97/warc/CC-MAIN-20191119121339-20191119145339-00452.warc.gz
+s3://commoncrawl/crawl-data/CC-MAIN-2019-43/segments/1570987829507.97/warc/CC-MAIN-20191023071040-20191023094540-00469.warc.gz
+s3://commoncrawl/crawl-data/CC-MAIN-2016-07/segments/1454701153998.27/warc/CC-MAIN-20160205193913-00216-ip-10-236-182-209.ec2.internal.warc.gz
+s3://commoncrawl/crawl-data/CC-MAIN-2019-51/segments/1575541307813.73/warc/CC-MAIN-20191215094447-20191215122447-00427.warc.gz
+s3://commoncrawl/crawl-data/CC-MAIN-2022-40/segments/1664030337663.75/warc/CC-MAIN-20221005172112-20221005202112-00270.warc.gz
+s3://commoncrawl/crawl-data/CC-MAIN-2017-13/segments/1490218189088.29/warc/CC-MAIN-20170322212949-00615-ip-10-233-31-227.ec2.internal.warc.gz
+s3://commoncrawl/crawl-data/CC-MAIN-2019-47/segments/1573496670743.44/warc/CC-MAIN-20191121074016-20191121102016-00170.warc.gz
+s3://commoncrawl/crawl-data/CC-MAIN-2013-20/segments/1368698207393/warc/CC-MAIN-20130516095647-00021-ip-10-60-113-184.ec2.internal.warc.gz

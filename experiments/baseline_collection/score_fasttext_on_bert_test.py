@@ -23,6 +23,23 @@ import fsspec
 LABEL_USEFUL = "__label__useful"
 
 
+def _useful_prob(model, text: str) -> float:
+    """P(__label__useful) for one doc.
+
+    ``fasttext.predict`` wraps its result in ``np.array(probs, copy=False)``, which numpy>=2 turns
+    into a hard error ("Unable to avoid copy..."), so fasttext-wheel is unusable through the Python
+    wrapper in the current container. The underlying C++ binding (``model.f.predict``) returns plain
+    ``(prob, label)`` tuples and touches no numpy, so prefer it and keep the wrapper as a fallback
+    for environments with numpy<2.
+    """
+    try:
+        preds = model.f.predict(text, 2, 0.0, "strict")
+        return next((float(p) for p, lbl in preds if lbl == LABEL_USEFUL), 0.0)
+    except AttributeError:
+        lbls, prs = model.predict(text, k=2)
+        return dict(zip(lbls, [float(p) for p in prs], strict=True)).get(LABEL_USEFUL, 0.0)
+
+
 def _valid_lines(path: str):
     """Yield (text, label) per valid line — same filter as modernbert read_fasttext
     (skip blank lines and lines with empty text). Streaming: O(1) memory."""
@@ -81,9 +98,7 @@ def main() -> None:
     probs = []
     for t in texts:
         t = t.replace("\n", " ")  # fastText.predict rejects embedded newlines
-        lbls, prs = model.predict(t, k=2)
-        d = dict(zip(lbls, [float(p) for p in prs]))
-        probs.append(d.get(LABEL_USEFUL, 0.0))
+        probs.append(_useful_prob(model, t))
 
     with fsspec.open(args.out, "wt", encoding="utf-8") as f:
         json.dump({"ft_probs": probs, "labels": labels}, f)

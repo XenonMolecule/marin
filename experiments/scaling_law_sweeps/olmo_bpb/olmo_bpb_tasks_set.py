@@ -100,11 +100,35 @@ QA_RC_MC_BPB: tuple[str, ...] = (
 )
 
 
+# BLEnD everyday-cultural-knowledge, rc:bpb over the English MC set (gold = the target
+# country's top-voted answer). Built by ``build_blend_bpb_requests.py``, one task per
+# country. Diagnostics only — NOT part of the olmix mixture objective.
+BLEND_BPB: tuple[str, ...] = (
+    "blend_algeria/rc_5shot",
+    "blend_assam/rc_5shot",
+    "blend_azerbaijan/rc_5shot",
+    "blend_china/rc_5shot",
+    "blend_ethiopia/rc_5shot",
+    "blend_greece/rc_5shot",
+    "blend_indonesia/rc_5shot",
+    "blend_iran/rc_5shot",
+    "blend_mexico/rc_5shot",
+    "blend_north_korea/rc_5shot",
+    "blend_northern_nigeria/rc_5shot",
+    "blend_south_korea/rc_5shot",
+    "blend_spain/rc_5shot",
+    "blend_uk/rc_5shot",
+    "blend_us/rc_5shot",
+    "blend_west_java/rc_5shot",
+)
+
+
 def resolve_tasks(spec: str) -> list[str]:
     """Resolve a --tasks spec into a list of ``"<task>/<variant>"`` dirs.
 
     Keywords: ``"all"`` → the 36 gold-continuation bpb tasks; ``"qa_rc"`` → the 20 MC-QA
-    rc:bpb tasks; ``"all+qa_rc"`` → both. Otherwise a comma-separated list of dir names.
+    rc:bpb tasks; ``"all+qa_rc"`` → both; ``"blend"`` → the 16 BLEnD country tasks.
+    Otherwise a comma-separated list of dir names.
     """
     if spec == "all":
         return list(OLMO_BASE_EASY_BPB)
@@ -112,4 +136,6 @@ def resolve_tasks(spec: str) -> list[str]:
         return list(QA_RC_MC_BPB)
     if spec == "all+qa_rc":
         return list(OLMO_BASE_EASY_BPB) + list(QA_RC_MC_BPB)
+    if spec == "blend":
+        return list(BLEND_BPB)
     return [t.strip() for t in spec.split(",") if t.strip()]

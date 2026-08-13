@@ -3,6 +3,8 @@
 (() => {
   const DATA = "data/";
   let REG, STAGES_BY_ID, MATRIX, N, PIPE, SELECTED = null, IS_DEMO = false, LAST_R = null;
+  // TARGET is the extractor whose decisions define "correct" — every agreement number is relative to it.
+  let TARGET = null;
   const SHARD_SIZE = 100, SHARD_CACHE = {};
 
   const $ = (id) => document.getElementById(id);
@@ -28,13 +30,15 @@
   const pct = (x) => (100 * x).toFixed(1) + "%";
 
   // ---- demo data (used until the real matrix is downloaded into data/) ----
+  const extKeyOf = (stage) => stage.id.replace(/^extract_/, "");
   function synthMatrix(reg) {
     const n = 2000; let s = 7; const rnd = () => ((s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
     const cols = {}; const gold = new Array(n);
     for (let i = 0; i < n; i++) gold[i] = rnd() < 0.05 ? 1 : 0;
-    cols.gold_useful = gold;
+    const extractors = reg.stages.filter((st) => st.kind === "extractor");
+    for (const t of reg.targets) { cols[t.gold_col] = gold; cols[t.coverage_col] = new Array(n).fill(1); }
     for (const st of reg.stages) {
-      if (st.kind !== "classifier") continue;
+      if (st.kind !== "classifier" || st.oracle) continue;
       const arr = new Array(n);
       for (let i = 0; i < n; i++) {
         if (st.direction === "low_useful") arr[i] = rnd() < 0.1 ? null : (gold[i] ? -4 + 2 * rnd() : -1 + 1.5 * rnd());
@@ -42,26 +46,35 @@
       }
       cols[st.score_col] = arr;
     }
-    const lab = (p) => { const a = new Array(n); for (let i = 0; i < n; i++) a[i] = (gold[i] ? rnd() < 0.85 : rnd() < 0.06) ? 1 : 0; return a; };
-    cols.label_1p7b_useful = lab(); cols.label_0p6b_useful = lab();
-    for (const k of ["1p7b", "0p6b", "justext"]) {
-      const lev = new Array(n), both = new Array(n);
+    const lab = () => { const a = new Array(n); for (let i = 0; i < n; i++) a[i] = (gold[i] ? rnd() < 0.85 : rnd() < 0.06) ? 1 : 0; return a; };
+    for (const st of extractors) if (st.label_col && !st.oracle) cols[st.label_col + "_useful"] = lab();
+    for (const t of reg.targets) for (const st of extractors) {
+      if (st.id === t.extractor_id || st.oracle) continue;
+      const k = extKeyOf(st), lev = new Array(n), both = new Array(n);
       for (let i = 0; i < n; i++) { lev[i] = gold[i] ? 0.55 + 0.4 * rnd() : 0.2 + 0.4 * rnd(); both[i] = gold[i] && rnd() > 0.2 ? 1 : 0; }
-      cols["lev_" + k] = lev; cols["both_" + k] = both;
+      cols[`lev_${k}__${t.id}`] = lev; cols[`both_${k}__${t.id}`] = both;
     }
-    for (const k of ["8b", "1p7b", "0p6b", "justext"]) { const t = new Array(n); for (let i = 0; i < n; i++) t[i] = gold[i] ? (200 + 800 * rnd()) | 0 : (40 + 200 * rnd()) | 0; cols["tok_" + k] = t; }
+    for (const st of extractors.filter((st) => !st.oracle)) { const t = new Array(n); for (let i = 0; i < n; i++) t[i] = gold[i] ? (200 + 800 * rnd()) | 0 : (40 + 200 * rnd()) | 0; cols["tok_" + extKeyOf(st)] = t; }
     cols.warc_record_id = Array.from({ length: n }, (_, i) => "demo-" + i);
     return { meta: { n, registry: reg }, columns: cols };
   }
 
+  const targetTextCol = () => STAGES_BY_ID[TARGET.extractor_id].text_col;
+  function setTarget(id) { TARGET = REG.targets.find((t) => t.id === id) || REG.targets[0]; }
+
   function defaultThreshold(st) { return st.direction === "low_useful" ? -2.0 : 0.5; }
 
+  // The target's own family of classifiers is the sensible starting cascade: filters trained against
+  // lpv11 for the lpv11 target, and the original high_quality-trained ones for that target.
+  const DEFAULT_FILTERS = {
+    lpv11: ["fasttext_lpv11_w640", "bert_lpv11_base_10M"],
+    high_quality: ["fasttext_w80", "bert_200k_8192"],
+  };
   function defaultPipeline() {
+    const ids = (DEFAULT_FILTERS[TARGET.id] || DEFAULT_FILTERS.high_quality).filter((id) => STAGES_BY_ID[id]);
     return {
-      filters: [
-        { stageId: "fasttext_w80", enabled: true, mode: "threshold", threshold: 0.5, recall: 0.99 },
-        { stageId: "bert_200k_8192", enabled: true, mode: "threshold", threshold: 0.5, recall: 0.97 },
-      ],
+      filters: ids.map((stageId) => ({ stageId, enabled: true, mode: "threshold", threshold: defaultThreshold(STAGES_BY_ID[stageId]), recall: 0.97 })),
+      targetId: TARGET.id,
       extractor: { stageId: "extract_1p7b" },
       capacity: { nChips: 300, nCores: 5000, docsPerWarc: 40000, nWarcs: 7925398, tokEfficiency: REG.default_tokenization_efficiency },
     };
@@ -69,7 +82,7 @@
 
   // ---- rendering ----
   function render() {
-    const r = Engine.evaluate(MATRIX.columns, N, PIPE, STAGES_BY_ID);
+    const r = Engine.evaluate(MATRIX.columns, N, PIPE, STAGES_BY_ID, TARGET);
     LAST_R = r;
     renderFlow(r); renderMetrics(r); renderCompute(r); renderCapacity(); renderConfig();
     syncHash();
@@ -81,7 +94,7 @@
   const DEBOUNCE_MS = 2000;
   let _renderTimer = null;
   function recomputeKeepConfig() {
-    const r = Engine.evaluate(MATRIX.columns, N, PIPE, STAGES_BY_ID);
+    const r = Engine.evaluate(MATRIX.columns, N, PIPE, STAGES_BY_ID, TARGET);
     LAST_R = r;
     renderFlow(r); renderMetrics(r); renderCompute(r); renderCapacity();
     syncHash();
@@ -147,14 +160,14 @@
 
   function renderMetrics(r) {
     const m = r.summary;
-    // Levenshtein over docs where BOTH the 8B and this extractor produced text (real extraction-quality
-    // signal). The union value (which scores classification false-positives as 0 against the 8B's empty
-    // text) is shown in the tooltip for transparency, not as the headline.
+    // Levenshtein over docs where BOTH the target and this extractor produced text (real extraction-
+    // quality signal). The union value (which scores classification false-positives as 0 against the
+    // target's empty text) is shown in the tooltip for transparency, not as the headline.
     const levTip = m.levBoth == null ? "" :
-      `vs 8B over the ${fmtCount(m.levBothN * r.scale)} docs (~${fmtCount(m.levBothN)} sampled) both this extractor and the 8B actually extracted. ` +
+      `vs ${TARGET.label} over the ${fmtCount(m.levBothN * r.scale)} docs (~${fmtCount(m.levBothN)} sampled) both this extractor and ${TARGET.label} actually extracted. ` +
       `Union (counting classification FPs as 0): ${m.levUnion == null ? "—" : m.levUnion.toFixed(3)} over ${fmtCount(m.levUnionN)} sampled.`;
     const items = [
-      ["F1 vs 8B", m.f1.toFixed(3), m.f1 < 0.5 ? "bad" : m.f1 < 0.62 ? "warn" : "", ""],
+      [`F1 vs ${TARGET.label}`, m.f1.toFixed(3), m.f1 < 0.5 ? "bad" : m.f1 < 0.62 ? "warn" : "", ""],
       ["Precision", m.precision.toFixed(3), "", ""],
       ["Recall", m.recall.toFixed(3), "", ""],
       ["Levenshtein (both extr.)", m.levBoth == null ? "—" : m.levBoth.toFixed(3), "", levTip],
@@ -220,7 +233,8 @@
       sel.onchange = () => { PIPE.extractor.stageId = sel.value; render(); };
       const g = el("div", "cfg-grid"); g.appendChild(el("label", null, "extractor")); g.appendChild(sel); box.appendChild(g);
       const st = STAGES_BY_ID[PIPE.extractor.stageId];
-      box.appendChild(el("div", "muted", `${st.device.toUpperCase()} · ${st.throughput} ${st.device === "tpu" ? "docs/chip/s" : "docs/s/core"}` + (st.throughput_assumed ? " ⚠ provisional" : "")));
+      box.appendChild(el("div", "muted", st.oracle ? "FREE · hypothetical, contributes no compute"
+      : `${st.device.toUpperCase()} · ${st.throughput} ${st.device === "tpu" ? "docs/chip/s" : "docs/s/core"}` + (st.throughput_assumed ? " ⚠ provisional" : "")));
       box.appendChild(el("div", "muted", st.throughput_source || ""));
       return;
     }
@@ -269,13 +283,15 @@
       g.appendChild(inp);
     }
     box.appendChild(g);
-    box.appendChild(el("div", "muted", `${st.throughput} ${st.device === "tpu" ? "docs/chip/s" : "docs/s/core"}` + (st.throughput_assumed ? " ⚠ assumed" : "") + ` · ${st.direction}`));
+    box.appendChild(el("div", "muted", st.oracle ? "FREE · hypothetical: passes exactly the target's keeps, no compute"
+      : `${st.throughput} ${st.device === "tpu" ? "docs/chip/s" : "docs/s/core"}` + (st.throughput_assumed ? " ⚠ assumed" : "") + ` · ${st.direction}`));
     box.appendChild(el("div", "muted", st.throughput_source || ""));
     const bb = el("button", null, "⊙ show borderline docs"); bb.style.marginTop = "8px";
     bb.onclick = () => showBorderline(idx); box.appendChild(bb);
   }
 
-  const FAM_LABEL = { fasttext: "fastText", modernbert: "ModernBERT", llm: "LLM logprob" };
+  const FAM_LABEL = { fasttext: "fastText (high_quality)", fasttext_lpv11: "fastText (lpv11)",
+                      modernbert: "ModernBERT", oracle: "Oracle (hypothetical)", pooled: "Pooled transformer", llm: "LLM logprob" };
   function renderPalette() {
     const p = $("palette"); p.innerHTML = "<span class='muted'>add filter:</span>";
     const sel = el("select");
@@ -301,7 +317,12 @@
   function syncHash() { try { history.replaceState(null, "", "#cfg=" + encodeCfg()); } catch (e) {} }
   function applyHash() {
     const m = location.hash.match(/cfg=([^&]+)/);
-    if (m) { try { const p = decodeCfg(m[1]); if (p && p.filters && p.extractor && p.capacity) PIPE = p; } catch (e) {} }
+    if (m) {
+      try {
+        const p = decodeCfg(m[1]);
+        if (p && p.filters && p.extractor && p.capacity) { PIPE = p; if (p.targetId) setTarget(p.targetId); }
+      } catch (e) {}
+    }
   }
   const LS_KEY = "cascade_planner_configs";
   const savedConfigs = () => { try { return JSON.parse(localStorage.getItem(LS_KEY) || "{}"); } catch (e) { return {}; } };
@@ -309,6 +330,12 @@
   function renderToolbar() {
     const t = $("toolbar"); t.innerHTML = "";
     const mk = (label, fn) => { const b = el("button", null, label); b.onclick = fn; return b; };
+    t.appendChild(el("span", "muted", "agreement target:"));
+    const tsel = el("select");
+    REG.targets.forEach((tg) => { const o = el("option", null, tg.label); o.value = tg.id; if (tg.id === TARGET.id) o.selected = true; tsel.appendChild(o); });
+    tsel.onchange = () => { setTarget(tsel.value); PIPE.targetId = TARGET.id; SELECTED = null; renderDatasetInfo(); render(); };
+    tsel.title = "Which extractor's decisions count as ground truth. Switching re-scores every pipeline against it — no models are re-run.";
+    t.appendChild(tsel);
     t.appendChild(mk("🔗 copy link", () => { syncHash(); navigator.clipboard && navigator.clipboard.writeText(location.href); flash("link copied"); }));
     t.appendChild(mk("💾 save", () => { const name = prompt("config name:"); if (!name) return; const c = savedConfigs(); c[name] = PIPE; localStorage.setItem(LS_KEY, JSON.stringify(c)); renderToolbar(); flash("saved"); }));
     const cfgs = savedConfigs();
@@ -326,7 +353,7 @@
 
   // ---- borderline inspector: candidates drawn from the stage's REACHING set (conditioned on upstream filters) ----
   const escapeHtml = (s) => (s || "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
-  // Word-level LCS diff: <del> = in 8B (reference) only, <ins> = in the chosen extractor only.
+  // Word-level LCS diff: <del> = in the target (reference) only, <ins> = in the chosen extractor only.
   function wordDiff(aStr, bStr) {
     const tok = (s) => (s || "").split(/(\s+)/).filter((x) => x.length);
     let a = tok(aStr), b = tok(bStr);
@@ -366,17 +393,20 @@
     })();
     const sh = await SHARD_CACHE[shard]; return sh ? sh[id] : null;
   }
-  // Best available EXTRACTED text (prefer 8B gold → 1.7B → 0.6B → jusText; raw HTML only as last resort).
-  const EXT_ORDER = [["8B", "text_8b"], ["1.7B", "text_1p7b"], ["0.6B", "text_0p6b"], ["jusText", "text_justext"]];
+  // Best available EXTRACTED text: the target's own extraction first, then the rest; raw HTML last.
+  function extOrder() {
+    const ex = REG.stages.filter((st) => st.kind === "extractor" && st.text_col);
+    return [...ex.filter((st) => st.id === TARGET.extractor_id), ...ex.filter((st) => st.id !== TARGET.extractor_id)];
+  }
   function bestExtraction(doc) {
-    for (const [lbl, key] of EXT_ORDER) if (doc[key] && doc[key].trim()) return { label: lbl, text: doc[key] };
+    for (const st of extOrder()) if (doc[st.text_col] && doc[st.text_col].trim()) return { label: st.label, text: doc[st.text_col] };
     return { label: "raw HTML — no model extracted it", text: doc.stripped_html || "" };
   }
   const CAT = { TP: ["TP", "true keep", false], FP: ["FP", "leak — kept junk", true],
                 FN: ["FN", "LOST — dropped good", true], TN: ["TN", "true drop", false] };
   function category(kept, gold) { return kept ? (gold ? "TP" : "FP") : (gold ? "FN" : "TN"); }
   function borderDocCard(box, pos, kept, score) {
-    const id = MATRIX.columns.warc_record_id[pos], gold = MATRIX.columns.gold_useful[pos] === 1;
+    const id = MATRIX.columns.warc_record_id[pos], gold = MATRIX.columns[TARGET.gold_col][pos] === 1;
     const [tag, desc, mistake] = CAT[category(kept, gold)];
     const col = mistake ? "var(--red)" : "var(--green)";
     const d = el("div", "panel"); d.style.margin = "6px 0"; d.style.borderLeft = "3px solid " + col;
@@ -395,7 +425,7 @@
     $("borderline-panel").classList.remove("collapsed");
     const r = LAST_R, f = PIPE.filters[idx], st = STAGES_BY_ID[f.stageId], sr = r.stages[idx];
     if (sr.skipped) { $("borderline").innerHTML = "<span class='muted'>stage is disabled — enable it to inspect.</span>"; return; }
-    const scores = MATRIX.columns[st.score_col], gcol = MATRIX.columns.gold_useful, sc = r.scale;
+    const scores = MATRIX.columns[st.score_col], gcol = MATRIX.columns[TARGET.gold_col], sc = r.scale;
     const T = sr.threshold, vT = st.direction === "low_useful" ? -T : T;
     let TP = 0, FP = 0, FN = 0, TN = 0;
     const bubbleK = [], bubbleD = [], fnL = [], fpL = [];
@@ -410,7 +440,7 @@
     const cell = (tag, v, mistake) => `<td style="color:${mistake ? "var(--red)" : "var(--green)"}">${tag} <b>${v.toLocaleString()}</b> <span class="muted">~${fmtCount(v * sc)}</span></td>`;
     const box = $("borderline");
     box.innerHTML = `<h3>${st.label} — threshold ${T == null || !isFinite(T) ? "—" : (+T).toFixed(3)} · ${sr.docsIn.toLocaleString()} docs reaching this stage</h3>` +
-      `<table style="max-width:560px;margin:6px 0"><tr><th></th><th>8B useful (+)</th><th>8B not useful (−)</th></tr>` +
+      `<table style="max-width:560px;margin:6px 0"><tr><th></th><th>${TARGET.label} useful (+)</th><th>${TARGET.label} not useful (−)</th></tr>` +
       `<tr><td class="muted">kept</td>${cell("TP", TP, false)}${cell("FP", FP, true)}</tr>` +
       `<tr><td class="muted">dropped</td>${cell("FN", FN, true)}${cell("TN", TN, false)}</tr></table>` +
       `<div class="muted" style="margin-bottom:6px">this stage in isolation: precision <b>${prec.toFixed(3)}</b> · recall <b>${rec.toFixed(3)}</b> — FN = good docs it loses, FP = junk it lets through</div>`;
@@ -423,8 +453,8 @@
       list.map((i) => [Math.abs(Engine.vOf(scores[i], st.direction) - vT), i]).sort((a, b) => a[0] - b[0])
         .slice(0, 4).forEach(([, pos]) => borderDocCard(box, pos, kept, scores[pos]));
     };
-    sampleNear(fnL, false, "❌ FN — good docs LOST here (8B keeps, this filter drops)");
-    sampleNear(fpL, true, "⚠️ FP — junk LEAKING through (8B drops, this filter keeps)");
+    sampleNear(fnL, false, `❌ FN — good docs LOST here (${TARGET.label} keeps, this filter drops)`);
+    sampleNear(fpL, true, `⚠️ FP — junk LEAKING through (${TARGET.label} drops, this filter keeps)`);
   }
 
   // For a doc that survived, show — per enabled filter — the threshold move that WOULD have dropped it.
@@ -456,29 +486,29 @@
     if (!kept.length) { box.innerHTML = "<span class='muted'>nothing survives this pipeline — loosen a filter.</span>"; return; }
     const pool = kept.slice(), pick = [];
     for (let k = 0; k < Math.min(6, pool.length); k++) pick.push(pool.splice((Math.random() * pool.length) | 0, 1)[0]);
-    const gcol = MATRIX.columns.gold_useful;
+    const gcol = MATRIX.columns[TARGET.gold_col];
     const nGold = pick.reduce((a, p) => a + (gcol[p] === 1 ? 1 : 0), 0);
-    box.innerHTML = `<h3>🎲 ${pick.length} random survivors — <span style="color:var(--green)">${nGold} the 8B keeps</span> · <span style="color:var(--red)">${pick.length - nGold} the 8B would drop (leaks)</span> · ${r.summary.keptSample.toLocaleString()}/${N.toLocaleString()} kept (~${fmtCount(r.summary.keptSample * r.scale)} proj) · text: ${r.extractor.label}</h3>` +
-      `<div class="muted" style="margin-bottom:6px">diff legend: <del>red</del> = only in 8B (your extractor dropped it) · <ins>green</ins> = only in your extractor (added/changed)</div>`;
+    box.innerHTML = `<h3>🎲 ${pick.length} random survivors — <span style="color:var(--green)">${nGold} the ${TARGET.label} keeps</span> · <span style="color:var(--red)">${pick.length - nGold} the ${TARGET.label} would drop (leaks)</span> · ${r.summary.keptSample.toLocaleString()}/${N.toLocaleString()} kept (~${fmtCount(r.summary.keptSample * r.scale)} proj) · text: ${r.extractor.label}</h3>` +
+      `<div class="muted" style="margin-bottom:6px">diff legend: <del>red</del> = only in ${TARGET.label} (your extractor dropped it) · <ins>green</ins> = only in your extractor (added/changed)</div>`;
     for (const pos of pick) {
       const id = ids[pos], gold = gcol[pos] === 1;
       const badge = gold
-        ? `<span class="badge" style="background:rgba(78,204,163,.18);color:var(--green);border:1px solid var(--green)">8B keeps ✓</span>`
-        : `<span class="badge" style="background:rgba(240,106,106,.18);color:var(--red);border:1px solid var(--red)">8B would drop ✗</span>`;
+        ? `<span class="badge" style="background:rgba(78,204,163,.18);color:var(--green);border:1px solid var(--green)">${TARGET.label} keeps ✓</span>`
+        : `<span class="badge" style="background:rgba(240,106,106,.18);color:var(--red);border:1px solid var(--red)">${TARGET.label} would drop ✗</span>`;
       const d = el("div", "panel"); d.style.margin = "6px 0"; d.style.borderLeft = "3px solid " + (gold ? "var(--green)" : "var(--red)");
       d.innerHTML = `${badge} <span class="muted">${id}</span>` + (gold ? "" : catchItHtml(pos)) + `<div class="muted" id="surv-${pos}">loading doc…</div>`;
       box.appendChild(d);
       fetchDoc(pos, id).then((doc) => {
         const t = $("surv-" + pos); if (!t) return;
         if (!doc) { t.textContent = IS_DEMO ? "(demo — no doc text)" : "(doc text unavailable)"; return; }
-        const extKey = r.extractor.id.replace("extract_", "");
-        const extTxt = doc["text_" + extKey] || "", goldTxt = doc.text_8b || "";
+        const extTxt = doc[STAGES_BY_ID[r.extractor.id].text_col] || "", goldTxt = doc[targetTextCol()] || "";
         const fullTxt = extTxt || doc.stripped_html || "";
-        const isGold = r.extractor.id === "extract_8b";
-        const lev = (MATRIX.columns["lev_" + extKey] || [])[pos];
+        const isGold = r.extractor.id === TARGET.extractor_id;
+        const levCol = Engine.levKeys(STAGES_BY_ID[r.extractor.id], TARGET).lev;
+        const lev = levCol ? (MATRIX.columns[levCol] || [])[pos] : null;
         t.innerHTML = `<a href="${escapeHtml(doc.url) || "#"}" target="_blank">${escapeHtml(doc.url)}</a>` +
-          (isGold ? ` <span class="muted">(this IS the 8B extraction)</span>`
-                  : ` · <span class="muted">Lev vs 8B ${lev == null ? "—" : (+lev).toFixed(2)}</span> <button class="difftog">⇄ diff vs 8B</button>`) +
+          (isGold ? ` <span class="muted">(this IS the ${TARGET.label} extraction)</span>`
+                  : ` · <span class="muted">Lev vs ${TARGET.label} ${lev == null ? "—" : (+lev).toFixed(2)}</span> <button class="difftog">⇄ diff vs ${TARGET.label}</button>`) +
           ` <button class="fulltog">⤢ full doc (${fullTxt.length.toLocaleString()} chars)</button>` +
           `<div style="max-height:180px;overflow:auto;white-space:pre-wrap;color:var(--fg);margin-top:4px" id="survtext-${pos}">${escapeHtml(fullTxt.slice(0, 1500))}${fullTxt.length > 1500 ? " …" : ""}</div>`;
         const tgt = $("survtext-" + pos);
@@ -488,12 +518,12 @@
           if (v === "full") { tgt.style.maxHeight = "70vh"; tgt.innerHTML = escapeHtml(fullTxt); }
           else if (v === "diff") {
             tgt.style.maxHeight = "70vh";
-            tgt.innerHTML = (goldTxt.trim() ? "" : `<div class="muted">8B abstained on this doc (no gold extraction) — everything below is text only your extractor produced:</div>`) + wordDiff(goldTxt, extTxt);
+            tgt.innerHTML = (goldTxt.trim() ? "" : `<div class="muted">${TARGET.label} abstained on this doc (no reference extraction) — everything below is text only your extractor produced:</div>`) + wordDiff(goldTxt, extTxt);
           }
           else { tgt.style.maxHeight = "180px"; tgt.innerHTML = escapeHtml(fullTxt.slice(0, 1500)) + (fullTxt.length > 1500 ? " …" : ""); }
           const fb = t.querySelector(".fulltog"), db = t.querySelector(".difftog");
           if (fb) fb.textContent = v === "full" ? "⤡ collapse" : `⤢ full doc (${fullTxt.length.toLocaleString()} chars)`;
-          if (db) db.textContent = v === "diff" ? "✕ hide diff" : "⇄ diff vs 8B";
+          if (db) db.textContent = v === "diff" ? "✕ hide diff" : `⇄ diff vs ${TARGET.label}`;
         };
         const fb = t.querySelector(".fulltog"); fb.onclick = () => setView(view === "full" ? "trunc" : "full");
         const db = t.querySelector(".difftog"); if (db) db.onclick = () => setView(view === "diff" ? "trunc" : "diff");
@@ -501,7 +531,7 @@
     }
   }
 
-  // ---- view docs the pipeline DROPS that the 8B keeps (recall cost) ----
+  // ---- view docs the pipeline DROPS that the target keeps (recall cost) ----
   function deathStage(pos, r) {
     // first enabled filter that fails this doc (it passed everything before it).
     for (let i = 0; i < PIPE.filters.length; i++) {
@@ -515,14 +545,14 @@
   function showRandomLosses() {
     const r = LAST_R; if (!r || !r.finalKept) return;
     $("losses-panel").classList.remove("collapsed");
-    const gcol = MATRIX.columns.gold_useful, ids = MATRIX.columns.warc_record_id;
+    const gcol = MATRIX.columns[TARGET.gold_col], ids = MATRIX.columns.warc_record_id;
     const lost = [];
     for (let i = 0; i < N; i++) if (gcol[i] === 1 && !r.finalKept[i]) lost.push(i);
     const box = $("losses");
-    if (!lost.length) { box.innerHTML = "<span class='muted'>nothing the 8B keeps is dropped — perfect recall on the sample. 🎉</span>"; return; }
+    if (!lost.length) { box.innerHTML = "<span class='muted'>nothing the ${TARGET.label} keeps is dropped — perfect recall on the sample. 🎉</span>"; return; }
     const pool = lost.slice(), pick = [];
     for (let k = 0; k < Math.min(6, pool.length); k++) pick.push(pool.splice((Math.random() * pool.length) | 0, 1)[0]);
-    box.innerHTML = `<h3>🎲 ${pick.length} random LOSSES — 8B keeps, pipeline drops · ${lost.length}/${N} (~${fmtCount(lost.length * r.scale)} projected lost good docs = recall cost)</h3>`;
+    box.innerHTML = `<h3>🎲 ${pick.length} random LOSSES — ${TARGET.label} keeps, pipeline drops · ${lost.length}/${N} (~${fmtCount(lost.length * r.scale)} projected lost good docs = recall cost)</h3>`;
     for (const pos of pick) {
       const id = ids[pos], death = deathStage(pos, r);
       const d = el("div", "panel"); d.style.margin = "6px 0"; d.style.borderLeft = "3px solid var(--red)";
@@ -535,7 +565,7 @@
       } else {
         why = `<div class="muted" style="margin:4px 0">passed all filters; the extractor (${r.extractor.label}) abstained on it.</div>`;
       }
-      d.innerHTML = `<span class="badge" style="background:rgba(240,106,106,.18);color:var(--red);border:1px solid var(--red)">FN · 8B keeps, dropped</span> <span class="muted">${id}</span>${why}<div class="muted" id="loss-${pos}">loading doc…</div>`;
+      d.innerHTML = `<span class="badge" style="background:rgba(240,106,106,.18);color:var(--red);border:1px solid var(--red)">FN · ${TARGET.label} keeps, dropped</span> <span class="muted">${id}</span>${why}<div class="muted" id="loss-${pos}">loading doc…</div>`;
       box.appendChild(d);
       fetchDoc(pos, id).then((doc) => {
         const t = $("loss-" + pos); if (!t) return;
@@ -549,6 +579,19 @@
     }
   }
 
+  // Docs the selected target never judged are excluded from the universe, so surface the shortfall.
+  function renderDatasetInfo() {
+    const covCol = MATRIX.columns[TARGET.coverage_col];
+    let covered = 0;
+    if (covCol) { for (let i = 0; i < N; i++) if (covCol[i] === 1) covered++; } else covered = N;
+    const short = N - covered;
+    const info = $("dataset-info");
+    info.textContent = (IS_DEMO ? "DEMO synthetic data — " : "") + covered.toLocaleString() + " docs vs " + TARGET.label +
+      (short ? ` (${short.toLocaleString()} of ${N.toLocaleString()} outside its coverage, excluded)` : "");
+    info.style.color = IS_DEMO ? "var(--amber)" : short ? "var(--amber)" : "var(--green)";
+    const lbl = $("target-lbl"); if (lbl) lbl.textContent = TARGET.label;
+  }
+
   // ---- boot ----
   async function loadJson(path) { const r = await fetch(path); if (!r.ok) throw new Error(path); return r.json(); }
 
@@ -560,9 +603,10 @@
       REG = MATRIX.meta.registry || REG; STAGES_BY_ID = Object.fromEntries(REG.stages.map((s) => [s.id, s]));
     } catch (e) { MATRIX = synthMatrix(REG); IS_DEMO = true; }
     N = MATRIX.meta.n;
+    if (!REG.targets || !REG.targets.length) throw new Error("registry has no targets — regenerate data/ with precompute_pipeline_matrix");
+    setTarget(REG.default_target_id);
     PIPE = defaultPipeline(); applyHash();
-    $("dataset-info").textContent = (IS_DEMO ? "DEMO synthetic data — " : "") + N.toLocaleString() + " docs";
-    $("dataset-info").style.color = IS_DEMO ? "var(--amber)" : "var(--green)";
+    renderDatasetInfo();
     $("nwarc-lbl").textContent = "7.9M";
     renderPalette(); renderToolbar(); render();
     document.querySelectorAll(".panel.collapsible > h2").forEach((h) => { h.onclick = () => h.parentElement.classList.toggle("collapsed"); });

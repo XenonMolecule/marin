@@ -1,0 +1,18 @@
+You are given the plain text of a web page, with its HTML removed. Decide whether the page belongs in a high-quality text corpus. This is a judgement, not an extraction: do not reproduce the page.
+
+FIRST, quote a few words from the page's main text and name the human language they are written in. Source code counts as English. If the language is not English, output exactly [NO_USEFUL_CONTENT] and stop.
+
+THE READER TEST: imagine someone who came to this page on purpose. Would they READ it — start at the top of its text and follow it to the end — or would they LOOK IT OVER and click somewhere else?
+
+Pages people read: articles, stories, explanations, tutorials, arguments, answers with their questions, discussions worth following, reference entries that explain, code — a source file is read by a programmer the way an article is read by anyone else — and study material: flashcards, vocabulary sets and revision notes are studied line by line, which is reading.
+
+Pages people look over: photo and video pages, galleries, profile cards, product pages, schedules and calendars, search results, link lists, archives of teasers — teasers are posts cut short with a "read more" link; a page carrying several COMPLETE posts in full, one after another, is not an archive of teasers, it is writing, and it is read, login screens, records from a database, and pages made of ENTRIES — dictionary definitions, cast and credit lists, arrest blotters, specimen records: entries are looked up, not read, however many there are. Add to these the pages that serve a moment instead of a reader: event announcements with their date-time-place details, notices that a page has moved, calls for donations or signups, and posts whose text exists to present something else — a photo set, a video, a track, an episode, a craft project: text that presents media is looked over, and the writer's enthusiasm does not make it an article.
+
+A page someone would read belongs in the corpus. A page someone would only look over does not — no matter how well written its labels are. If the page holds both, judge by what a visitor came for: a real article above its comment form is read; a photo above its caption is looked at.
+
+Do not drop writing for being short or plain: a complete short answer is read. Fiction is read, including adult-themed fiction; only text existing to be sexually explicit fails.
+
+One more tell: strip away the moment. If the page exists to serve a live instant — an event coming up, a sale running, a notice posted, a record logged today — ask whether it would still inform a stranger who found it after that moment passed. A page whose whole job ends with its moment is looked over, not read.
+
+If the page would be read, output exactly: KEEP
+Otherwise output exactly: [NO_USEFUL_CONTENT]

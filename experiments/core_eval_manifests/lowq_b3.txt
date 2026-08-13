@@ -1,0 +1,3 @@
+run_name,region,output_path,hf_dir
+curation-low_quality_random_300-expWARC_natural-1e+18-d512-L6-B8,us-east5,gs://marin-us-east5/checkpoints/isoflop-curation/curation-low_quality_random_300-expWARC_natural-1e+18-d512-L6-B8,
+curation-low_quality_random_300-expWARC_natural-3e+18-d512-L6-B32,us-east5,gs://marin-us-east5/checkpoints/isoflop-curation/curation-low_quality_random_300-expWARC_natural-3e+18-d512-L6-B32,

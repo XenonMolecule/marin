@@ -81,6 +81,8 @@ def build_command(args: argparse.Namespace, seed: int) -> list[str]:
         str(args.max_idle_passes),
         "--mode",
         args.mode,
+        "--claim-stale-hours",
+        str(args.claim_stale_hours),
     ]
     if not args.bucket_tokens:
         cmd.append("--no-bucket-tokens")
@@ -111,6 +113,12 @@ def main() -> None:
     ap.add_argument("--max-idle-passes", type=int, default=5)
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--mode", default="v2b", choices=["v1", "v2b"], help="v2b scores a_presurvivors -> b_keeplist.")
+    ap.add_argument(
+        "--claim-stale-hours",
+        type=float,
+        default=3.0,
+        help="Reclaim WARCs whose claim has gone unrefreshed this long; lower it for a finisher fleet.",
+    )
     ap.add_argument("--dry-run", action="store_true", help="Print commands without submitting.")
     args = ap.parse_args()
 

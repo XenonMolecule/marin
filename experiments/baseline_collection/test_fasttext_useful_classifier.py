@@ -23,7 +23,7 @@ from experiments.baseline_collection.fasttext_useful_classifier import (
 def test_precision_recall_sweep_recall_is_ratio_invariant_precision_is_not():
     # Same 2 useful (p=0.9, 0.8); compare a balanced vs negative-heavy test.
     pos = [(0.9, True), (0.8, True)]
-    balanced = pos + [(0.7, False), (0.1, False)]  # 1 FP above 0.5
+    balanced = [*pos, (0.7, False), (0.1, False)]  # 1 FP above 0.5
     heavy = pos + [(0.7, False)] * 10 + [(0.1, False)] * 10  # 10 FPs above 0.5
     rb = _precision_recall_sweep(balanced, [0.5])[0]
     rh = _precision_recall_sweep(heavy, [0.5])[0]
@@ -216,3 +216,36 @@ def test_evaluate_thresholds_low_threshold_maximizes_recall(tmp_path):
     # t=0.1: both useful (0.3,0.8) predicted useful -> recall 1.0; no_useful 0.05 below -> no FP.
     assert rows[0]["recall"] == 1.0
     assert rows[0]["precision"] == 1.0
+
+
+def test_shard_to_tempfile_line_keep_frac_subsamples_before_ratio_cap(tmp_path, monkeypatch):
+    """Wide-thin knob: keep_frac subsamples docs uniformly per shard; the neg cap
+    applies to the SUBSAMPLED positive count, and keep_frac=1.0 changes nothing."""
+    import gzip
+    import os
+
+    import experiments.baseline_collection.fasttext_useful_classifier as mod
+
+    prep_root = tmp_path / "prep"
+    os.makedirs(prep_root / "train")
+    lines = [f"{mod.LABEL_USEFUL} pos doc {i}" for i in range(100)]
+    lines += [f"{mod.LABEL_NO_USEFUL} neg doc {i}" for i in range(1000)]
+    with gzip.open(prep_root / "train" / "data-00007.txt.gz", "wt", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+
+    # full pass: all 100 pos, negs capped at 3.5x
+    i, pos, neg, _tmp = mod._shard_to_tempfile(7, str(prep_root), 3.5, None, str(tmp_path), 1.0, 0)
+    assert (i, pos, neg) == (7, 100, 350)
+
+    # quarter subsample: ~25 pos survive, negs capped at 3.5x the survivors
+    i, pos_q, neg_q, tmp_q = mod._shard_to_tempfile(7, str(prep_root), 3.5, None, str(tmp_path), 0.25, 0)
+    assert 10 <= pos_q <= 45  # binomial(100, .25)
+    assert neg_q == round(3.5 * pos_q)
+
+    with open(tmp_q, encoding="utf-8") as f:
+        kept_lines = f.read().splitlines()
+    assert len(kept_lines) == pos_q + neg_q
+
+    # deterministic for a fixed (seed, shard)
+    _, pos_q2, neg_q2, _ = mod._shard_to_tempfile(7, str(prep_root), 3.5, None, str(tmp_path), 0.25, 0)
+    assert (pos_q2, neg_q2) == (pos_q, neg_q)

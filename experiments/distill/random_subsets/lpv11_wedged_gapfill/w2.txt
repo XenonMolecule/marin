@@ -1,0 +1,10 @@
+s3://commoncrawl/crawl-data/CC-MAIN-2020-45/segments/1603107878662.15/warc/CC-MAIN-20201021235030-20201022025030-00311.warc.gz
+s3://commoncrawl/crawl-data/CC-MAIN-2020-50/segments/1606141195967.34/warc/CC-MAIN-20201129004335-20201129034335-00175.warc.gz
+s3://commoncrawl/crawl-data/CC-MAIN-2013-20/segments/1368697442043/warc/CC-MAIN-20130516094402-00039-ip-10-60-113-184.ec2.internal.warc.gz
+s3://commoncrawl/crawl-data/CC-MAIN-2013-20/segments/1368706082529/warc/CC-MAIN-20130516120802-00061-ip-10-60-113-184.ec2.internal.warc.gz
+s3://commoncrawl/crawl-data/CC-MAIN-2019-47/segments/1573496671245.92/warc/CC-MAIN-20191122065327-20191122093327-00445.warc.gz
+s3://commoncrawl/crawl-data/CC-MAIN-2020-45/segments/1603107917390.91/warc/CC-MAIN-20201031092246-20201031122246-00510.warc.gz
+s3://commoncrawl/crawl-data/CC-MAIN-2018-05/segments/1516084891277.94/warc/CC-MAIN-20180122093724-20180122113724-00296.warc.gz
+s3://commoncrawl/crawl-data/CC-MAIN-2014-42/segments/1413507450252.23/warc/CC-MAIN-20141017005730-00303-ip-10-16-133-185.ec2.internal.warc.gz
+s3://commoncrawl/crawl-data/CC-MAIN-2013-20/segments/1368705884968/warc/CC-MAIN-20130516120444-00034-ip-10-60-113-184.ec2.internal.warc.gz
+s3://commoncrawl/crawl-data/CC-MAIN-2020-10/segments/1581875146681.47/warc/CC-MAIN-20200227094720-20200227124720-00459.warc.gz

@@ -53,6 +53,18 @@ SURVIVOR_SCHEMA = pa.schema(
 
 # Kept docs = survivors that also passed ModernBERT. Survivor schema + the stored prob.
 KEPT_SCHEMA = pa.schema([*SURVIVOR_SCHEMA, pa.field("modernbert_prob", pa.float32())])
+# With a pooled pre-filter the corpus carries that stage's score too, so every filter's score travels
+# with the document (fastText / pooled / ModernBERT) and any of them can be studied or re-thresholded
+# offline without a join back to b_keeplist. Conditional on the spec, NOT unconditional: KEPT_SCHEMA is
+# shared with the live v1-v3 line (~3,602 WARCs written) and Phase C `pa.concat_tables`, so widening it
+# for every spec would mix schemas within an existing corpus.
+KEPT_SCHEMA_POOLED = pa.schema([*KEPT_SCHEMA, pa.field("pooled_prob", pa.float32())])
+
+
+def kept_schema_for(spec) -> pa.Schema:
+    """The final-corpus schema for ``spec`` — widened with ``pooled_prob`` iff it has a pooled stage."""
+    return KEPT_SCHEMA_POOLED if spec.pooled_ckpt else KEPT_SCHEMA
+
 
 # --- v2 (ModernBERT-before-JustText) schemas ---
 # Phase A output: fastText-survivors carrying RAW html (for later JustText) instead of extracted text.
@@ -70,6 +82,12 @@ PRESURVIVOR_SCHEMA = pa.schema(
 )
 # Phase B output: per-WARC ModernBERT prob for every pre-survivor (Phase C filters by threshold).
 KEEPLIST_SCHEMA = pa.schema([("doc_id", pa.string()), ("modernbert_prob", pa.float32())])
+# Same, for a cascade with a pooled pre-filter. A doc pooled dropped is never scored by ModernBERT,
+# so its ``modernbert_prob`` is NaN — which Phase C's ``prob >= threshold`` test excludes for free
+# (NaN compares False), with no special-casing. ``pooled_prob`` is retained for diagnostics.
+KEEPLIST_POOLED_SCHEMA = pa.schema(
+    [("doc_id", pa.string()), ("modernbert_prob", pa.float32()), ("pooled_prob", pa.float32())]
+)
 
 # Length buckets for static-shape TPU batching: pad each micro-batch up to the smallest
 # bucket >= its longest member, so XLA compiles ~one program per bucket (not per length).
@@ -121,10 +139,45 @@ def write_presurvivors(path: str, rows: Sequence[dict]) -> None:
     write_table(path, pa.table(cols, schema=PRESURVIVOR_SCHEMA))
 
 
-def write_keeplist(path: str, doc_ids: Sequence[str], probs: Sequence[float]) -> None:
-    """v2 Phase B: write per-WARC {doc_id, modernbert_prob} for every pre-survivor."""
-    table = pa.table({"doc_id": list(doc_ids), "modernbert_prob": list(probs)}, schema=KEEPLIST_SCHEMA)
-    write_table(path, table)
+def write_keeplist(
+    path: str,
+    doc_ids: Sequence[str],
+    probs: Sequence[float],
+    pooled_probs: Sequence[float] | None = None,
+) -> None:
+    """v2 Phase B: write per-WARC {doc_id, modernbert_prob} for every pre-survivor.
+
+    ``pooled_probs`` (lpv11 line) adds the pooled pre-filter's score; entries pooled dropped carry a
+    NaN ``modernbert_prob`` because ModernBERT never ran on them.
+    """
+    cols: dict[str, list] = {"doc_id": list(doc_ids), "modernbert_prob": list(probs)}
+    schema = KEEPLIST_SCHEMA
+    if pooled_probs is not None:
+        cols["pooled_prob"] = list(pooled_probs)
+        schema = KEEPLIST_POOLED_SCHEMA
+    write_table(path, pa.table(cols, schema=schema))
+
+
+def drop_chunk_dir(chunk_dir: str) -> int:
+    """Delete a WARC's sub-WARC checkpoint dir once its merged output is written. Returns files removed.
+
+    Chunks exist only so a preempted worker resumes mid-WARC; once the merged parquet is durable they
+    are pure waste — at 10k WARCs they project to ~4 TiB, roughly 6x the final corpus. Deleting here
+    (rather than in a reaper) is race-free: the caller holds the WARC's claim and has just written the
+    file the chunks were building, so nothing else can be reading or resuming them.
+
+    Best-effort: a failure to clean up must never fail a WARC that is otherwise complete.
+    """
+    fs = fsspec.filesystem("gcs")
+    path = chunk_dir.replace("gs://", "")
+    try:
+        if not fs.exists(path):
+            return 0
+        files = [f for f in fs.find(path)]
+        fs.rm(path, recursive=True)
+        return len(files)
+    except Exception:
+        return 0
 
 
 def read_table(path: str, columns: list[str] | None = None) -> pa.Table:
@@ -133,10 +186,15 @@ def read_table(path: str, columns: list[str] | None = None) -> pa.Table:
         return pq.read_table(fh, columns=columns)
 
 
-def write_kept(path: str, table: pa.Table) -> None:
-    """Write the kept-doc parquet (survivor columns + ``modernbert_prob``)."""
+def write_kept(path: str, table: pa.Table, schema: pa.Schema | None = None) -> None:
+    """Write the kept-doc parquet (survivor columns + ``modernbert_prob``, and ``pooled_prob`` when
+    the spec has a pooled stage — pass ``kept_schema_for(spec)``).
+
+    The cast is what enforces the on-disk contract, so it must target the table's OWN schema: casting
+    a pooled table to the narrow ``KEPT_SCHEMA`` would silently drop ``pooled_prob``.
+    """
     with fsspec.open(path, "wb") as fh:
-        pq.write_table(table.cast(KEPT_SCHEMA), fh, compression=PARQUET_COMPRESSION)
+        pq.write_table(table.cast(schema or KEPT_SCHEMA), fh, compression=PARQUET_COMPRESSION)
 
 
 def write_tombstones(path: str, rows: Iterable[tuple[str, float]]) -> None:

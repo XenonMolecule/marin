@@ -17,6 +17,7 @@ Run (CPU, us-east5 where the sample lives; model.bin pulled from us-central2 onc
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import re
 import time
@@ -28,6 +29,7 @@ logger = logging.getLogger(__name__)
 
 OUT_ROOT = "gs://marin-us-east5/documents/extractor_compare/high_quality_200warc"
 SCORES_DIR = f"{OUT_ROOT}/model_scores"
+TIMING_DIR = f"{OUT_ROOT}/model_timing"  # <col>.json — measured docs/s/core for stage_registry
 SAMPLE_DIR = f"{OUT_ROOT}/sample_100k"
 
 # Default = the w80 model (us-central2). Width sweep (w160/w320) lives in us-east5; pass --model-url/--col.
@@ -93,6 +95,22 @@ def run(model_url: str, col: str) -> None:
         t_score,
         len(ids) / t_score if t_score else 0.0,
     )
+
+    # Persist the timing next to the scores: it is the number stage_registry needs (docs/s/core),
+    # and a log line is unreadable whenever finelog is down.
+    with fsspec.open(f"{TIMING_DIR}/{col}.json", "w") as fh:
+        json.dump(
+            {
+                "col": col,
+                "model_url": model_url,
+                "docs": len(ids),
+                "seconds": round(t_score, 3),
+                "docs_per_sec_per_core": round(len(ids) / t_score, 1) if t_score else 0.0,
+                "note": "single CPU core, excludes parquet I/O",
+            },
+            fh,
+            indent=2,
+        )
 
     out_path = f"{SCORES_DIR}/{col}/part-000-of-001.parquet"
     table = pa.table({"warc_record_id": ids, col: scores})

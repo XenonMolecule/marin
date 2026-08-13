@@ -23,6 +23,7 @@ from pathlib import Path
 from flask import Flask, jsonify, request, send_file
 
 from experiments.baseline_collection.extraction_specs import LEGACY_SPEC_ID, SPECS
+from experiments.baseline_collection.pipelines.pipeline_specs import PIPELINES
 
 logger = logging.getLogger(__name__)
 
@@ -32,13 +33,21 @@ app = Flask(__name__)
 # Constants
 # ---------------------------------------------------------------------------
 
-# WARC manifest is per-spec: high_quality is being scaled to the full DCLM
-# 400m-1x pool (10,364 WARCs) while every other spec stays on the 3,000-WARC
-# baseline. The denominator for "total" / "unclaimed" / ETA is therefore
-# spec-dependent — see ``_manifest_path_for_spec`` / ``_load_manifest``.
+# WARC manifest is per-spec. The quality-tier specs (high/med/low_quality) are
+# tracked against the 300-WARC random pool for the current quality-tier
+# comparison; llm_pipeline_v1/llm_simple_v1 run their own random pools. The
+# denominator for "total" / "unclaimed" / ETA is therefore spec-dependent —
+# see ``_manifest_path_for_spec`` / ``_load_manifest``.
 DEFAULT_MANIFEST_PATH = "experiments/distill/baseline_warcs_3000.txt"
+RANDOM_300 = "experiments/distill/random_subsets/random_warcs_300.txt"
 SPEC_MANIFESTS = {
-    "high_quality": "experiments/distill/dclm_400m_1x_warcs.txt",
+    "high_quality": RANDOM_300,
+    "med_quality": RANDOM_300,
+    "low_quality": RANDOM_300,
+    "high_quality_v2": RANDOM_300,
+    "llm_pipeline_v1_1": "experiments/distill/dclm_400m_1x_warcs.txt",
+    "llm_pipeline_v1": "experiments/distill/random_subsets/random_warcs_1000.txt",
+    "llm_simple_v1": RANDOM_300,
 }
 OUTPUT_SUBDIR = "documents/baseline_llm_extraction"
 IRIS_CONFIG = "lib/iris/examples/marin.yaml"
@@ -57,6 +66,23 @@ KNOWN_TPU_TYPES = [
     "v6e-16",
 ]
 
+
+# ETA batch-size calibration. num_batches = ceil(records_per_warc / batch_size),
+# and records_per_warc is a property of the WARC (its page count), independent of
+# spec. So batches/WARC scales INVERSELY with the batch size. The legacy single-
+# call specs (low/med/high_quality) ran at batch_size=500 → ~93 batches/WARC. The
+# new --pipeline runners (llm_pipeline_*, llm_simple_*, high_quality_v2) checkpoint
+# at --group-size 250 → ~180 batches/WARC, roughly DOUBLE for the same WARC.
+# Reading a pipeline spec's batches/WARC off the OLD batch_size-500 _done markers
+# (legacy_nb) therefore HALVES the estimate — the stale-ETA bug. Each spec's own
+# _done markers already record num_batches at its real batch size, so pipeline ETAs
+# use spec_nb exclusively and never the legacy map.
+LEGACY_BATCH_SIZE = 500
+LEGACY_AVG_BATCHES_PER_WARC = 100  # observed default for the old single-call runs
+PIPELINE_GROUP_SIZE = 250  # --group-size shared by every --pipeline runner
+# Cold-start default for a pipeline spec with no _done evidence yet, scaled from
+# the legacy figure by the batch-size ratio (empirically ~180 once evidence lands).
+PIPELINE_DEFAULT_BATCHES_PER_WARC = round(LEGACY_AVG_BATCHES_PER_WARC * LEGACY_BATCH_SIZE / PIPELINE_GROUP_SIZE)
 
 LEGACY_NUM_BATCHES_CACHE_FILE = Path(__file__).parent / ".dashboard_legacy_num_batches.json"
 
@@ -150,6 +176,94 @@ def _load_legacy_num_batches() -> dict[str, int]:
         logger.exception("Failed to persist legacy cache (non-fatal)")
 
     return result
+
+
+# hash -> num_batches per spec, cached in memory + on disk (see _load_spec_num_batches).
+_spec_num_batches_cache: dict[str, dict[str, int]] = {}
+
+# Per-spec (timestamp, batches_done) samples from consecutive deep scans, used to
+# measure the REAL batch-production rate as d(batches_done)/dt. batches_done is
+# monotonic (a completing WARC just moves its batches from in-progress to done),
+# so its slope is honest throughput — unlike a completion-derived rate, which
+# collapses during fan-out. In-memory only; rebuilds after two scans on restart.
+_batches_done_history: dict[str, list[tuple[float, int]]] = {}
+RATE_SAMPLE_WINDOW_SECONDS = 2400  # keep ~40 min of samples
+# Minimum slope window. batches_done = done*num_batches + in-progress partials;
+# over a short gap the in-progress term jitters (scan-to-scan dir enumeration
+# variance) more than it grows, collapsing the slope toward the completion rate.
+# ~10 min is enough for the production signal to dominate the noise.
+RATE_MIN_DT_SECONDS = 600
+
+
+def _spec_num_batches_cache_file(spec_id: str) -> Path:
+    return Path(__file__).parent / f".dashboard_num_batches_{spec_id}.json"
+
+
+def _load_spec_num_batches(spec_id: str) -> dict[str, int]:
+    """hash -> num_batches for ``spec_id``, from that spec's own ``_done`` markers.
+
+    Each ``_done`` marker stores the WARC's exact ``num_batches`` and is immutable
+    once written, so this caches aggressively: an in-memory map + on-disk JSON per
+    spec, and each refresh only reads the ``_done`` markers of WARCs NOT already
+    cached (a cheap ``match_glob`` list + reads for the new hashes). Replaces the
+    legacy ``avg_batches_per_warc`` heuristic (harvested from the old low_quality
+    run), which badly under-counted pipelines whose WARCs are far larger.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    from google.cloud import storage as gcs_storage
+    from rigging.filesystem import REGION_TO_DATA_BUCKET
+
+    cache = _spec_num_batches_cache.get(spec_id)
+    if cache is None:
+        cache = {}
+        cache_file = _spec_num_batches_cache_file(spec_id)
+        try:
+            if cache_file.exists():
+                on_disk = json.loads(cache_file.read_text())
+                if isinstance(on_disk, dict):
+                    cache = {h: int(v) for h, v in on_disk.items() if isinstance(v, int)}
+        except Exception:
+            logger.exception("Failed to read num_batches cache for %s", spec_id)
+        _spec_num_batches_cache[spec_id] = cache
+
+    prefix = _bucket_prefix_for_spec(spec_id).rstrip("/")  # e.g. documents/baseline_llm_extraction/llm_pipeline_v1
+    client = gcs_storage.Client()
+    targets: list[tuple[str, str, str]] = []  # (bucket, blob_path, hash) for uncached done WARCs
+    for _, bucket_name in REGION_TO_DATA_BUCKET.items():
+        try:
+            for blob in client.bucket(bucket_name).list_blobs(match_glob=f"{prefix}/data-*/_done"):
+                rel = blob.name[len(prefix) + 1 :]  # data-{hash}/_done
+                parts = rel.split("/")
+                if len(parts) != 2 or parts[1] != "_done" or not parts[0].startswith("data-"):
+                    continue
+                h = parts[0][len("data-") :]
+                if len(h) == 12 and h not in cache:
+                    targets.append((bucket_name, blob.name, h))
+        except Exception as e:
+            logger.warning("num_batches scan failed for %s [%s]: %s", spec_id, bucket_name, e)
+
+    if targets:
+
+        def _read(t: tuple[str, str, str]) -> tuple[str, int | None]:
+            bn, bp, h = t
+            try:
+                stats = json.loads(client.bucket(bn).blob(bp).download_as_text())
+                nb = stats.get("num_batches")
+                return h, int(nb) if isinstance(nb, int) else None
+            except Exception:
+                return h, None
+
+        with ThreadPoolExecutor(max_workers=32) as pool:
+            for h, nb in pool.map(_read, targets):
+                if nb is not None:
+                    cache[h] = nb
+        try:
+            _spec_num_batches_cache_file(spec_id).write_text(json.dumps(cache))
+        except Exception:
+            logger.exception("Failed to persist num_batches cache for %s", spec_id)
+
+    return cache
 
 
 def _legacy_payload(manifest: dict[str, str]) -> dict:
@@ -538,12 +652,16 @@ def _scan_progress_quick(spec_id: str) -> dict:
             "done_stats": done_stats,
         }
 
-    # Compute unique totals
+    # Compute unique totals, restricted to the manifest pool so counts read as
+    # "X / |manifest|" (the namespace can hold markers from earlier larger runs).
+    manifest_set = set(manifest)
     unique_claimed = set()
     unique_done = set()
     for region_data in regions.values():
         unique_claimed.update(region_data["claimed_hashes"])
         unique_done.update(region_data["done_hashes"])
+    unique_claimed &= manifest_set
+    unique_done &= manifest_set
 
     # Duplicates
     duplicates = sum(1 for h, r_list in all_hashes.items() if len(r_list) > 1)
@@ -599,6 +717,7 @@ def _scan_progress_deep(spec_id: str) -> dict:
 
     client = gcs_storage.Client()
     manifest = _load_manifest(spec_id)
+    manifest_set = set(manifest)
 
     all_hashes: dict[str, list[str]] = {}
     batch_counts: dict[str, int] = {}
@@ -618,7 +737,22 @@ def _scan_progress_deep(spec_id: str) -> dict:
     # live activity/rate signal is. Finished WARCs (the vast majority of blobs)
     # are never enumerated, so cost is O(active WARCs), not O(all batch files).
     registry_done = _load_done_registry(spec_id)
+    # Only count completions belonging to THIS spec's manifest pool. A spec's
+    # namespace can hold markers from earlier, larger runs (med_quality's 3k;
+    # low_quality's flat legacy 3k); without this the dashboard would report
+    # progress out of that historical total instead of the pool being tracked.
+    registry_done = {h: t for h, t in registry_done.items() if h in manifest_set}
     legacy_nb = _load_legacy_num_batches()
+    # Exact per-WARC num_batches from this spec's own _done markers (cached).
+    # Preferred over the legacy heuristic, which under-counts larger-WARC pipelines.
+    spec_nb = _load_spec_num_batches(spec_id)
+    # Pipeline specs run at group-size 250 (~2x the batches/WARC of the legacy
+    # batch_size-500 map), so they must NEVER read num_batches off legacy_nb.
+    is_pipeline = spec_id in PIPELINES
+
+    def _ground_truth_nb(h: str) -> int | None:
+        """Exact num_batches for a done WARC, at this spec's real batch size."""
+        return spec_nb.get(h) if is_pipeline else (spec_nb.get(h) or legacy_nb.get(h))
 
     prefix = _bucket_prefix_for_spec(spec_id)
 
@@ -668,6 +802,7 @@ def _scan_progress_deep(spec_id: str) -> dict:
                     "completed_at": completed_at,
                     "warc_path": manifest.get(h, ""),
                     "size_bytes": size_bytes,
+                    "num_batches": _ground_truth_nb(h),
                 }
             )
         for h, dirname in dir_hashes:
@@ -678,7 +813,9 @@ def _scan_progress_deep(spec_id: str) -> dict:
             if h in registry_done:
                 r_done.add(h)
                 done_hashes.add(h)
-                done_stats.append({"hash": h, "region": region, "warc_path": manifest.get(h, "")})
+                done_stats.append(
+                    {"hash": h, "region": region, "warc_path": manifest.get(h, ""), "num_batches": _ground_truth_nb(h)}
+                )
             else:
                 inprogress.append((region, bucket_name, h, dirname))
         region_data[region] = {"bucket": bucket_name, "claimed": len(r_claimed), "done": len(r_done)}
@@ -712,7 +849,15 @@ def _scan_progress_deep(spec_id: str) -> dict:
     for region, h, batches, is_done, done_at in phase2:
         if is_done:
             done_hashes.add(h)
-            done_stats.append({"hash": h, "region": region, "completed_at": done_at, "warc_path": manifest.get(h, "")})
+            done_stats.append(
+                {
+                    "hash": h,
+                    "region": region,
+                    "completed_at": done_at,
+                    "warc_path": manifest.get(h, ""),
+                    "num_batches": _ground_truth_nb(h),
+                }
+            )
         for filename, epoch, iso in batches:
             # Deduplicate: same batch in multiple regions counts once.
             key = (h, filename)
@@ -728,8 +873,11 @@ def _scan_progress_deep(spec_id: str) -> dict:
                 if latest_batch_ts is None or epoch > latest_batch_ts:
                     latest_batch_ts = epoch
 
-    unique_claimed = set(all_hashes.keys())
-    duplicates = sum(1 for r_list in all_hashes.values() if len(r_list) > 1)
+    # Restrict to the manifest pool so counts read as "X / |manifest|" (see the
+    # registry_done filter for why the namespace can contain extra hashes).
+    done_hashes &= manifest_set
+    unique_claimed = set(all_hashes.keys()) & manifest_set
+    duplicates = sum(1 for h, r_list in all_hashes.items() if h in manifest_set and len(r_list) > 1)
 
     # Backfill the completed registry in a background thread so it doesn't
     # block the deep scan response. The scan results are returned immediately;
@@ -751,16 +899,19 @@ def _scan_progress_deep(spec_id: str) -> dict:
     recent_window_seconds = 3 * 3600
     now = time.time()
 
-    # Avg batches per WARC, used to estimate remaining work. num_batches depends
-    # only on a WARC's page count (not the spec), so the legacy ground-truth map
-    # is valid here; fall back to the batch counts we tallied for in-progress
-    # dirs. Finished WARCs are no longer enumerated, so their batches don't
-    # appear in ``batch_counts`` — that's fine, ``total_batches`` below then
-    # means "batches done on still-in-progress WARCs".
-    avg_batches_per_warc = 100  # default
+    # Avg batches per WARC, used to estimate remaining work. num_batches =
+    # ceil(records / batch_size), so it depends on the WARC's page count AND the
+    # run's batch size. The legacy map is at batch_size=500; the --pipeline runners
+    # run at group-size 250 (~2x the batches for the same WARC), so a pipeline spec
+    # must read its OWN _done markers (spec_nb) only — mixing in legacy_nb would
+    # halve the estimate. Legacy single-call specs may still use the legacy map (and
+    # in-progress batch_counts) as before. Finished WARCs aren't enumerated, so
+    # their batches don't appear in ``batch_counts`` — that's fine, ``total_batches``
+    # below then means "batches done on still-in-progress WARCs".
+    avg_batches_per_warc = PIPELINE_DEFAULT_BATCHES_PER_WARC if is_pipeline else LEGACY_AVG_BATCHES_PER_WARC
     real_counts = []
     for h in done_hashes:
-        nb = legacy_nb.get(h) or batch_counts.get(h)
+        nb = spec_nb.get(h) if is_pipeline else (spec_nb.get(h) or legacy_nb.get(h) or batch_counts.get(h))
         if nb:
             real_counts.append(nb)
     if real_counts:
@@ -772,7 +923,10 @@ def _scan_progress_deep(spec_id: str) -> dict:
     # rather than counted. ``total_batches`` (in-progress only) stays separate
     # for the per-WARC table; ``in_progress_batches`` drives the ETA.
     in_progress_batches = sum(c for h, c in batch_counts.items() if h not in done_hashes)
-    done_batches = sum(legacy_nb.get(h) or avg_batches_per_warc for h in done_hashes)
+    if is_pipeline:
+        done_batches = sum(spec_nb.get(h) or avg_batches_per_warc for h in done_hashes)
+    else:
+        done_batches = sum(spec_nb.get(h) or legacy_nb.get(h) or avg_batches_per_warc for h in done_hashes)
     batches_done = done_batches + in_progress_batches
 
     # --- True throughput from the completed-WARC registry --------------------
@@ -794,33 +948,49 @@ def _scan_progress_deep(spec_id: str) -> dict:
             if run_age_hours > 0.1:
                 warcs_per_hour_lifetime = len(completion_times) / run_age_hours
 
-    # Headline rates: registry-derived true throughput when timestamps are
-    # available, else the in-progress batch-write rate (legacy fallback for
-    # specs whose registry markers predate timestamp capture).
-    if warcs_per_hour_recent is not None:
-        batches_per_hour_recent = warcs_per_hour_recent * avg_batches_per_warc
-    else:
-        # NOW (not latest_batch_ts) so the rate drops to 0 if all workers stop.
-        recent_count = sum(1 for ts in batch_timestamps if ts >= cutoff)
-        batches_per_hour_recent = recent_count / (recent_window_seconds / 3600)
+    # Headline batch rate = REAL production, measured as d(batches_done)/dt across
+    # consecutive scans. The old code derived it from the WARC completion rate
+    # (warcs/hr * avg), which COLLAPSES during wide steal-mode fan-out — batches
+    # keep pouring into thousands of partial WARCs while few WARCs finish — so it
+    # understated real work ~5x and inflated the ETA to fiction. The slope of the
+    # (monotonic) batches_done counter is the honest signal and is immune to both
+    # fan-out and single-scan batch-file enumeration gaps.
+    hist = _batches_done_history.setdefault(spec_id, [])
+    hist.append((now, batches_done))
+    while len(hist) > 2 and hist[0][0] < now - RATE_SAMPLE_WINDOW_SECONDS:
+        hist.pop(0)
+    batches_per_hour_recent = None
+    for t_old, b_old in hist:  # oldest-first → longest, smoothest window
+        if now - t_old >= RATE_MIN_DT_SECONDS:
+            rate = (batches_done - b_old) / ((now - t_old) / 3600)
+            if rate >= 0:
+                batches_per_hour_recent = rate
+            break
+    if batches_per_hour_recent is None:
+        # Cold: fewer than two spaced samples yet — completion-derived placeholder.
+        batches_per_hour_recent = (warcs_per_hour_recent or 0) * avg_batches_per_warc
 
-    if warcs_per_hour_lifetime is not None:
-        batches_per_hour = warcs_per_hour_lifetime * avg_batches_per_warc
+    # Lifetime production = all batches done / run age (honest cumulative rate).
+    if run_age_hours and run_age_hours > 0.1:
+        batches_per_hour = batches_done / run_age_hours
     elif earliest_batch_ts and latest_batch_ts and total_batches > 10:
         span_hours = (latest_batch_ts - earliest_batch_ts) / 3600
         if span_hours > 0.1:
             batches_per_hour = total_batches / span_hours
 
+    # Canonical batch total, at THIS spec's real batches/WARC — the single source
+    # of truth for both the batch-level progress bar and the ETA (the frontend must
+    # not re-derive it from the legacy batch_size-500 map, which halves it for
+    # group-size-250 pipeline specs). in_progress_batches cancels: batches_done
+    # already includes it, and it's subtracted from the remaining estimate.
+    remaining_warcs = len(manifest) - len(done_hashes)
+    estimated_remaining_batches = max(0, remaining_warcs * avg_batches_per_warc - in_progress_batches)
+    total_batches_estimate = batches_done + estimated_remaining_batches
+
     # Use the RECENT rate for ETA (it's more representative of current throughput)
     rate_for_eta = batches_per_hour_recent if batches_per_hour_recent > 0 else batches_per_hour
-    if rate_for_eta and rate_for_eta > 0:
-        # Remaining = (not-done WARCs x avg) minus the partial batches already
-        # done on the in-progress ones. in_progress_batches excludes finished
-        # WARCs, so there's no double subtraction.
-        remaining_warcs = len(manifest) - len(done_hashes)
-        estimated_remaining_batches = remaining_warcs * avg_batches_per_warc - in_progress_batches
-        if estimated_remaining_batches > 0:
-            eta_hours = estimated_remaining_batches / rate_for_eta
+    if rate_for_eta and rate_for_eta > 0 and estimated_remaining_batches > 0:
+        eta_hours = estimated_remaining_batches / rate_for_eta
 
     return {
         "spec_id": spec_id,
@@ -843,6 +1013,7 @@ def _scan_progress_deep(spec_id: str) -> dict:
         "latest_activity": latest_activity,
         "total_batches": total_batches,
         "batches_done": batches_done,
+        "total_batches_estimate": total_batches_estimate,
         **_legacy_payload(manifest),
     }
 
@@ -1290,6 +1461,7 @@ def api_progress_refresh():
                 data["latest_activity"] = deep_data.get("latest_activity")
                 data["total_batches"] = deep_data.get("total_batches")
                 data["batches_done"] = deep_data.get("batches_done")
+                data["total_batches_estimate"] = deep_data.get("total_batches_estimate")
                 data["batches_per_hour"] = deep_data.get("batches_per_hour")
                 data["batches_per_hour_recent"] = deep_data.get("batches_per_hour_recent")
                 data["warcs_per_hour_recent"] = deep_data.get("warcs_per_hour_recent")
@@ -1447,7 +1619,14 @@ def api_jobs_launch():
             "--child-priority",
             child_priority,
         ]
-        if spec:
+        # Pipelines use --pipeline (+ optional --group-size); old specs use --spec.
+        # The two are mutually exclusive in launch_adaptive.py.
+        if spec in PIPELINES:
+            command += ["--pipeline", spec]
+            group_size = data.get("group_size")
+            if group_size:
+                command += ["--group-size", str(int(group_size))]
+        elif spec:
             command += ["--spec", spec]
         if manifest:
             command += ["--manifest", manifest]
@@ -1506,18 +1685,22 @@ def main():
     )
     args = parser.parse_args()
 
-    # Resolve spec list: ensure legacy is included and pinned first.
+    # Resolve spec list: ensure legacy is included and pinned first. The known
+    # universe is the old single-call specs PLUS the new multi-call pipeline ids
+    # (both write to documents/baseline_llm_extraction/{id}/, so the scanner treats
+    # them identically).
+    known = set(SPECS) | set(PIPELINES)
     if args.specs:
         specs = list(args.specs)
     else:
-        # Default: legacy + all registered specs, deduped.
-        specs = [LEGACY_SPEC_ID] + [s for s in sorted(SPECS) if s != LEGACY_SPEC_ID]
+        # Default: legacy + all registered specs + pipelines, deduped.
+        specs = [LEGACY_SPEC_ID] + [s for s in sorted(known) if s != LEGACY_SPEC_ID]
     if LEGACY_SPEC_ID not in specs:
         specs.insert(0, LEGACY_SPEC_ID)
-    # Validate non-legacy entries against the registry.
-    unknown = [s for s in specs if s != LEGACY_SPEC_ID and s not in SPECS]
+    # Validate non-legacy entries against the known universe.
+    unknown = [s for s in specs if s != LEGACY_SPEC_ID and s not in known]
     if unknown:
-        parser.error(f"Unknown spec ids: {unknown}. Registered: {sorted(SPECS)}")
+        parser.error(f"Unknown spec/pipeline ids: {unknown}. Registered: {sorted(known)}")
     SPECS_TO_SCAN[:] = specs
     logger.info("Dashboard specs: %s", SPECS_TO_SCAN)
 

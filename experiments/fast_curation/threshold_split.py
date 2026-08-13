@@ -96,6 +96,13 @@ def main() -> None:
     ap.add_argument("--n", type=int, default=10364)
     ap.add_argument("--region", default="us-east5")
     ap.add_argument("--num-procs", type=int, default=16)
+    ap.add_argument(
+        "--thresholds",
+        default=None,
+        help="Pin band cutoffs instead of recomputing per-N percentiles, e.g. "
+        '"80=0.32295,60=0.49377,40=0.68384,20=0.83548" (the full-pool cutoffs), so an N-of-pool '
+        "run keeps the SAME quality bar as the full-pool bands.",
+    )
     args = ap.parse_args()
 
     base = f"gs://marin-{args.region}/documents"
@@ -107,6 +114,12 @@ def main() -> None:
     logger.info("threshold-split over %d deconned shards", len(shards))
 
     thresholds, total_n = _compute_thresholds(shards, args.num_procs)
+    if args.thresholds:
+        pinned = {int(k): float(v) for k, v in (kv.split("=") for kv in args.thresholds.split(","))}
+        if set(pinned) != set(BAND_PCTS):
+            raise ValueError(f"--thresholds must cover exactly {BAND_PCTS}, got {sorted(pinned)}")
+        logger.info("Recomputed per-N cutoffs %s OVERRIDDEN by pinned %s", thresholds, pinned)
+        thresholds = pinned
     logger.info("total docs (100%% band) = %d", total_n)
     for pct in BAND_PCTS:
         logger.info("  band %d%%: keep modernbert_prob >= %.6f", pct, thresholds[pct])
@@ -122,8 +135,13 @@ def main() -> None:
     band_totals = {pct: sum(c[pct] for c in results if c[pct] >= 0) for pct in BAND_PCTS}
     logger.info("=== band doc counts (100%% = %d) ===", total_n)
     for pct in BAND_PCTS:
-        logger.info("  band %d%%: threshold>=%.6f -> %d docs (%.1f%% of 100%%)",
-                    pct, thresholds[pct], band_totals[pct], 100.0 * band_totals[pct] / max(total_n, 1))
+        logger.info(
+            "  band %d%%: threshold>=%.6f -> %d docs (%.1f%% of 100%%)",
+            pct,
+            thresholds[pct],
+            band_totals[pct],
+            100.0 * band_totals[pct] / max(total_n, 1),
+        )
 
     # Persist the split summary next to the bands so tokenize/registration can read it back.
     summary = {

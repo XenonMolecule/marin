@@ -91,12 +91,30 @@ METHOD_COLORS = {
     "high_quality": COMPARE_COLORS["high_quality"],  # green
     "resiliparse": COMPARE_COLORS["resiliparse"],  # purple
     "med_quality": "#8c564b",  # brown (3k sweeps only; absent from 10k)
+    # OLMIX optimised-mixture arms. Deliberately the SAME hue family as their own
+    # baseline (dclm=blue, high_quality=green) but darker, so a mix arm reads as
+    # "that corpus, re-weighted" rather than as an unrelated method.
+    # Same hue as the corpus's own baseline so a mix arm reads as "that corpus,
+    # re-weighted" -- but mid-saturation, NOT near-black. Very dark blues/greens
+    # (#08306b / #00441b) both render as black and become indistinguishable from
+    # each other, which hides the two lines the figure exists to compare.
+    "dclm_10k_mix": "#1f77b4",  # blue
+    "high_quality_10k_mix": "#2ca02c",  # green
 }
 
 # The 3000-WARC sweeps name their runs differently from the canonical 10k method
 # names. These aliases fold each 3k run-method onto its canonical color/label so
 # the biased-3k and random-3k figures reuse the exact same palette as the 10k
 # figure. Identity for 10k names -> the default (10k) path is unchanged.
+# The mixture comparison: each corpus's natural baseline against its own OLMIX
+# re-weighting, and nothing else. Other corpora would only add visual noise —
+# the question is mix-vs-natural WITHIN a corpus, not across corpora.
+MIX_COMPARE_METHODS = {
+    "dclm",
+    "high_quality",
+    "dclm_10k_mix",
+    "high_quality_10k_mix",
+}
 BIASED_3K_METHODS = {
     "dclm",
     "nemotron_full_bos_fixed",
@@ -511,6 +529,14 @@ REGIME_PRESETS: dict[str, dict] = {
         vlines=True,
         title="DCLM CoreV2 vs tokens by model scale (10k curation isoflop)",
         default_out="core_v2/core_v2_grid_x_tokens.html",
+    ),
+    "10kmix": dict(
+        core=DEFAULT_CORE_PREFIX,
+        tokens=DEFAULT_TOKENS_PREFIX,
+        include=MIX_COMPARE_METHODS,
+        vlines=False,
+        title="DCLM CoreV2 vs tokens by model scale — OLMIX optimised mixture vs natural (R=30B, k=20)",
+        default_out="core_v2/core_v2_grid_x_tokens_mix.html",
     ),
     "biased3k": dict(
         core=THREEK_CORE_PREFIX,

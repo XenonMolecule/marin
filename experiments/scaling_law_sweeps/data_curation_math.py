@@ -8,6 +8,8 @@ math is unit-testable without needing executor/levanter/fray imports.
 """
 
 import json
+import logging
+import pathlib
 from dataclasses import dataclass, replace
 
 import fsspec
@@ -95,6 +97,9 @@ _PALOMA_CACHE_HASHES: dict[str, str] = {
 # compose the val_path directly in the `with_lima` branch of
 # `as_lm_mixture_config` rather than going through `_add_validation_components`.
 _LIMA_CACHE_HASH: str = "41ca0d"
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -390,6 +395,115 @@ def implicit_target_exp_a(method: CurationMethod, t_exp: float) -> float:
     Setting them equal gives `T_target = T_exp * D_proj / D_obs = T_exp * s`.
     """
     return t_exp * method.s
+
+
+@dataclass(frozen=True)
+class GridMixCurationMethod(CurationMethod):
+    """A corpus trained at an OLMIX-optimized mixture over its own 24x5 topic/quality grid.
+
+    The grid cells are a *partition of the same corpus* the plain method trains on -- their
+    token counts sum to the identical ``d_obs`` (dclm 7.332B, high_quality 21.297B) under the
+    identical tokenizer -- so a mix arm differs from its base arm in the sampling weights and
+    in nothing else. ``d_obs``, ``s``, and therefore the natural-epoch target are unchanged,
+    which makes the two directly comparable cell-for-cell on the frozen 10k grid.
+
+    The training stream is one ``DatasetComponent`` per grid cell, weighted by
+    ``mixtures/<corpus>_<tag>.json`` (vendored in-repo so the executed mixture is
+    version-controlled and needs no cross-region fetch at run time), plus the inherited
+    validation components at weight 0.0. ``tokenized_rel_path`` is still required and still
+    names the corpus's single-cache path, but it is NOT used for training here -- the parent's
+    training component is dropped and replaced by the grid components.
+
+    **Sub-floor weights are dropped explicitly, not silently.** Levanter turns a weight into
+    ``int(w * mixture_block_size)`` samples per block, so any non-zero weight below
+    ``1/block_size`` contributes nothing while still counting toward the normalisation. The
+    OLMIX solve leaves every cell non-zero (smallest 7.4e-8), so at the maximum block size of
+    65535 roughly 22-24 cells fall under the floor. We drop those and renormalise so the
+    executed mixture is exactly what the config says, and log the dropped mass (measured:
+    0.007% dclm, 0.017% high_quality).
+    """
+
+    grid_corpus: str = ""
+    """Corpus key for `olmix_domains.load_grid_domains`, e.g. ``"dclm_10k"``."""
+
+    mixture_rel_path: str = ""
+    """Repo-relative path to the vendored mixture JSON (``weights`` maps cell id -> weight)."""
+
+    mixture_block_size: int = 65535
+    """Levanter block size. Must be < 2**16 (the `(i << 16)` id packing) and should be the max:
+    a smaller block raises the truncation floor and silently deletes more small cells."""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if not self.grid_corpus or not self.mixture_rel_path:
+            raise ValueError(f"{self.name}: GridMixCurationMethod needs grid_corpus and mixture_rel_path")
+        if not 0 < self.mixture_block_size < 2**16:
+            raise ValueError(f"{self.name}: mixture_block_size must be in (0, 65536), got {self.mixture_block_size}")
+
+    def load_weights(self) -> dict[str, float]:
+        """Vendored cell -> weight map, sub-floor cells dropped and the rest renormalised."""
+        path = pathlib.Path(__file__).resolve().parents[2] / self.mixture_rel_path
+        raw = json.loads(path.read_text())["weights"]
+        floor = 1.0 / self.mixture_block_size
+        kept = {k: v for k, v in raw.items() if v >= floor}
+        if not kept:
+            raise ValueError(f"{self.name}: every weight is below the {floor:.2e} floor")
+        dropped_mass = 1.0 - sum(kept.values())
+        total = sum(kept.values())
+        logger.info(
+            "%s: %d/%d cells clear the %.2e floor (block=%d); dropped %d cells holding %.4f%% of mass",
+            self.name,
+            len(kept),
+            len(raw),
+            floor,
+            self.mixture_block_size,
+            len(raw) - len(kept),
+            100.0 * dropped_mass,
+        )
+        return {k: v / total for k, v in sorted(kept.items())}
+
+    def as_lm_mixture_config(
+        self,
+        region: str,
+        with_uncheatable_eval: bool = True,
+        with_paloma: bool = True,
+        with_lima: bool = True,
+    ) -> LMMixtureDatasetConfig:
+        from experiments.data_mixing.olmix_domains import load_grid_domains
+
+        base = super().as_lm_mixture_config(region, with_uncheatable_eval, with_paloma, with_lima)
+        cache_dirs = {d.name: d.cache_dir for d in load_grid_domains(self.grid_corpus, region)}
+        weights = self.load_weights()
+
+        missing = sorted(set(weights) - set(cache_dirs))
+        if missing:
+            raise ValueError(f"{self.name}: mixture names absent from the {region} grid: {missing[:5]}")
+
+        # Drop the parent's single-cache training component; the grid replaces it entirely.
+        components = {k: v for k, v in base.components.items() if k != self.name}
+        train_weights = {k: v for k, v in base.train_weights.items() if k != self.name}
+        for cell, weight in weights.items():
+            key = f"{self.name}__{cell}"
+            cache_dir = cache_dirs[cell]
+            components[key] = DatasetComponent(
+                source=UrlDatasetSourceConfig(
+                    cache_dir=cache_dir,
+                    train_urls=[],
+                    validation_urls=[],
+                    format=TextLmDatasetFormat(),
+                    tags=[key],
+                ),
+                cache_dir=cache_dir,
+                format=TextLmDatasetFormat(),
+                tags=[key],
+            )
+            train_weights[key] = weight
+        return replace(
+            base,
+            components=components,
+            train_weights=train_weights,
+            mixture_block_size=self.mixture_block_size,
+        )
 
 
 def load_d_obs_from_stats(tokenized_path: str) -> int:

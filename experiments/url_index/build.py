@@ -149,7 +149,7 @@ def build_subset_filter(field: str, manifest_path: str, metadata_glob: str | Non
 _READ_BLOCK = 32 * 1024 * 1024  # 32 MiB prefetch block
 
 
-def _read_records(shard: str) -> Iterator[dict]:
+def _read_records(shard: str, columns: list[str] | None = None) -> Iterator[dict]:
     """Stream records from a ``.jsonl(.gz|.zst)`` or ``.parquet`` shard.
 
     Uses ``cache_type='readahead'`` (synchronous 32 MiB prefetch) -- fast on large
@@ -158,12 +158,18 @@ def _read_records(shard: str) -> Iterator[dict]:
     NO prefetch threads, so opening tens of thousands of shards (nemotron ~24k)
     doesn't accumulate live thread/buffer residue and OOM the container. Only one
     file is open at a time, so the buffer is bounded and released on close.
+
+    ``columns`` projects the parquet read to just those columns that exist in the
+    shard (ignored for JSONL, which reads every field regardless). This skips huge
+    unused columns -- e.g. a tokenized tier's ``input_ids`` (8192 ints/doc) that the
+    key build discards -- so reads stay proportional to the text we actually need.
     """
     fs, path = url_to_fs(shard)
     if shard.endswith(".parquet"):
         with fs.open(path, "rb", cache_type="readahead", block_size=_READ_BLOCK) as fh:
             pf = pq.ParquetFile(fh)
-            for batch in pf.iter_batches():
+            proj = [c for c in columns if c in pf.schema_arrow.names] if columns is not None else None
+            for batch in pf.iter_batches(columns=proj):
                 yield from batch.to_pylist()
         return
     compression = "gzip" if shard.endswith(".gz") else "zstd" if shard.endswith(".zst") else None
@@ -181,6 +187,21 @@ def _warc_path_hash(warc_path: str) -> str:
 
 def _doc_text(rec: dict) -> str | None:
     return rec.get("text") or rec.get("generated_text")
+
+
+# Source columns the key build reads from a parquet doc (intersected with the
+# shard's actual schema in _read_records). Excludes bulky derived columns like a
+# tokenized tier's ``input_ids``. Subset/min-field join columns are appended per run.
+_BUILD_READ_COLUMNS = ["url", "text", "generated_text", "warc_record_id", "snapshot", "warc_file"]
+
+
+def _build_read_columns(subset: SubsetFilter | None, min_field: str | None) -> list[str]:
+    cols = list(_BUILD_READ_COLUMNS)
+    if subset is not None:
+        cols.append(subset.field)
+    if min_field is not None:
+        cols.append(min_field)
+    return cols
 
 
 def _collect_wanted_hashes(shard_urls: tuple[str, ...]) -> set[str]:
@@ -243,7 +264,7 @@ def _shard_rows(
     min_value: float,
 ) -> "list[dict]":
     """Yield key-rows for the documents of one source shard."""
-    for rec in _read_records(shard):
+    for rec in _read_records(shard, columns=_build_read_columns(subset, min_field)):
         row = _row_for_rec(rec, prov_map, subset, min_field, min_value, keys_only)
         if row is not None:
             yield row

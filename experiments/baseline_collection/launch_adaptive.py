@@ -76,13 +76,19 @@ def submit_chunk(
     chunk_size: int,
     manifest: str,
     spec: str | None = None,
+    pipeline: str | None = None,
+    group_size: int | None = None,
     model: str | None = None,
     region: str | None = None,
     child_priority_band: int = job_pb2.PRIORITY_BAND_UNSPECIFIED,
+    preemptible: bool = True,
 ) -> list[str]:
     """Submit a chunk of jobs. Returns list of submitted job names.
 
-    If ``spec`` is set, child jobs run with ``--spec {spec}`` and the prompt
+    If ``pipeline`` is set, child jobs run with ``--pipeline {pipeline}`` (the
+    multi-call two-stage/one-call systems) and write to that pipeline's canonical
+    namespace; ``group_size`` forwards ``--group-size``. Otherwise, if ``spec`` is
+    set, child jobs run with ``--spec {spec}`` and the prompt
     comes from the spec registry. ``output_subdir`` is passed through only when
     it is non-None: with a spec that redirects output + the skip-registry to a
     benchmark namespace (keeping the spec's prompt); without a spec it is the
@@ -93,7 +99,7 @@ def submit_chunk(
     env_vars = dict(MULTIHOST_ENV) if is_multihost else {}
     tp_args = ["--tp", "4"] if is_multihost else []
 
-    name_prefix = f"extract-{spec}-" if spec else "extract-"
+    name_prefix = f"extract-{pipeline}-" if pipeline else (f"extract-{spec}-" if spec else "extract-")
 
     submitted = []
     for i in range(chunk_size):
@@ -109,7 +115,15 @@ def submit_chunk(
             str(seed),
             *tp_args,
         ]
-        if spec:
+        if pipeline:
+            cmd_args.extend(["--pipeline", pipeline])
+            if group_size is not None:
+                cmd_args.extend(["--group-size", str(group_size)])
+            # Like --spec: --output-subdir is only an explicit benchmark override;
+            # without it the child uses the pipeline's canonical namespace.
+            if output_subdir is not None:
+                cmd_args.extend(["--output-subdir", output_subdir])
+        elif spec:
             cmd_args.extend(["--spec", spec])
             # Pass --output-subdir alongside --spec only as an explicit benchmark
             # override; without it the child uses the spec's canonical namespace.
@@ -148,7 +162,10 @@ def submit_chunk(
                 # already-wrapped values and silently fails with ``'str' object has
                 # no attribute 'to_proto'`` if you pass raw strings.
                 constraints=[
-                    preemptible_constraint(True),
+                    # preemptible=True is SOFT (prefer spot, fall back to reserved);
+                    # preemptible=False is HARD (require reserved/on-demand), used to
+                    # target the low-churn reserved v4 pool via --capacity-type reserved.
+                    preemptible_constraint(preemptible),
                     # Default: SOFT preference over all regions (prevents parent
                     # region inheritance without restricting the autoscaler). When
                     # ``region`` is set (e.g. the model checkpoint lives in only one
@@ -210,16 +227,19 @@ def run_adaptive(
     end: int | None,
     manifest: str,
     spec: str | None = None,
+    pipeline: str | None = None,
+    group_size: int | None = None,
     model: str | None = None,
     region: str | None = None,
     child_priority_band: int = job_pb2.PRIORITY_BAND_UNSPECIFIED,
+    preemptible: bool = True,
 ):
     """Adaptive scaling loop. Only submits more when ALL previous jobs are running."""
     logger.info(
-        "Adaptive launcher: %s, manifest=%s, spec=%s, max=%d, initial=%d, chunk=%d, child_priority=%s",
+        "Adaptive launcher: %s, manifest=%s, mode=%s, max=%d, initial=%d, chunk=%d, child_priority=%s",
         tpu_type,
         manifest,
-        spec or "(legacy / hardcoded prompt)",
+        f"pipeline={pipeline}" if pipeline else (f"spec={spec}" if spec else "(legacy / hardcoded prompt)"),
         max_count,
         initial_batch,
         chunk_size,
@@ -242,9 +262,12 @@ def run_adaptive(
             count,
             manifest=manifest,
             spec=spec,
+            pipeline=pipeline,
+            group_size=group_size,
             model=model,
             region=region,
             child_priority_band=child_priority_band,
+            preemptible=preemptible,
         )
 
     # Initial batch
@@ -395,6 +418,21 @@ def main():
         ),
     )
     parser.add_argument(
+        "--pipeline",
+        default=None,
+        help=(
+            "Multi-call pipeline id (llm_pipeline_v1 or llm_simple_v1). Mutually "
+            "exclusive with --spec. Children run with --pipeline and write to that "
+            "pipeline's canonical namespace documents/baseline_llm_extraction/{id}."
+        ),
+    )
+    parser.add_argument(
+        "--group-size",
+        type=int,
+        default=None,
+        help="Forwarded to children as --group-size (docs per checkpoint group). Only with --pipeline.",
+    )
+    parser.add_argument(
         "--child-region",
         default=None,
         help=(
@@ -405,6 +443,18 @@ def main():
     )
     parser.add_argument("--start", type=int, default=0)
     parser.add_argument("--end", type=int, default=None)
+    parser.add_argument(
+        "--capacity-type",
+        choices=["preemptible", "reserved"],
+        default="preemptible",
+        help=(
+            "Capacity class for child TPUs. 'preemptible' (default) softly prefers "
+            "spot and falls back to reserved. 'reserved' HARD-requires non-preemptible "
+            "capacity (e.g. the reserved v4 pool in us-central2) — far lower churn, at "
+            "the cost of contending with reserved workloads; pair with --child-priority "
+            "batch so those workloads still win."
+        ),
+    )
     parser.add_argument(
         "--child-priority",
         choices=["production", "interactive", "batch", "unspecified"],
@@ -417,20 +467,29 @@ def main():
         ),
     )
     args = parser.parse_args()
+    if args.pipeline and args.spec:
+        parser.error("--pipeline and --spec are mutually exclusive")
+    if args.group_size is not None and not args.pipeline:
+        parser.error("--group-size only applies with --pipeline (it would be silently ignored)")
 
-    # Validate the spec at parent startup so a typo fails before any children
+    # Validate spec/pipeline at parent startup so a typo fails before any children
     # are submitted (would otherwise surface only in child stderr).
-    if args.spec is not None:
+    if args.pipeline is not None:
+        from experiments.baseline_collection.pipelines.pipeline_specs import get_pipeline
+
+        pipe_obj = get_pipeline(args.pipeline)  # raises ValueError on miss
+        logger.info("Using pipeline=%s (frozen cert %s)", args.pipeline, pipe_obj.source_cert)
+    elif args.spec is not None:
         from experiments.baseline_collection.extraction_specs import get_spec
 
         spec_obj = get_spec(args.spec)  # raises ValueError on miss
         logger.info("Using spec=%s — %s", args.spec, spec_obj.description or "(no description)")
 
-    # Without a spec, children need the legacy namespace default. With a spec,
-    # None means "use the spec's canonical namespace" and a value is a benchmark
+    # Without a spec OR pipeline, children need the legacy namespace default. With
+    # either, None means "use the canonical namespace" and a value is a benchmark
     # override — both are passed through to children as-is.
     output_subdir = args.output_subdir
-    if args.spec is None and output_subdir is None:
+    if args.spec is None and args.pipeline is None and output_subdir is None:
         output_subdir = "documents/baseline_llm_extraction"
 
     child_priority_band = PRIORITY_BAND_MAP[args.child_priority]
@@ -454,9 +513,12 @@ def main():
         end=args.end,
         manifest=args.manifest,
         spec=args.spec,
+        pipeline=args.pipeline,
+        group_size=args.group_size,
         model=args.model,
         region=args.child_region,
         child_priority_band=child_priority_band,
+        preemptible=(args.capacity_type == "preemptible"),
     )
 
     # Keep parent alive

@@ -1,0 +1,9 @@
+run_name,region,output_path
+curation-dclm-expFM_natural-2e+18-d512-L6-B16,us-central1,gs://marin-us-central1/checkpoints/isoflop-curation/curation-dclm-expFM_natural-2e+18-d512-L6-B16
+curation-high_quality_random_300-expWARC_natural-3e+18-d512-L6-B32,us-central1,gs://marin-us-central1/checkpoints/isoflop-curation/curation-high_quality_random_300-expWARC_natural-3e+18-d512-L6-B32
+curation-nemotron_full_bos_fixed-expFM_natural-3e+18-d512-L6-B32,us-central1,gs://marin-us-central1/checkpoints/isoflop-curation/curation-nemotron_full_bos_fixed-expFM_natural-3e+18-d512-L6-B32
+curation-resiliparse-expFM_natural-3e+18-d512-L6-B32,us-central1,gs://marin-us-central1/checkpoints/isoflop-curation/curation-resiliparse-expFM_natural-3e+18-d512-L6-B32
+curation-med_quality_random_300-expWARC_natural-3e+18-d512-L6-B32,us-central1,gs://marin-us-central1/checkpoints/isoflop-curation/curation-med_quality_random_300-expWARC_natural-3e+18-d512-L6-B32
+curation-llm_pipeline_v1_1_random_300-expWARC_natural-3e+18-d512-L6-B32,us-central1,gs://marin-us-central1/checkpoints/isoflop-curation/curation-llm_pipeline_v1_1_random_300-expWARC_natural-3e+18-d512-L6-B32
+curation-fastpipe_v3_100-expFM_natural-2e+19-d1024-L11-B32,us-central1,gs://marin-us-central1/checkpoints/isoflop-curation/curation-fastpipe_v3_100-expFM_natural-2e+19-d1024-L11-B32
+curation-dclm_10k-expFM_natural-9e+19-d1536-L16-B64,us-central1,gs://marin-us-central1/checkpoints/isoflop-curation/curation-dclm_10k-expFM_natural-9e+19-d1536-L16-B64

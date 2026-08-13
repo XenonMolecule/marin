@@ -393,6 +393,9 @@ def submit_one(
     tpu_variants: tuple[str, ...] = DEFAULT_TPU_VARIANTS,
     preemptible: bool = True,
     max_length: int = 2048,
+    per_device_eval_parallelism: int = 1,
+    hub_offline_after_load: bool = False,
+    memory_gb: int = 192,
     limit: int | None = None,
     region_float: bool = False,
     allow_eu_fallback: bool = False,
@@ -431,12 +434,16 @@ def submit_one(
         plan.run_name,
         "--max-length",
         str(max_length),
+        "--per-device-eval-parallelism",
+        str(per_device_eval_parallelism),
     ]
     # Point the child at the byte-identical dataset cache in ITS OWN region's
     # bucket (the same bucket the checkpoint lives in) so task loading reads
     # locally, never the HF Hub. hf_step_dir = gs://<bucket>/checkpoints/... .
     ckpt_bucket = hf_step_dir.split("/")[2]
     cmd_args += ["--dataset-cache-gcs", f"gs://{ckpt_bucket}/eval_datasets/dclm_core_hf_cache/"]
+    if hub_offline_after_load:
+        cmd_args += ["--hub-offline-after-load"]
     if log_samples:
         cmd_args += ["--log-samples"]
     if task_filter is not None:
@@ -509,12 +516,14 @@ def submit_one(
         entrypoint=Entrypoint.from_command(*cmd_args),
         name=f"dclm-core-{plan.run_name}{name_suffix}"[:200],
         resources=ResourceSpec(
-            # Match the curation training spec exactly — those land on TPU
-            # smoothly while my earlier 64GB-disk / 8-cpu / 64GB-mem requests
-            # were getting stuck pending. The training pool's autoscaler is
-            # already provisioning VMs at this profile so we slot right in.
+            # Mirrors the curation training spec, which lands smoothly on the v5p/v6e pools.
+            # BUT 192GB is exactly the total RAM of a v5e VM (ct5lp-hightpu-4t: 112 vCPU /
+            # 192 GiB), so a v5e slice can never satisfy it and the request is silently
+            # unschedulable there -- us-west4 is v5e-only, which is why it completed 0 Core v2
+            # evals while the 64GB bpb children finished all 751. Lower `memory_gb` to run on
+            # v5e; a 157M proxy needs nowhere near 192GB.
             cpu=32,
-            memory="256GB",
+            memory=f"{memory_gb}GB",
             disk="50GB",
             device=tpu_device(primary_tpu),
         ),

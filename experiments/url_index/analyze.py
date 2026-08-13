@@ -40,8 +40,15 @@ def _fmt_matrix(title: str, datasets: list[str], cell) -> str:
     return "\n".join(lines)
 
 
-def analyze(collection: Collection, datasets: list[str], out_prefix: str, local_dir: str) -> None:
-    """Consolidate lookup + coverage for one collection; upload results, log matrices."""
+def analyze(
+    collection: Collection, datasets: list[str], out_prefix: str, local_dir: str, coverage_only: bool = False
+) -> None:
+    """Consolidate lookup + coverage for one collection; upload results, log matrices.
+
+    ``coverage_only`` skips building the lookup DuckDB (an ART index over every
+    doc's meta). That index is only needed for interactive URL lookup, and at 10k
+    scale it wants multi-GB RAM to open; coverage matrices don't need it.
+    """
     keys_paths, meta_paths = [], []
     for ds in datasets:
         region = DATASETS[ds].region
@@ -60,10 +67,12 @@ def analyze(collection: Collection, datasets: list[str], out_prefix: str, local_
         return
 
     col = collection.value
-    if meta_paths:
+    if meta_paths and not coverage_only:
         db_local = os.path.join(local_dir, f"url_lookup_{col}.duckdb")
         consolidate.build_index(meta_paths, collection, db_local)
         _upload(db_local, f"{out_prefix}/url_lookup_{col}.duckdb")
+    elif coverage_only:
+        logger.info("coverage-only: skipping lookup DuckDB build")
 
     # url_h is the universal cross-dataset key (every doc has a url); rid_h works
     # only for tiers carrying warc_record_id; text_h compares identical extracted text.
@@ -97,6 +106,11 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--datasets", nargs="+", required=True)
     p.add_argument("--out-prefix", required=True, help="gs:// (or local) results prefix.")
     p.add_argument("--local-dir", default=None, help="Local scratch dir (default: a tempdir).")
+    p.add_argument(
+        "--coverage-only",
+        action="store_true",
+        help="Skip the lookup DuckDB build (ART index); compute + upload coverage matrices only.",
+    )
     return p.parse_args()
 
 
@@ -106,7 +120,7 @@ def main() -> None:
     local_dir = args.local_dir or tempfile.mkdtemp(prefix="url_index_analyze_")
     os.makedirs(local_dir, exist_ok=True)
     try:
-        analyze(Collection(args.collection), args.datasets, args.out_prefix, local_dir)
+        analyze(Collection(args.collection), args.datasets, args.out_prefix, local_dir, args.coverage_only)
     finally:
         if not args.local_dir:
             shutil.rmtree(local_dir, ignore_errors=True)

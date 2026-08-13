@@ -1,0 +1,11 @@
+run_name,region,output_path,hf_dir
+curation-high_quality_v2_random_300-expWARC_natural-3e+18-d512-L6-B32,us-east5,gs://marin-us-east5/checkpoints/isoflop-curation/curation-high_quality_v2_random_300-expWARC_natural-3e+18-d512-L6-B32,
+curation-high_quality_v2_random_300-expWARC_natural-1e+18-d512-L6-B8,us-east5,gs://marin-us-east5/checkpoints/isoflop-curation/curation-high_quality_v2_random_300-expWARC_natural-1e+18-d512-L6-B8,
+curation-high_quality_v2_random_300-expWARC_natural-3e+17-d512-L6-B8,us-east5,gs://marin-us-east5/checkpoints/isoflop-curation/curation-high_quality_v2_random_300-expWARC_natural-3e+17-d512-L6-B8,
+curation-high_quality_v2_random_300-expWARC_natural-3e+18-d256-L3-B64,us-east5,gs://marin-us-east5/checkpoints/isoflop-curation/curation-high_quality_v2_random_300-expWARC_natural-3e+18-d256-L3-B64,
+curation-high_quality_v2_random_300-expWARC_natural-3e+17-d256-L3-B8,us-east5,gs://marin-us-east5/checkpoints/isoflop-curation/curation-high_quality_v2_random_300-expWARC_natural-3e+17-d256-L3-B8,
+curation-high_quality_v2_random_300-expWARC_natural-1e+17-d512-L6-B8,us-east5,gs://marin-us-east5/checkpoints/isoflop-curation/curation-high_quality_v2_random_300-expWARC_natural-1e+17-d512-L6-B8,
+curation-high_quality_v2_random_300-expWARC_natural-3e+16-d512-L6-B8,us-east5,gs://marin-us-east5/checkpoints/isoflop-curation/curation-high_quality_v2_random_300-expWARC_natural-3e+16-d512-L6-B8,
+curation-high_quality_v2_random_300-expWARC_natural-1e+17-d256-L3-B8,us-east5,gs://marin-us-east5/checkpoints/isoflop-curation/curation-high_quality_v2_random_300-expWARC_natural-1e+17-d256-L3-B8,
+curation-high_quality_v2_random_300-expWARC_natural-3e+16-d256-L3-B8,us-east5,gs://marin-us-east5/checkpoints/isoflop-curation/curation-high_quality_v2_random_300-expWARC_natural-3e+16-d256-L3-B8,
+curation-high_quality_v2_random_300-expWARC_natural-1e+16-d256-L3-B8,us-east5,gs://marin-us-east5/checkpoints/isoflop-curation/curation-high_quality_v2_random_300-expWARC_natural-1e+16-d256-L3-B8,

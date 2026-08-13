@@ -39,8 +39,12 @@ const Engine = (() => {
     for (let i = 0; i < n; i++) sum += perDocValues[i];
     const mean = sum / n;
     const means = new Float64Array(B);
+    // Math.imul, NOT `*`: seed * 1103515245 exceeds 2^53 from the second iteration, so a plain
+    // multiply silently rounds and `& 0x7fffffff` masks a wrong value. That collapsed this LCG to
+    // ~16k distinct outputs, making every bootstrap replicate resample the same biased doc subset —
+    // the CI came out not even containing its own point estimate. imul does exact 32-bit math.
     let seed = 12345;
-    const rand = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+    const rand = () => ((seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff) / 0x7fffffff);
     for (let b = 0; b < B; b++) {
       let s = 0;
       for (let i = 0; i < n; i++) s += perDocValues[(rand() * n) | 0];
@@ -51,17 +55,36 @@ const Engine = (() => {
     return { total: mean * scale, lo: lo * scale, hi: hi * scale };
   }
 
+  // Column keys for one (extractor, target) pairing. `null` means "identical by definition":
+  // an extractor scored against itself always agrees and always has similarity 1.0.
+  // An oracle stage IS the target by construction, so it resolves to the target's own columns.
+  function extKeyOf(stage, target) {
+    if (stage.oracle && target) return target.extractor_id.replace(/^extract_/, "");
+    return stage.id.replace(/^extract_/, "");
+  }
+  function levKeys(ext, target) {
+    if (ext.oracle || ext.id === target.extractor_id) return { lev: null, both: null };
+    const k = extKeyOf(ext, target);
+    return { lev: `lev_${k}__${target.id}`, both: `both_${k}__${target.id}` };
+  }
+
   // pipeline = { filters:[{stageId,enabled,mode,threshold,recall,throughput?}], extractor:{stageId,throughput?},
   //             capacity:{nChips,nCores,docsPerWarc,nWarcs,tokEfficiency} }
-  // stageById: id -> registry stage. cols: matrix.columns. n = #docs.
-  function evaluate(cols, n, pipeline, stageById) {
+  // stageById: id -> registry stage. cols: matrix.columns. n = #docs. target: registry target.
+  function evaluate(cols, n, pipeline, stageById, target) {
     const cap = pipeline.capacity;
     const TOTAL_DOCS = cap.docsPerWarc * cap.nWarcs;
-    const scale = TOTAL_DOCS / n;
-    const gold = cols.gold_useful;
+    const gold = cols[target.gold_col];
 
-    let reach = new Uint8Array(n).fill(1);
-    let reaching = n;
+    // Docs the target never judged leave the universe entirely: they seed the reach mask as 0, so
+    // they are excluded from every filter, metric, compute total and projection alike. `scale`
+    // therefore projects from the COVERED docs only.
+    const cov = cols[target.coverage_col];
+    let reach = new Uint8Array(n);
+    let reaching = 0;
+    for (let i = 0; i < n; i++) if (cov[i] === 1) { reach[i] = 1; reaching++; }
+    const covered = reaching;
+    const scale = covered ? TOTAL_DOCS / covered : 0;
     const stages = [];
     let tpuChipSec = 0, cpuCoreSec = 0;
 
@@ -72,14 +95,21 @@ const Engine = (() => {
         rec.docsOut = reaching; rec.skipped = true; rec.reachMask = reach; rec.unitSec = 0;
         stages.push(rec); continue;
       }
-      const scores = cols[st.score_col];
-      let T = f.mode === "recall" ? thresholdForRecall(scores, gold, reach, st.direction, f.recall) : f.threshold;
-      const vCut = vOfThreshold(T, st.direction);
       const keep = new Uint8Array(n);
       let out = 0;
-      for (let i = 0; i < n; i++) if (reach[i] && vOf(scores[i], st.direction) >= vCut) { keep[i] = 1; out++; }
-      const tput = (f.throughput ?? st.throughput) * (st.tokenization_bound ? cap.tokEfficiency : 1);
-      const unitSec = (reaching * scale) / tput;
+      let T = null;
+      let unitSec = 0;
+      if (st.oracle) {
+        // Perfect and free: passes exactly the docs the target keeps, contributing no compute.
+        for (let i = 0; i < n; i++) if (reach[i] && gold[i]) { keep[i] = 1; out++; }
+      } else {
+        const scores = cols[st.score_col];
+        T = f.mode === "recall" ? thresholdForRecall(scores, gold, reach, st.direction, f.recall) : f.threshold;
+        const vCut = vOfThreshold(T, st.direction);
+        for (let i = 0; i < n; i++) if (reach[i] && vOf(scores[i], st.direction) >= vCut) { keep[i] = 1; out++; }
+        const tput = (f.throughput ?? st.throughput) * (st.tokenization_bound ? cap.tokEfficiency : 1);
+        unitSec = (reaching * scale) / tput;
+      }
       if (st.device === "tpu") tpuChipSec += unitSec; else cpuCoreSec += unitSec;
       Object.assign(rec, { docsOut: out, threshold: T, unitSec, reachMask: reach });
       stages.push(rec);
@@ -88,18 +118,20 @@ const Engine = (() => {
 
     // Terminal extractor: processes all survivors (compute), then its own abstain decides final-kept.
     const ext = stageById[pipeline.extractor.stageId];
-    const extKey = { extract_8b: "gold_useful", extract_1p7b: "label_1p7b_useful", extract_0p6b: "label_0p6b_useful" }[ext.id];
-    const extracted = (i) => (extKey ? cols[extKey][i] === 1 : true); // jusText never abstains
+    // Oracle terminal abstains exactly as the target does; jusText has no label => never abstains.
+    const keepCol = ext.oracle ? target.gold_col : ext.label_col ? ext.label_col + "_useful" : null;
+    const extracted = (i) => (keepCol ? cols[keepCol][i] === 1 : true);
     const finalKept = new Uint8Array(n);
     let kept = 0;
     for (let i = 0; i < n; i++) if (reach[i] && extracted(i)) { finalKept[i] = 1; kept++; }
     const extTput = pipeline.extractor.throughput ?? ext.throughput;
-    const extUnitSec = (reaching * scale) / extTput;
+    const extUnitSec = ext.oracle ? 0 : (reaching * scale) / extTput;
     if (ext.device === "tpu") tpuChipSec += extUnitSec; else cpuCoreSec += extUnitSec;
 
-    // Metrics over finalKept vs 8B gold.
+    // Metrics over finalKept vs the selected target, across covered docs only.
     let tp = 0, fp = 0, fn = 0, goldTotal = 0;
     for (let i = 0; i < n; i++) {
+      if (cov[i] !== 1) continue;
       if (gold[i]) goldTotal++;
       if (finalKept[i]) { gold[i] ? tp++ : fp++; } else if (gold[i]) fn++;
     }
@@ -107,20 +139,23 @@ const Engine = (() => {
     const recallM = tp + fn ? tp / (tp + fn) : 0;
     const f1 = 2 * tp + fp + fn ? (2 * tp) / (2 * tp + fp + fn) : 0;
 
-    // Levenshtein vs 8B over kept (gold extractor => 1.0 by definition).
-    const levKey = { extract_1p7b: "lev_1p7b", extract_0p6b: "lev_0p6b", extract_justext: "lev_justext" }[ext.id];
-    const bothKey = { extract_1p7b: "both_1p7b", extract_0p6b: "both_0p6b", extract_justext: "both_justext" }[ext.id];
+    // Levenshtein vs the target over kept docs (the target's own extractor => 1.0 by definition).
+    const { lev: levKey, both: bothKey } = levKeys(ext, target);
     let levU = 0, levUn = 0, levB = 0, levBn = 0;
-    const tokCol = cols["tok_" + ext.id.replace("extract_", "")];
-    const perDocTok = new Float64Array(n);
+    const tokCol = cols["tok_" + extKeyOf(ext, target)];
+    // One slot per COVERED doc (0 for non-kept) so the bootstrap mean matches `scale`'s denominator.
+    const perDocTok = new Float64Array(covered);
+    let slot = 0;
     for (let i = 0; i < n; i++) {
+      if (cov[i] !== 1) continue;
+      const s = slot++;
       if (!finalKept[i]) continue;
-      perDocTok[i] = tokCol[i] || 0;
+      perDocTok[s] = tokCol[i] || 0;
       const lv = levKey ? cols[levKey][i] : 1.0;
       levU += lv; levUn++;
       if (!bothKey || cols[bothKey][i] === 1) { levB += lv; levBn++; }
     }
-    // perDocTok is per-sample-doc (0 for non-kept); its mean × TOTAL_DOCS = projected total (NOT × scale).
+    // perDocTok is per-covered-doc (0 for non-kept); its mean × TOTAL_DOCS = projected total (NOT × scale).
     const projTok = bootstrapCI(perDocTok, TOTAL_DOCS);
 
     const wallTpuYears = cap.nChips ? tpuChipSec / cap.nChips / SEC_PER_YEAR : 0;
@@ -136,7 +171,7 @@ const Engine = (() => {
     });
 
     return {
-      n, scale, totalDocs: TOTAL_DOCS,
+      n, covered, scale, totalDocs: TOTAL_DOCS, targetId: target.id, targetLabel: target.label,
       stages, extractor: { id: ext.id, label: ext.label, device: ext.device, docsIn: reaching, kept, unitSec: extUnitSec },
       finalKept,
       summary: {
@@ -151,7 +186,7 @@ const Engine = (() => {
     };
   }
 
-  return { evaluate, thresholdForRecall, vOf, SEC_PER_YEAR, SEC_PER_DAY };
+  return { evaluate, thresholdForRecall, vOf, levKeys, extKeyOf, SEC_PER_YEAR, SEC_PER_DAY };
 })();
 
 if (typeof module !== "undefined") module.exports = Engine; // node unit tests

@@ -1,0 +1,6 @@
+run_name,region,output_path
+olmix-dclm_10k-s42-K363-i0007-wd046438d,us-east5,gs://marin-us-east5/checkpoints/olmix-swarm/olmix-dclm_10k-s42-K363-i0007-wd046438d
+olmix-dclm_10k-s42-K363-i0009-w13363bb1,us-east5,gs://marin-us-east5/checkpoints/olmix-swarm/olmix-dclm_10k-s42-K363-i0009-w13363bb1
+olmix-dclm_10k-s42-K363-i0011-w868d869d,us-east5,gs://marin-us-east5/checkpoints/olmix-swarm/olmix-dclm_10k-s42-K363-i0011-w868d869d
+olmix-dclm_10k-s42-K363-i0012-w740f5215,us-east5,gs://marin-us-east5/checkpoints/olmix-swarm/olmix-dclm_10k-s42-K363-i0012-w740f5215
+olmix-dclm_10k-s42-K363-i0018-w09644abc,us-east5,gs://marin-us-east5/checkpoints/olmix-swarm/olmix-dclm_10k-s42-K363-i0018-w09644abc

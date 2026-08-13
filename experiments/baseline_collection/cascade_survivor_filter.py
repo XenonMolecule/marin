@@ -1,3 +1,6 @@
+# Copyright The Marin Authors
+# SPDX-License-Identifier: Apache-2.0
+
 """Stage-2 cascade data builder: score docs with the stage-1 fastText and keep
 only the survivors (P(useful) >= threshold). The survivors are the *hard residual*
 the cheap stage-1 cannot confidently reject — a specialized stage-2 trains on them.
@@ -8,10 +11,15 @@ fastText train file (``__label__x <body_strip text>``) preserving the natural
 post-filter ratio. Runs in-region (us-central2); parallel across shards, with the
 stage-1 model loaded once and fork-shared (copy-on-write) so RAM stays ~1 model.
 """
-import argparse, logging, os, re
+
+import argparse
+import logging
 import multiprocessing as mp
-import fsspec
+import os
+import re
+
 import fasttext
+import fsspec
 import pyarrow.parquet as pq
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
@@ -42,20 +50,23 @@ def predict_useful_prob(model, text: str) -> float:
             return float(prob)
     return 0.0
 
-USEFUL_TMPL = "{base}/data/data-{i:05d}-of-03000.parquet"
-NOUSE_TMPL = "{base}/data_no_useful/data-{i:05d}-of-03000.parquet"
+
+USEFUL_TMPL = "{base}/data/data-{i:05d}-of-{total:05d}.parquet"
+NOUSE_TMPL = "{base}/data_no_useful/data-{i:05d}-of-{total:05d}.parquet"
 
 # per-worker globals (set by _init_worker under spawn — fresh process, clean gRPC)
 _MODEL = None
+_PREP = None
 _BASE = None
 _THR = 0.0
 _PARTS = None
+_TOTAL = 3000
 
 
-def _init_worker(model_path, base, thr, parts):
-    global _MODEL, _BASE, _THR, _PARTS
+def _init_worker(model_path, base, thr, parts, total):
+    global _MODEL, _BASE, _THR, _PARTS, _TOTAL
     _MODEL = fasttext.load_model(model_path)
-    _BASE, _THR, _PARTS = base, thr, parts
+    _BASE, _THR, _PARTS, _TOTAL = base, thr, parts, total
 
 
 def iter_html(path):
@@ -81,18 +92,78 @@ def score_shard(i):
     kp = kn = sp = sn = 0
     tmp = f"/tmp/surv_{i:05d}.txt.gz"
     import gzip as _gz
+
     with _gz.open(tmp, "wt", encoding="utf-8") as out:
         for label, tmpl, is_pos in ((LABEL_USEFUL, USEFUL_TMPL, True), (LABEL_NO_USEFUL, NOUSE_TMPL, False)):
-            for html in iter_html(tmpl.format(base=_BASE, i=i)):
+            for html in iter_html(tmpl.format(base=_BASE, i=i, total=_TOTAL)):
                 text = to_fasttext_text(html[:1_000_000], "body_strip")  # cap pathological multi-MB markup
                 if predict_useful_prob(_MODEL, text) >= _THR:
                     out.write(f"{label} {text}\n")
-                    if is_pos: kp += 1
-                    else: kn += 1
-                if is_pos: sp += 1
-                else: sn += 1
+                    if is_pos:
+                        kp += 1
+                    else:
+                        kn += 1
+                if is_pos:
+                    sp += 1
+                else:
+                    sn += 1
     with open(tmp, "rb") as src, fsspec.open(part, "wb") as dst:
         dst.write(src.read())
+    os.remove(tmp)
+    return i, kp, kn, sp, sn
+
+
+# --- Fast path: score the ALREADY-PREPPED text shards ---------------------
+#
+# The parquet path re-reads raw_html (~2.4 GB/WARC) and re-applies body_strip.
+# The prep shards already hold exactly that output as text (~400 MB/WARC), so this
+# path is ~6x less I/O and skips the regex entirely. Output format and per-shard
+# filenames are identical, so the two paths are interchangeable/resumable.
+# NOTE: the parquet path caps html at 1 MB before body_strip; prep does not, so
+# scores can differ marginally on enormous pages (far below the R.99 threshold's
+# sensitivity). Provenance is recorded in the runbook.
+
+
+def _init_worker_prep(model_path, prep_root, thr, parts):
+    global _MODEL, _PREP, _THR, _PARTS
+    _MODEL = fasttext.load_model(model_path)
+    _PREP, _THR, _PARTS = prep_root, thr, parts
+
+
+def score_shard_from_prep(i):
+    part = f"{_PARTS}/surv_{i:05d}.txt.gz"
+    fs = fsspec.filesystem("gcs")
+    if fs.exists(part.replace("gs://", "")):
+        return i, -1, -1, -1, -1
+    src = f"{_PREP}/train/data-{i:05d}.txt.gz"
+    if not fs.exists(src.replace("gs://", "")):
+        return i, 0, 0, 0, 0
+    kp = kn = sp = sn = 0
+    tmp = f"/tmp/surv_{i:05d}.txt.gz"
+    import gzip as _gz
+
+    with (
+        _gz.open(tmp, "wt", encoding="utf-8") as out,
+        fsspec.open(src, "rt", compression="gzip", encoding="utf-8") as f,
+    ):
+        for line in f:
+            line = line.rstrip("\n")
+            if not line:
+                continue
+            label, _, text = line.partition(" ")
+            is_pos = label == LABEL_USEFUL
+            if is_pos:
+                sp += 1
+            else:
+                sn += 1
+            if predict_useful_prob(_MODEL, text) >= _THR:
+                out.write(line + "\n")
+                if is_pos:
+                    kp += 1
+                else:
+                    kn += 1
+    with open(tmp, "rb") as srcf, fsspec.open(part, "wb") as dst:
+        dst.write(srcf.read())
     os.remove(tmp)
     return i, kp, kn, sp, sn
 
@@ -115,6 +186,13 @@ def main():
         "held-out hashes onto the random pool's sorted-hash order). Index-range disjointness does NOT hold.",
     )
     ap.add_argument("--target-survivors", type=int, default=2_460_000)
+    ap.add_argument("--num-shards", type=int, default=3000, help="Dataset shard count (fills -of-NNNNN in paths).")
+    ap.add_argument(
+        "--from-prep",
+        default="",
+        help="FAST PATH: score {root}/train/data-NNNNN.txt.gz prep shards instead of raw_html parquet "
+        "(~6x less I/O, no regex). Pass the full_prep_<rep> root.",
+    )
     ap.add_argument("--workers", type=int, default=16)
     args = ap.parse_args()
 
@@ -127,27 +205,61 @@ def main():
     shards = [i for i in range(args.shard_start, args.shard_end) if i not in excluded]
     if excluded:
         log.info("EXCLUDING %d shards (val/test leakage guard): %s", len(excluded), sorted(excluded))
-    log.info("scoring %d shards with %d spawn-workers, threshold %.4f -> parts %s",
-             len(shards), args.workers, args.threshold, parts)
+    log.info(
+        "scoring %d shards with %d spawn-workers, threshold %.4f -> parts %s",
+        len(shards),
+        args.workers,
+        args.threshold,
+        parts,
+    )
 
     kp = kn = sp = sn = 0
     done = 0
     ctx = mp.get_context("spawn")  # fresh processes -> no inherited gRPC/gcsfs fork breakage
-    with ctx.Pool(args.workers, initializer=_init_worker,
-                  initargs=(local, args.data_base, args.threshold, parts)) as pool:
-        for i, a, b, c, d in pool.imap_unordered(score_shard, shards):
+    if args.from_prep:
+        init = _init_worker_prep
+        initargs = (local, args.from_prep.rstrip("/"), args.threshold, parts)
+        fn = score_shard_from_prep
+    else:
+        init = _init_worker
+        initargs = (local, args.data_base, args.threshold, parts, args.num_shards)
+        fn = score_shard
+    with ctx.Pool(args.workers, initializer=init, initargs=initargs) as pool:
+        for i, a, b, c, d in pool.imap_unordered(fn, shards):
             done += 1
             if a < 0:
-                log.info("shard %d already done (skipped)", i); continue
-            kp += a; kn += b; sp += c; sn += d
+                log.info("shard %d already done (skipped)", i)
+                continue
+            kp += a
+            kn += b
+            sp += c
+            sn += d
             tot = kp + kn
-            log.info("shard %d done (%d/%d) | survivors+=%d cum=%d pos=%d neg=%d surv-rate=%.1f%% useful-frac=%.1f%%",
-                     i, done, len(shards), a + b, tot, kp, kn, 100 * tot / max(1, sp + sn), 100 * kp / max(1, tot))
+            log.info(
+                "shard %d done (%d/%d) | survivors+=%d cum=%d pos=%d neg=%d surv-rate=%.1f%% useful-frac=%.1f%%",
+                i,
+                done,
+                len(shards),
+                a + b,
+                tot,
+                kp,
+                kn,
+                100 * tot / max(1, sp + sn),
+                100 * kp / max(1, tot),
+            )
             if tot >= args.target_survivors:
                 log.info("hit target %d survivors at %d shards — stopping", args.target_survivors, done)
-                pool.terminate(); break
-    log.info("DONE this-run survivors=%d pos=%d neg=%d neg:pos=%.2f:1 useful-frac=%.1f%% -> parts in %s",
-             kp + kn, kp, kn, kn / max(1, kp), 100 * kp / max(1, kp + kn), parts)
+                pool.terminate()
+                break
+    log.info(
+        "DONE this-run survivors=%d pos=%d neg=%d neg:pos=%.2f:1 useful-frac=%.1f%% -> parts in %s",
+        kp + kn,
+        kp,
+        kn,
+        kn / max(1, kp),
+        100 * kp / max(1, kp + kn),
+        parts,
+    )
 
 
 if __name__ == "__main__":

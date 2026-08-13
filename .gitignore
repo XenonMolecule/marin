@@ -239,6 +239,8 @@ scr/*
 
 # Dashboard runtime cache and large manifest data
 experiments/baseline_collection/.dashboard_cache.json
+experiments/baseline_collection/.dashboard_legacy_num_batches.json
+experiments/baseline_collection/.dashboard_num_batches_*.json
 # dclm_400m_1x_warcs.txt is the canonical 10,364-WARC pool manifest used for
 # high_quality full-pool extraction. It must be tracked so it bundles into Iris
 # job workspaces, exactly like baseline_warcs_3000.txt. Its no-trailing-newline
@@ -260,3 +262,10 @@ paper_*_draft.txt
 
 # Large pipeline-planner web data (~285MB tracked shards) — exclude from iris job bundles (worker never needs it)
 experiments/baseline_collection/pipeline_planner/web/data/
+
+# spec_explorer runtime cache (eval matrix, coverage duckdb, saved searches)
+experiments/spec_explorer/cache/
+experiments/spec_explorer/**/.*_cache.json
+
+# Spec explorer local cache (GBs of downloaded shards)
+experiments/spec_explorer/cache/

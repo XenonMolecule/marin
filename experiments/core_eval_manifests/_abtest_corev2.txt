@@ -1,0 +1,2 @@
+run_name,region,output_path
+olmix-dclm_10k-s42-K363-i0001-wccc4a18e,us-east5,gs://marin-us-east5/checkpoints/olmix-swarm/olmix-dclm_10k-s42-K363-i0001-wccc4a18e

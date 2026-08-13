@@ -64,6 +64,20 @@ DEFAULT_BATCH_SIZE = 500
 # so each spec has its own registry and they don't cross-contaminate.
 DEFAULT_COMPLETED_REGISTRY_PREFIX = "gs://marin-us-central1/documents/baseline_llm_extraction/_completed"
 
+# One google-cloud-storage client per process. Claim probes used to build a
+# fresh Client() per call, which re-ran credential discovery and opened a new
+# HTTPS pool for every probe — pure overhead at fleet scale.
+_gcs_storage_client = None
+
+
+def _gcs_client():
+    global _gcs_storage_client
+    if _gcs_storage_client is None:
+        from google.cloud import storage as gcs_storage
+
+        _gcs_storage_client = gcs_storage.Client()
+    return _gcs_storage_client
+
 
 def _registry_prefix_for(output_subdir: str) -> str:
     """Build the registry prefix for a given output_subdir, in marin-us-central1."""
@@ -80,27 +94,44 @@ def _register_completed_warc(warc_hash: str, registry_prefix: str) -> None:
         logger.warning("Failed to write completion registry for %s: %s", warc_hash, e)
 
 
+# Registry freshness: gcsfs caches directory listings for the life of the
+# process, so a plain ls() after the first call NEVER sees completions written
+# by other workers — the remaining-WARC list stops shrinking and every worker
+# re-probes long-finished WARCs forever (billions of class-B GETs fleet-wide).
+# We force a fresh listing, throttled per prefix so spinning workers don't turn
+# the registry itself into a LIST hotspot.
+REGISTRY_FRESH_SECONDS = 60.0
+_registry_cache: dict[str, tuple[float, set[str]]] = {}
+
+
 def _load_completed_registry(registry_prefix: str) -> set[str]:
     """List the completed registry directory and return set of done hashes.
 
     Single list operation against one GCS bucket — much cheaper than scanning
-    6 regional buckets. Returns empty set on any error (graceful fallback to
-    per-WARC checks).
+    6 regional buckets. The listing bypasses gcsfs's process-lifetime dircache
+    (see REGISTRY_FRESH_SECONDS above) but is served from a local cache for
+    REGISTRY_FRESH_SECONDS between real listings. Returns the last good result
+    (or empty set) on error — graceful fallback to per-WARC checks.
     """
+    now = time.time()
+    cached = _registry_cache.get(registry_prefix)
+    if cached is not None and now - cached[0] < REGISTRY_FRESH_SECONDS:
+        return cached[1]
     fs = fsspec.filesystem("gcs")
     prefix = registry_prefix.replace("gs://", "")
     try:
-        paths = fs.ls(prefix)
+        paths = fs.ls(prefix, refresh=True)
         hashes = set()
         for p in paths:
             basename = p.rsplit("/", 1)[-1]
             if basename.startswith("data-"):
                 hashes.add(basename[5:])
         logger.info("Loaded completed registry from %s: %d WARCs", registry_prefix, len(hashes))
+        _registry_cache[registry_prefix] = (now, hashes)
         return hashes
     except Exception as e:
         logger.warning("Failed to load completed registry %s: %s (falling back to per-WARC checks)", registry_prefix, e)
-        return set()
+        return cached[1] if cached is not None else set()
 
 
 # ---------------------------------------------------------------------------
@@ -116,8 +147,6 @@ def _steal_claim_path(warc_dir: str, batch_idx: int) -> str:
 
 def _claim_batch_for_stealing(warc_dir: str, batch_idx: int) -> bool:
     """Atomically claim a single batch for stealing. Returns True if we won."""
-    from google.cloud import storage as gcs_storage
-
     path = _steal_claim_path(warc_dir, batch_idx)
     if not path.startswith("gs://"):
         # Local filesystem fallback (for testing)
@@ -131,8 +160,7 @@ def _claim_batch_for_stealing(warc_dir: str, batch_idx: int) -> bool:
     parts = path.replace("gs://", "").split("/", 1)
     bucket_name, blob_path = parts[0], parts[1]
 
-    client = gcs_storage.Client()
-    bucket = client.bucket(bucket_name)
+    bucket = _gcs_client().bucket(bucket_name)
     blob = bucket.blob(blob_path)
 
     try:
@@ -140,30 +168,66 @@ def _claim_batch_for_stealing(warc_dir: str, batch_idx: int) -> bool:
         return True
     except Exception as e:
         if "conditionNotMet" in str(e) or "412" in str(e):
+            # A marker already exists. Reclaim it if it is STALE (a dead stealer's
+            # orphan); otherwise a live worker holds it. Without this, an orphaned
+            # marker permanently blocks the batch (no stale override existed).
+            try:
+                blob.reload()
+                if blob.updated is not None and time.time() - blob.updated.timestamp() > STEAL_CLAIM_STALE_SECONDS:
+                    blob.upload_from_string("")  # overwrite = reclaim the stale marker
+                    logger.info("Reclaimed stale steal-marker for batch %d", batch_idx)
+                    return True
+            except Exception:
+                pass
             return False
         raise
 
 
 def _list_steal_claims(warc_dir: str) -> set[int]:
-    """List all batch indices that have been claimed for stealing."""
+    """Batch indices with a FRESH steal-claim.
+
+    STALE claims (older than STEAL_CLAIM_STALE_SECONDS) are IGNORED so a dead
+    stealer's orphaned ``_stealing`` marker cannot permanently wedge a batch — on
+    giant WARCs that failure mode leaves the WARC one batch short forever. A marker
+    whose age can't be determined is treated as fresh (conservative — never worse
+    than the old always-exclude behavior).
+    """
+    from datetime import datetime, timezone
+
     fs = fsspec.filesystem("gcs") if warc_dir.startswith("gs://") else fsspec.filesystem("file")
     steal_dir = f"{warc_dir}/_stealing"
     if warc_dir.startswith("gs://"):
         steal_dir = steal_dir.replace("gs://", "")
     try:
-        paths = fs.ls(steal_dir)
-    except (FileNotFoundError, Exception):
+        entries = fs.ls(steal_dir, detail=True)
+    except Exception:
         return set()
-    claimed = set()
-    for p in paths:
-        basename = p.rsplit("/", 1)[-1]
-        if basename.startswith("batch_"):
+    now = datetime.now(timezone.utc)
+    fresh: set[int] = set()
+    for e in entries:
+        name = e.get("name") if isinstance(e, dict) else e
+        basename = str(name).rsplit("/", 1)[-1]
+        if not basename.startswith("batch_"):
+            continue
+        try:
+            idx = int(basename.split("_")[1])
+        except (IndexError, ValueError):
+            continue
+        ts = e.get("updated") or e.get("timeCreated") if isinstance(e, dict) else None
+        age = None
+        if isinstance(ts, str):
             try:
-                idx = int(basename.split("_")[1])
-                claimed.add(idx)
-            except (IndexError, ValueError):
-                continue
-    return claimed
+                ts = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+            except ValueError:
+                ts = None
+        if ts is not None:
+            try:
+                age = (now - ts).total_seconds()
+            except (TypeError, ValueError):
+                age = None
+        if age is None or age < STEAL_CLAIM_STALE_SECONDS:
+            fresh.add(idx)
+    return fresh
 
 
 def _batch_exists_any_region(warc_hash: str, batch_idx: int, output_subdir: str) -> bool:
@@ -192,7 +256,8 @@ def _find_stealable_batches(
 
     Returns batch indices that are:
     - Not already completed (no batch file in any region)
-    - Not already steal-claimed by another worker
+    - Not FRESHLY steal-claimed (stale/orphaned claims are reclaimable, so they
+      are treated as stealable — see ``_list_steal_claims``)
     Ordered from highest to lowest (reverse iteration).
     """
     completed = _find_completed_batches_all_regions(warc_hash, output_subdir)
@@ -215,6 +280,7 @@ def _process_warc_steal(
     system_message: str,
     registry_prefix: str,
     batch_size: int = DEFAULT_BATCH_SIZE,
+    pipeline: Any = None,
 ) -> dict:
     """Process uncompleted batches of a WARC in steal mode (reverse order).
 
@@ -234,7 +300,11 @@ def _process_warc_steal(
     if not records:
         return {"warc": warc_path, "status": "steal_empty"}
 
-    records = _filter_by_length(records, MAX_DOC_TOKENS)
+    if pipeline is None:
+        # Length gate belongs to the single-greedy-call path only: the multi-call
+        # pipelines chunk long docs by design, and their certification included
+        # the long-form tail this gate would silently exclude (315KB/595KB docs).
+        records = _filter_by_length(records, MAX_DOC_TOKENS)
     if not records:
         return {"warc": warc_path, "status": "steal_empty"}
 
@@ -303,15 +373,23 @@ def _process_warc_steal(
             len(batch),
         )
 
-        output_records, kept, filtered, token_stats = _process_batch(
-            batch, llm, sampling_params, tokenizer, template, system_message
-        )
+        if pipeline is not None:
+            output_records, kept, filtered, token_stats, profile = _process_batch_pipeline(
+                batch, llm, tokenizer, pipeline
+            )
+        else:
+            output_records, kept, filtered, token_stats = _process_batch(
+                batch, llm, sampling_params, tokenizer, template, system_message
+            )
+            profile = None
         total_kept += kept
         total_filtered += filtered
 
         batch_path = _batch_output_path(warc_dir, batch_idx)
         _write_batch_output(batch_path, output_records)
         _write_token_stats(warc_dir, batch_idx, token_stats)
+        if profile is not None:
+            _write_batch_profile(warc_dir, batch_idx, profile)
         batches_stolen += 1
 
         logger.info(
@@ -506,8 +584,6 @@ def _claim_warc_atomic(warc_dir: str, stale_hours: float = 3.0) -> bool:
     """
     import datetime
 
-    from google.cloud import storage as gcs_storage
-
     claim_path = f"{warc_dir}/_claimed"
     # Parse bucket and blob path from gs:// URL
     if not claim_path.startswith("gs://"):
@@ -522,8 +598,7 @@ def _claim_warc_atomic(warc_dir: str, stale_hours: float = 3.0) -> bool:
     parts = claim_path.replace("gs://", "").split("/", 1)
     bucket_name, blob_path = parts[0], parts[1]
 
-    client = gcs_storage.Client()
-    bucket = client.bucket(bucket_name)
+    bucket = _gcs_client().bucket(bucket_name)
     blob = bucket.blob(blob_path)
 
     now = time.time()
@@ -596,6 +671,45 @@ def _refresh_claim(warc_dir: str) -> None:
                 }
             )
         )
+
+
+def _list_fresh_claims(claim_root: str, stale_hours: float) -> set[str]:
+    """WARC hashes with a FRESH ``_claimed`` object under ``claim_root``, from one listing.
+
+    Claim layout is ``{claim_root}/data-{hash}/_claimed`` (see ``_claim_warc_atomic``).
+    A fresh claim cannot be won, so callers iterating a manifest can skip the
+    per-WARC conditional-write probe (one write RPC + one metadata GET against the
+    central bucket, per WARC, per pass, per worker) for every hash in this set.
+    Stale or missing claims still go through ``_claim_warc_atomic``, which remains
+    the only authority on winning. ``fs.find`` bypasses gcsfs's process-lifetime
+    dircache, so the result is always current. Returns empty set on error, which
+    degrades to the old probe-everything behavior.
+    """
+    import datetime
+
+    fs = fsspec.filesystem("gcs")
+    now = time.time()
+    fresh: set[str] = set()
+    try:
+        entries = fs.find(claim_root.replace("gs://", ""), detail=True)
+    except Exception as e:
+        logger.warning("Failed to list claims under %s: %s", claim_root, e)
+        return fresh
+    for path, info in entries.items():
+        parts = path.rstrip("/").rsplit("/", 2)
+        if len(parts) < 3 or parts[-1] != "_claimed" or not parts[-2].startswith("data-"):
+            continue
+        mtime = info.get("updated") or info.get("timeCreated") or info.get("mtime")
+        if isinstance(mtime, str):
+            try:
+                mtime = datetime.datetime.fromisoformat(mtime.replace("Z", "+00:00"))
+            except ValueError:
+                mtime = None
+        age = now - mtime.timestamp() if hasattr(mtime, "timestamp") else None
+        # Unknown age counts as fresh — at worst a stale reclaim waits one more pass.
+        if age is None or age < stale_hours * 3600:
+            fresh.add(parts[-2][5:])
+    return fresh
 
 
 def _should_yield_to_older_claim(
@@ -867,6 +981,82 @@ def _process_batch(
     return output_records, kept, filtered, token_stats
 
 
+def _process_batch_pipeline(
+    batch: list[dict], llm: Any, tokenizer: Any, pipeline: Any
+) -> tuple[list[dict], int, int, list[dict], dict]:
+    """Process a GROUP of records through a multi-call extraction pipeline.
+
+    Mirrors _process_batch's return contract (output_records, kept, filtered,
+    token_stats) plus a per-group timing/counts profile. Only KEEP docs are
+    written, so consolidate/dedup/tokenize see the same kept-doc schema as the
+    single-call path; drops/errors are counted, not persisted.
+    """
+    from experiments.baseline_collection.pipelines.offline_chat import make_vllm_chat_fn
+    from experiments.baseline_collection.pipelines.one_call import run_one_call
+    from experiments.baseline_collection.pipelines.pipeline_specs import OneCallPipeline, make_formatter
+    from experiments.baseline_collection.pipelines.scheduler_base import DECISION_ERROR, DECISION_KEEP
+    from experiments.baseline_collection.pipelines.token_budget import QwenTokenCodec
+    from experiments.baseline_collection.pipelines.two_stage import run_two_stage
+
+    codec = QwenTokenCodec(tokenizer)
+    formatter = make_formatter()
+    chat_fn = make_vllm_chat_fn(llm)
+    if isinstance(pipeline, OneCallPipeline):
+        results, profile = run_one_call(batch, chat_fn, codec, formatter, pipeline)
+    else:
+        results, profile = run_two_stage(batch, chat_fn, codec, formatter, pipeline)
+
+    output_records: list[dict] = []
+    token_stats: list[dict] = []
+    kept = 0
+    filtered = 0
+    for record, res in zip(batch, results, strict=True):
+        token_stats.append(
+            {"status": res.decision, "completion_tokens": res.completion_tokens, "num_chunks": res.num_chunks}
+        )
+        if res.decision == DECISION_KEEP:
+            kept += 1
+            warc_file = record.get("metadata", {}).get("warc_file", "")
+            output_records.append(
+                {
+                    "text": res.text,
+                    "url": record.get("url", ""),
+                    # Join keys for DCLM / Nemotron / FineWeb-Edu filtering
+                    "warc_record_id": _normalize_record_id(record.get("id", "")),
+                    "warc_file": warc_file,
+                    "snapshot": _extract_snapshot(warc_file),
+                    "pipeline_id": pipeline.pipeline_id,
+                    "num_chunks": res.num_chunks,
+                }
+            )
+        elif res.decision == DECISION_ERROR:
+            # Errors are NOT drops: record identifiers in the timing sidecar so
+            # they are auditable and re-runnable, instead of vanishing into the
+            # filtered count.
+            filtered += 1
+            profile.setdefault("error_docs", []).append(
+                {
+                    "warc_record_id": _normalize_record_id(record.get("id", "")),
+                    "url": record.get("url", ""),
+                    "error": res.error,
+                }
+            )
+        else:
+            filtered += 1
+    return output_records, kept, filtered, token_stats, profile
+
+
+def _write_batch_profile(warc_dir: str, batch_idx: int, profile: dict) -> None:
+    """Write the per-group pipeline timing/counts profile as a JSON sidecar
+    (batch_NNNN.timing.json), at the same checkpoint boundary as the batch output."""
+    path = f"{warc_dir}/batch_{batch_idx:04d}.timing.json"
+    try:
+        with fsspec.open(path, "w") as f:
+            json.dump(profile, f)
+    except Exception as e:
+        logger.warning("Failed to write timing profile for batch %d: %s", batch_idx, e)
+
+
 def _process_warc(
     warc_path: str,
     output_dir: str,
@@ -878,8 +1068,14 @@ def _process_warc(
     system_message: str,
     registry_prefix: str,
     batch_size: int = DEFAULT_BATCH_SIZE,
+    pipeline: Any = None,
 ) -> dict:
-    """Download one WARC, extract via LLM with per-batch checkpointing."""
+    """Download one WARC, extract via LLM with per-batch checkpointing.
+
+    When ``pipeline`` is set, each batch (=checkpoint group) runs the multi-call
+    pipeline instead of the single greedy call; the checkpoint/claim/resume/steal
+    machinery is unchanged, so a preemption still redoes at most one group.
+    """
     h = _warc_path_hash(warc_path)
     warc_dir = f"{output_dir}/data-{h}"
 
@@ -918,9 +1114,11 @@ def _process_warc(
 
     logger.info("Downloaded %d records from %s", len(records), warc_path)
 
-    # Filter by length (instant)
-    records = _filter_by_length(records, MAX_DOC_TOKENS)
-    logger.info("%d records after length filter", len(records))
+    # Filter by length (instant). Single-greedy-call path ONLY: the multi-call
+    # pipelines chunk long docs by design and were certified WITH the long tail.
+    if pipeline is None:
+        records = _filter_by_length(records, MAX_DOC_TOKENS)
+        logger.info("%d records after length filter", len(records))
     if not records:
         _write_done_marker(warc_dir, {"status": "all_filtered", "records": 0})
         _register_completed_warc(h, registry_prefix)
@@ -960,10 +1158,16 @@ def _process_warc(
             "Batch %d/%d (%d records, offset %d-%d)...", batch_idx + 1, num_batches, len(batch), batch_start, batch_end
         )
 
-        # Process batch
-        output_records, kept, filtered, token_stats = _process_batch(
-            batch, llm, sampling_params, tokenizer, template, system_message
-        )
+        # Process batch (multi-call pipeline when configured, else single greedy call)
+        if pipeline is not None:
+            output_records, kept, filtered, token_stats, profile = _process_batch_pipeline(
+                batch, llm, tokenizer, pipeline
+            )
+        else:
+            output_records, kept, filtered, token_stats = _process_batch(
+                batch, llm, sampling_params, tokenizer, template, system_message
+            )
+            profile = None
         total_kept += kept
         total_filtered += filtered
 
@@ -971,6 +1175,8 @@ def _process_warc(
         batch_path = _batch_output_path(warc_dir, batch_idx)
         _write_batch_output(batch_path, output_records)
         _write_token_stats(warc_dir, batch_idx, token_stats)
+        if profile is not None:
+            _write_batch_profile(warc_dir, batch_idx, profile)
 
         # Refresh claim so other jobs know we're still alive (3h stale timeout)
         _refresh_claim(warc_dir)
@@ -1091,13 +1297,48 @@ def main():
     )
     parser.add_argument("--start", type=int, default=0, help="Start index into manifest (inclusive)")
     parser.add_argument("--end", type=int, default=None, help="End index into manifest (exclusive). Default: all.")
+    parser.add_argument(
+        "--pipeline",
+        default=None,
+        help=(
+            "Multi-call pipeline id (key in pipelines.PIPELINES), e.g. llm_pipeline_v1 or "
+            "llm_simple_v1. Mutually exclusive with --spec. Writes to "
+            "documents/baseline_llm_extraction/{pipeline_id} with a per-group timing sidecar."
+        ),
+    )
+    parser.add_argument(
+        "--group-size",
+        type=int,
+        default=None,
+        help=(
+            "Docs per checkpoint group for --pipeline (defaults to --batch-size). Smaller = "
+            "less redo on preemption, larger = fuller offline batches."
+        ),
+    )
     args = parser.parse_args()
+    if args.pipeline and args.spec:
+        parser.error("--pipeline and --spec are mutually exclusive")
 
     # Resolve spec-driven config: output subdir, prompts, and registry prefix.
     # Legacy mode (no --spec) keeps the hardcoded prompt below and writes to the
     # bare --output-subdir, registering completions to the unprefixed registry.
     spec_obj = None
-    if args.spec:
+    pipeline_obj = None
+    if args.pipeline:
+        from experiments.baseline_collection.pipelines.pipeline_specs import get_pipeline
+
+        pipeline_obj = get_pipeline(args.pipeline)
+        output_subdir = args.output_subdir or f"documents/baseline_llm_extraction/{pipeline_obj.pipeline_id}"
+        registry_prefix = _registry_prefix_for(output_subdir)
+        if args.group_size:
+            args.batch_size = args.group_size
+        logger.info(
+            "Pipeline: %s (frozen cert %s), group-size=%d",
+            pipeline_obj.pipeline_id,
+            pipeline_obj.source_cert,
+            args.batch_size,
+        )
+    elif args.spec:
         from experiments.baseline_collection.extraction_specs import LEGACY_SPEC_ID, get_spec
 
         spec_obj = get_spec(args.spec)
@@ -1165,7 +1406,12 @@ def main():
     logger.info("Engine loaded in %.1fs", time.monotonic() - t0)
 
     # Extraction prompt: from spec registry when --spec is set, else legacy hardcoded.
-    if spec_obj is not None:
+    # A --pipeline run builds its own messages from the vendored SFT templates and
+    # ignores template/system_message entirely.
+    if pipeline_obj is not None:
+        system_message = ""
+        template = ""
+    elif spec_obj is not None:
         system_message = spec_obj.system_message
         template = spec_obj.extraction_template
     else:
@@ -1267,6 +1513,19 @@ def main():
     STEAL_PATIENCE_TIER1 = 10
     STEAL_PATIENCE_TIER2 = 50
     STEAL_PATIENCE_TIER3 = 100
+    # Negative-result caches. A WARC observed fresh-claimed by another worker
+    # costs ~13 cross-region GETs to re-discover, and a WARC with nothing to
+    # steal costs a full ~1GB download to re-discover — neither answer changes
+    # for a while, so remember it. TTLs sit well under the 3h claim-stale
+    # window, so reclaiming a dead worker's WARC is delayed by at most the TTL.
+    CLAIMED_RECHECK_SECONDS = 600.0
+    STEAL_RECHECK_SECONDS = 900.0
+    # A steal cycle samples a few candidates instead of sweeping the whole
+    # manifest (each unsuccessful candidate = one full WARC download), and
+    # unsuccessful cycles sleep instead of immediately re-downloading.
+    STEAL_CANDIDATES_PER_CYCLE = 8
+    STEAL_MAX_EMPTY_CYCLES = 5
+    STEAL_CYCLE_SLEEP_SECONDS = 60.0
 
     import random as random_module
 
@@ -1274,6 +1533,9 @@ def main():
     completed_registry = _load_completed_registry(registry_prefix)
     total_warcs = len(warcs)
     steal_mode = False
+    recently_claimed: dict[str, float] = {}
+    steal_exhausted: dict[str, float] = {}
+    no_steal_cycles = 0
 
     def _get_remaining():
         return [w for w in warcs if _warc_path_hash(w) not in completed_registry]
@@ -1325,14 +1587,21 @@ def main():
             steal_mode = True
 
         if steal_mode:
-            # Pick a random in-progress WARC to steal from
-            candidates = [w for w in warcs if _warc_path_hash(w) not in completed_registry]
+            # Pick a few random in-progress WARCs to steal from, skipping ones
+            # that recently had nothing stealable (each probe is a download).
+            now = time.time()
+            candidates = [
+                w
+                for w in warcs
+                if _warc_path_hash(w) not in completed_registry
+                and now - steal_exhausted.get(_warc_path_hash(w), 0.0) > STEAL_RECHECK_SECONDS
+            ]
             if not candidates:
                 logger.info("No WARCs left to steal from. Exiting.")
                 break
             random_module.shuffle(candidates)
             stole_something = False
-            for steal_target in candidates:
+            for steal_target in candidates[:STEAL_CANDIDATES_PER_CYCLE]:
                 logger.info("Steal: trying %s", steal_target)
                 s = _process_warc_steal(
                     steal_target,
@@ -1345,19 +1614,34 @@ def main():
                     system_message,
                     registry_prefix,
                     batch_size=args.batch_size,
+                    pipeline=pipeline_obj,
                 )
                 stats.append(s)
                 logger.info("Steal result: %s", s)
                 if s.get("batches_stolen", 0) > 0:
                     stole_something = True
                     break  # Go back to main loop — try claiming again first
-                # If nothing to steal on this WARC, try next
+                # Nothing stealable on this WARC right now — don't re-download
+                # it for STEAL_RECHECK_SECONDS.
+                steal_exhausted[_warc_path_hash(steal_target)] = time.time()
             if not stole_something:
-                logger.info("No stealable batches found on any WARC. Exiting.")
-                break
+                no_steal_cycles += 1
+                if len(candidates) <= STEAL_CANDIDATES_PER_CYCLE or no_steal_cycles >= STEAL_MAX_EMPTY_CYCLES:
+                    logger.info("No stealable batches found (%d empty steal cycles). Exiting.", no_steal_cycles)
+                    break
+                logger.info(
+                    "Steal: nothing stealable in %d sampled candidates (%d eligible); sleeping %.0fs",
+                    STEAL_CANDIDATES_PER_CYCLE,
+                    len(candidates),
+                    STEAL_CYCLE_SLEEP_SECONDS,
+                )
+                time.sleep(STEAL_CYCLE_SLEEP_SECONDS)
+                completed_registry = _load_completed_registry(registry_prefix)
+                continue
             # After a successful steal, reset and try forward claiming again
             steal_mode = False
             consecutive_failures = 0
+            no_steal_cycles = 0
             completed_registry = _load_completed_registry(registry_prefix)
             remaining = _get_remaining()
             warc_idx = 0
@@ -1368,6 +1652,13 @@ def main():
             break
         warc = remaining[warc_idx]
         warc_idx += 1
+
+        # Skip WARCs recently observed claimed by another worker without
+        # re-probing GCS — the claim can't have gone stale inside the TTL.
+        seen_claimed_at = recently_claimed.get(_warc_path_hash(warc))
+        if seen_claimed_at is not None and time.time() - seen_claimed_at < CLAIMED_RECHECK_SECONDS:
+            consecutive_failures += 1
+            continue
 
         logger.info("=== WARC %d/%d (of %d remaining) ===", warc_idx, len(remaining), len(remaining))
         s = _process_warc(
@@ -1381,10 +1672,13 @@ def main():
             system_message,
             registry_prefix,
             batch_size=args.batch_size,
+            pipeline=pipeline_obj,
         )
         stats.append(s)
         if s["status"] != "skipped":
             logger.info("Result: %s", s)
+        if s["status"] == "claimed":
+            recently_claimed[_warc_path_hash(warc)] = time.time()
 
         # Track whether we're making progress (finding unclaimed WARCs)
         if s["status"] in ("done", "partial", "empty", "all_filtered"):

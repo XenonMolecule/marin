@@ -1,0 +1,49 @@
+You are given the text of a web page. Decide whether it clears the EXTREME quality bar below. This is a judgement only — do not extract or reproduce the page.
+
+The text is a mechanical rendering of the page: a forum thread, Q&A page, or comment section appears as a flat sequence of posts — usernames and timestamps followed by each post's text, with paragraph structure flattened. Judge the DISCUSSION those posts form, not the flatness of the rendering: Gate B's prose requirement is met by the posts' combined substantive text, and a substantive multi-post discussion is not "casual" merely because its rendering looks like short lines. Navigation labels and UI text in the rendering are page furniture — ignore them when judging. Likewise, mathematical notation renders here as flattened runs of symbols — those runs ARE mathematical exposition for Gate B's exception, not junk; and a research paper's abstract often sits below rendered site chrome — find the abstract and judge it, not the chrome around it.
+
+1. **EXTREME quality bar — keep almost nothing.** This filter is designed to retain only the very best educational and informative content; only about 1 in 10 pages should pass. The **default is to output [NO_USEFUL_CONTENT]**.
+
+   **HARD GATES — check first, in order. If any gate fails, immediately output [NO_USEFUL_CONTENT] and stop.**
+   - **Gate A — Language.** Is the body of the page written primarily in English? If the main prose is in any other language (French, Spanish, German, Chinese, Russian, etc.), output [NO_USEFUL_CONTENT]. Quoted phrases, names, citations, or short snippets in another language are fine; a page whose main prose is non-English is not — even if the topic looks substantive.
+   - **Gate B — Prose depth.** Are there roughly 300 or more words of real *prose* — flowing sentences and paragraphs that explain, argue, or teach? Table cells, formula tokens, code-only listings, navigation labels, whois fields, stat lines, and metadata do NOT count toward the word budget. A page that hits 300 "words" only by counting structured-data fields fails this gate. **Exception — substance in non-prose forms.** Three content types carry their teaching outside flowing prose and pass this gate with less than 300 prose words, provided the content is complete and substantive: (a) mathematical exposition whose formulas, derivations, and worked steps ARE the content; (b) a research-paper abstract page presenting a complete abstract of substantial density; (c) practice problems or exam material accompanied by worked solutions or answer explanations. A bare formula, a title-only abstract stub, or an answer key without explanations still fails.
+
+   A page that clears both gates is kept ONLY if all four of these are also true:
+
+   - **Teaches the reader — or is literature.** The page explains a concept, mechanism, method, or topic; develops an argument with evidence and examples; reports original analysis; delivers substantive technical or instructional material; **or is fiction/literary narrative of real craft (see the fiction category below — literature earns its place by its writing, not by teaching)**. It must convey real knowledge of the world or real literary value, not just headlines, facts, or summaries.
+   - **Carefully written.** Clear, structured, professional or academic-quality prose. Not casual, not fragmentary, not marketing copy, not auto-generated, not template-filled.
+   - **Self-contained value.** A reader who lands here learns meaningfully from this page alone — not from clicking through to something else.
+   - **Not matched by any FAILS bullet below.**
+
+   **Walk through each FAILS bullet below in order**, checking whether the page matches it. If any matches, output [NO_USEFUL_CONTENT] and do not extract.
+
+   Categories that typically qualify (still subject to all criteria above):
+   - Long-form journalism with original reporting and analysis — including editorial tech journalism or product reporting that includes quotes, context, history, or analysis (even when the subject is a company's product launch)
+   - Educational or explanatory articles (science, math, history, engineering, medicine, philosophy, economics, etc.)
+   - Tutorials, how-tos, and documentation with real teaching — instructions plus the reasoning behind them
+   - Encyclopedia and reference entries written with substantive prose
+   - **Substantive discussion threads — technical or not** — e.g., a Stack Overflow question with a thorough accepted answer, a mailing-list discussion working through a real problem, a history or law or hobbyist forum thread where participants bring real knowledge and the discussion develops its topic to a meaningful conclusion. Conversational tone does not disqualify a thread; judge what the discussion BUILDS, not how informally it speaks. The "casual forum threads" FAILS bullet does NOT apply when the discussion develops its topic.
+   - Research papers, white papers, technical writeups
+   - Essays and analyses that develop an argument with evidence — including substantive opinion or commentary on a personal blog or social platform like Tumblr/Medium/Substack
+   - Code accompanied by genuine teaching, not just a snippet
+   - Technical blogs sharing real domain expertise
+   - Institutional or organizational descriptions with substantive prose (academic program pages with curriculum and outcomes, organizational reports, conference or event summaries with real narrative)
+   - Religious or scriptural texts presenting substantive narrative or doctrine (e.g., a Bible chapter, Quran sura, philosophical canon — numbered-verse format is fine)
+   - **Fiction and literary narrative of real craft** — complete stories, novel chapters, serialized fiction installments, and literary prose whose writing is skilled and whose narrative is substantial. Judge it as literature, not as instruction: fiction does not need to teach a concept; it needs to be genuinely well-written and substantial. Adult themes do not disqualify fiction, but text that exists to be sexually explicit is not literature and fails. Fragments, writing-exercise scraps, and story stubs still fail.
+
+   Categories that FAIL — filter even if the writing is fine:
+   - **News briefs, sports recaps, and transaction roundups** — "X happened, said Y" reporting without analysis, depth, or context. Includes local sports recaps ("West Side beat Cumberland 14-4"), team transaction logs ("Signed pitcher X to a minor-league contract"), and short news items even when several are stitched together on one page. A news article that goes beyond the event — developing background, quotes woven into narrative, or consequences analyzed — is journalism, not a brief; brevity alone does not make a brief, and analysis does not stop being analysis because its subject is timely.
+   - **Personal lifestyle or diary blogging** — daily-life updates, travelogues, opinion pieces without intellectual substance. (A personal blog with substantive analysis or argument is fine — judge by content, not platform.)
+   - **Light reviews — including aggregator pages of light reviews** — "I tried it, it's good" without genuine analysis or comparison. A page that strings together several short product blurbs is still light reviews, not substantive content.
+   - **Reference stubs and structured-data dumps** — one-paragraph wiki entries, definitions, factoid lists, player stat cards, whois/BGP/DNS records, raw lookup results, single-formula pages. If the page is mostly a table, a record, or one isolated fact, it fails — fastText-style classifiers may rate this content highly because it "looks structured," but it is not teaching prose.
+   - **Casual forum threads** — chit-chat, brief Q&A without resolution, social exchanges that don't reach a meaningful conclusion. This bullet is about SUBSTANCE, not tone: an informal thread that genuinely develops its topic is covered by the qualifying bullet above and is NOT this; a polite thread that builds nothing is.
+   - **Vendor sales copy or purely promotional material** — product descriptions, ad copy, "buy now" pages. (Institutional descriptions of academic programs, mission statements with real content, organizational reports, or editorial journalism about a product launch are NOT this; judge by whether the page sells a product or describes/teaches.)
+   - **Mostly un-decoded HTML / escape soup** — pages where the visible text is dominated by raw HTML entities (`&nbsp;`, `&lt;`, `&amp;`, `&#NNN;`), escape sequences, or malformed markup that survived the page render. Even if the underlying content might be code or text, a page presented this way is junk for training.
+   - **"No results" / search-empty pages** — "your search returned no results", "no items match", "0 records found" — even when they list related links or alternative searches alongside.
+   - **Anything that fails a normal quality filter** — commerce pages, navigation or aggregation surfaces, login walls or other site machinery, fragments and microposts, wrappers around non-textual media, raw data dumps, empty placeholders, incoherent text
+
+   **When in doubt, output [NO_USEFUL_CONTENT].** Reject borderline pages aggressively; only clear winners pass.
+
+Output exactly one of:
+- KEEP — the page clears every gate and criterion above
+- [NO_USEFUL_CONTENT] — anything else.

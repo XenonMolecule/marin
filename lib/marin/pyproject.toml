@@ -215,6 +215,14 @@ dedup = [
 
 math = ["pylatexenc", "sympy"]
 
+# OLMIX-BASE mixture optimization (experiments/data_mixing). `ecos` is NOT optional:
+# olmix's LogLinearExactProposer hardcodes solver="ECOS", and modern cvxpy no longer
+# bundles it, so omitting it fails at solve time with "The solver ECOS is not installed".
+mixing = [
+    "cvxpy>=1.5",
+    "ecos>=2.0.14",
+]
+
 dclm = [
     "fasttext-wheel",  # language ID + quality classifier (pre-built wheel)
     "retrie",          # URL ban list regex compilation

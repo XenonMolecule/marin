@@ -25,7 +25,7 @@ from fray.cluster import ResourceConfig
 from levanter.checkpoint import CheckpointerConfig
 from levanter.layers.attention import AttentionBackend
 from levanter.main.train_classifier import ClassificationDataConfig, TrainClassifierConfig
-from levanter.models.modernbert import ModernBertConfig
+from levanter.models.modernbert import ModernBertConfig, PrunedModernBertConfig
 from levanter.optim import AdamConfig
 from levanter.tracker.wandb import WandbConfig
 from levanter.trainer import TrainerConfig
@@ -73,8 +73,11 @@ TEST_GLOB = "gs://marin-us-east5/classifiers/useful_fasttext/full_prep_body_stri
 MODEL_ID = "answerdotai/ModernBERT-base"
 PAD_TOKEN_ID = 50283  # ModernBERT pad token (shared by base + large — same 50368-token tokenizer)
 
-# base vs large share the tokenizer/vocab/pad token; only the transformer dims +
-# warm-start checkpoint differ. Dims verified against the HF configs (large: 395M params).
+# All presets share the ModernBERT tokenizer/vocab/pad token (Ettin verified identical: 50368
+# vocab, pad 50283, local_attention 128, global-every-3) — so they also share the existing
+# tokenized TreeCache. Dims verified against each checkpoint's HF config. `config_cls` picks the
+# levanter config type (pruned variants use PrunedModernBertConfig surgery); `warm_start=False`
+# presets train from scratch (tiny archs have no checkpoint).
 MODEL_PRESETS = {
     "base": dict(
         reference_checkpoint="answerdotai/ModernBERT-base",
@@ -90,6 +93,148 @@ MODEL_PRESETS = {
         num_layers=28,
         num_heads=16,
     ),
+    # Ettin (JHU 2025, arXiv 2507.11412): ModernBERT architecture at small scale, MLM-pretrained
+    # 2T tokens. Both rope thetas are 160k (unlike base's 10k local); classifier_pooling=mean per
+    # the released configs.
+    "ettin17": dict(
+        reference_checkpoint="jhu-clsp/ettin-encoder-17m",
+        hidden_dim=256,
+        intermediate_dim=384,
+        num_layers=7,
+        num_heads=4,
+        local_rope_theta=160000.0,
+        classifier_pooling="mean",
+    ),
+    "ettin32": dict(
+        reference_checkpoint="jhu-clsp/ettin-encoder-32m",
+        hidden_dim=384,
+        intermediate_dim=576,
+        num_layers=10,
+        num_heads=6,
+        local_rope_theta=160000.0,
+        classifier_pooling="mean",
+    ),
+    "ettin68": dict(
+        reference_checkpoint="jhu-clsp/ettin-encoder-68m",
+        hidden_dim=512,
+        intermediate_dim=768,
+        num_layers=19,
+        num_heads=8,
+        local_rope_theta=160000.0,
+        classifier_pooling="mean",
+    ),
+    # Layer-pruned ModernBERT-base: warm-start from base's BOTTOM 8 of 22 layers ("Poor Man's
+    # BERT"); prefix-keep preserves each layer's global/local assignment.
+    "pruned8": dict(
+        config_cls="pruned",
+        reference_checkpoint="answerdotai/ModernBERT-base",
+        hidden_dim=768,
+        intermediate_dim=1152,
+        num_layers=8,
+        num_heads=12,
+    ),
+    # From-scratch tiny ModernBERT (the "2-4 layer transformer" full-context take). No pretrain.
+    "tiny4": dict(
+        warm_start=False,
+        hidden_dim=384,
+        intermediate_dim=576,
+        num_layers=4,
+        num_heads=6,
+    ),
+    "tiny2": dict(
+        warm_start=False,
+        hidden_dim=256,
+        intermediate_dim=384,
+        num_layers=2,
+        num_heads=4,
+    ),
+}
+
+
+def _funnelbert_factory(args):
+    from levanter.models.funnelbert import FunnelBertConfig
+
+    return FunnelBertConfig(
+        max_seq_len=args.max_seq_len,
+        num_labels=2,
+        pad_token_id=PAD_TOKEN_ID,
+        attn_backend=args.attn_backend,
+        tokenizer=MODEL_ID,
+    )
+
+
+def _pooled_transformer_factory(args):
+    from levanter.models.pooled_transformer import PooledTransformerConfig
+
+    return PooledTransformerConfig(max_seq_len=args.max_seq_len)
+
+
+def _pooled_big_factory(args):
+    """Capacity test for pooled: ~2.4x the params (26M → ~63M), same 64-token pooling.
+
+    pooled is half embedding table, so "is it data-limited or capacity-limited?" is answered by
+    widening the super-token transformer (hidden 512→768, layers 4→6, embed 256→384) while keeping
+    the pooling window fixed. Its cost over the 8192-token input scales with embed_dim (1.5x) and
+    the per-super-token layers scale ~3.4x, so it MUST be re-benchmarked before it earns a slot.
+    """
+    from levanter.models.pooled_transformer import PooledTransformerConfig
+
+    return PooledTransformerConfig(
+        max_seq_len=args.max_seq_len,
+        embed_dim=384,
+        hidden_dim=768,
+        num_layers=6,
+        num_heads=12,
+    )
+
+
+def _bert_factory(args):
+    from levanter.models.bert import BertConfig
+
+    return BertConfig(max_seq_len=args.max_seq_len, num_labels=2)
+
+
+def _bigdn_factory(args):
+    from levanter.models.bigdn import BigdnConfig
+
+    return BigdnConfig(max_seq_len=args.max_seq_len)
+
+
+# Non-ModernBERT-config archs: built via factory(args) instead of ModernBertConfig(**dims).
+# `data_tokenizer` overrides the ClassificationDataConfig tokenizer (bert uses MiniLM WordPiece —
+# its own token cache namespace; everything else shares the ModernBERT tokenizer + TreeCache).
+# `defaults` pre-sets CLI knobs (bert wants ctx 512 chunked; pooled_transformer wants ctx 4096
+# chunked per its design) — explicit flags still win.
+MODEL_FACTORIES = {
+    "funnelbert": dict(factory=_funnelbert_factory, warm_start=True),
+    # ctx 8192 truncated (NOT chunked): pooled's deployment recipe is 2x4096-token windows = the
+    # same 8192 tokens of coverage, and truncated@8192 reuses the finished 8192-cap TreeCache
+    # (memory-bounded streaming) instead of needing a 32768-cap chunk cache — the lpv11 corpus
+    # averages ~54 KB/doc, so any in-RAM 1M-doc cache OOMs. Also makes pooled directly comparable
+    # to every other arch in the sweep, which all train truncated@8192.
+    # per_device_parallelism MUST be -1 (no gradient accumulation). pooled_transformer's params are
+    # RAW jnp arrays, not NamedArrays: levanter's microbatching reshapes/scans every plain-array leaf
+    # of its args as if it carried the batch (fn is called as fn(model, *batch)), so the embedding
+    # table hits "cannot reshape (50368, 256) into (4, 1, 256)". NamedArray models are immune (they
+    # are skipped for lacking a Batch axis). pdp=-1 makes microbatch_size None → no accumulation, no
+    # reshape. Diagnosed by pooled_backward_probe --mode trainer (2026-08-09).
+    "pooled": dict(
+        factory=_pooled_transformer_factory,
+        warm_start=False,
+        defaults=dict(max_seq_len=8192, use_cache=True, per_device_parallelism=-1),
+    ),
+    "bert": dict(
+        factory=_bert_factory,
+        warm_start=True,
+        data_tokenizer="nreimers/MiniLM-L6-H384-uncased",
+        defaults=dict(max_seq_len=512, chunked=True),
+    ),
+    "pooled_big": dict(
+        factory=_pooled_big_factory,
+        warm_start=False,
+        defaults=dict(max_seq_len=8192, use_cache=True, per_device_parallelism=-1),
+    ),
+    "bigdn": dict(factory=_bigdn_factory, warm_start=False),
 }
 
 # region -> region-local checkpoint bucket
@@ -102,13 +247,16 @@ REGION_BUCKETS = {
 
 
 def build_config(args) -> TrainClassifierConfig:
+    factory_entry = MODEL_FACTORIES.get(args.model_size)
+    data_tokenizer = MODEL_ID if factory_entry is None else factory_entry.get("data_tokenizer", MODEL_ID)
     data = ClassificationDataConfig(
         train_urls=[args.train_glob],
         validation_urls=[args.test_glob],
-        tokenizer=MODEL_ID,
+        tokenizer=data_tokenizer,
         max_train_rows=args.train_rows,
         eval_rows=args.test_rows,
         use_cache=args.use_cache,
+        cache_dir=args.cache_dir,
         chunked=args.chunked,
         max_chunks_per_doc=args.max_chunks_per_doc,
         chunk_overlap=args.chunk_overlap,
@@ -120,7 +268,9 @@ def build_config(args) -> TrainClassifierConfig:
 
     trainer = TrainerConfig(
         id=args.run_id,
-        tracker=WandbConfig(project="modernbert-useful", tags=["modernbert", "classifier", "levanter"]),
+        tracker=WandbConfig(
+            project="modernbert-useful", tags=["modernbert", "classifier", "levanter", f"arch-{args.model_size}"]
+        ),
         mp=jmp.get_policy("p=f32,c=bfloat16"),
         train_batch_size=args.batch_size,
         # Per-device microbatch. MUST be small at 8192 ctx: -1 (=batch/num_devices=64 on v6e-4)
@@ -131,25 +281,27 @@ def build_config(args) -> TrainClassifierConfig:
         steps_per_eval=num_train_steps,  # F1 eval is done post-hoc on the frozen test
         checkpointer=CheckpointerConfig(save_interval=timedelta(minutes=15), keep=[]),
     )
-    preset = MODEL_PRESETS[args.model_size]
-    model = ModernBertConfig(
-        max_seq_len=args.max_seq_len,
-        num_labels=2,
-        pad_token_id=PAD_TOKEN_ID,
-        attn_backend=args.attn_backend,
-        tokenizer=MODEL_ID,
-        reference_checkpoint=preset["reference_checkpoint"],
-        hidden_dim=preset["hidden_dim"],
-        intermediate_dim=preset["intermediate_dim"],
-        num_layers=preset["num_layers"],
-        num_heads=preset["num_heads"],
-    )
+    if factory_entry is not None:
+        model = factory_entry["factory"](args)
+        preset_warm_start = factory_entry["warm_start"]
+    else:
+        preset = dict(MODEL_PRESETS[args.model_size])
+        config_cls = ModernBertConfig if preset.pop("config_cls", None) != "pruned" else PrunedModernBertConfig
+        preset_warm_start = preset.pop("warm_start", True)
+        model = config_cls(
+            max_seq_len=args.max_seq_len,
+            num_labels=2,
+            pad_token_id=PAD_TOKEN_ID,
+            attn_backend=args.attn_backend,
+            tokenizer=MODEL_ID,
+            **preset,
+        )
     return TrainClassifierConfig(
         data=data,
         trainer=trainer,
         model=model,
         optimizer=AdamConfig(learning_rate=args.lr, warmup=args.warmup, max_grad_norm=1.0),
-        warm_start=not args.no_warm_start,
+        warm_start=preset_warm_start and not args.no_warm_start,
         hf_save_path=None,  # set by the marin out-path machinery to {output_path}/hf
     )
 
@@ -161,9 +313,10 @@ def main():
     p.add_argument(
         "--model-size",
         default="base",
-        choices=sorted(MODEL_PRESETS),
-        help="ModernBERT size: base (149M) or large (395M). Sets dims + warm-start checkpoint; "
-        "tokenizer/pad are shared. large@8192 is HBM-heavy — use per-device-parallelism 1.",
+        choices=sorted(set(MODEL_PRESETS) | set(MODEL_FACTORIES)),
+        help="Arch preset: ModernBERT-config presets (base/large/ettin*/pruned8/tiny*) or factory "
+        "archs (funnelbert/pooled/bert/bigdn). Sets dims + warm-start; factory archs may pre-set "
+        "ctx/chunked defaults. large@8192 is HBM-heavy — use per-device-parallelism 1.",
     )
     p.add_argument("--train-glob", default=TRAIN_GLOB)
     p.add_argument("--test-glob", default=TEST_GLOB)
@@ -181,6 +334,13 @@ def main():
     p.add_argument("--lr", type=float, default=5e-5)
     p.add_argument("--warmup", type=int, default=200)
     p.add_argument("--attn-backend", type=AttentionBackend, default=AttentionBackend.VANILLA)
+    p.add_argument(
+        "--cache-dir",
+        default=None,
+        help="Explicit TreeCache dir. REQUIRED for non-default tokenizers with --use-cache: the "
+        "default dir derivation is tokenizer-blind and a mismatched cache only WARNS (silent "
+        "corruption). e.g. .../_clf_token_cache_chunk32768_minilm for bert.",
+    )
     p.add_argument(
         "--use-cache",
         action="store_true",
@@ -229,6 +389,15 @@ def main():
     )
     args = p.parse_args()
 
+    # Factory archs carry their own ctx/chunked defaults (e.g. bert = 512 chunked); they apply only
+    # where the user left the parser default, so explicit flags still win.
+    factory_entry = MODEL_FACTORIES.get(args.model_size)
+    if factory_entry is not None:
+        for name, value in factory_entry.get("defaults", {}).items():
+            if getattr(args, name) == p.get_default(name):
+                setattr(args, name, value)
+                logger.info("preset %s: defaulting --%s to %r", args.model_size, name.replace("_", "-"), value)
+
     # Fail fast (on the laptop, before submitting) if any data path would be read cross-region.
     assert_data_in_region({"train_glob": args.train_glob, "test_glob": args.test_glob}, args.region)
 
@@ -256,7 +425,7 @@ def main():
         config.trainer.num_train_steps,
         args.max_seq_len,
         args.attn_backend,
-        not args.no_warm_start,
+        config.warm_start,
         args.tpu_type,
         args.region,
         args.chunked,

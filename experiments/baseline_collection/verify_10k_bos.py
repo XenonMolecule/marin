@@ -30,7 +30,8 @@ from levanter.tokenizers import load_tokenizer
 TOKENIZER = "meta-llama/Meta-Llama-3.1-8B"
 
 # ExpC 10k caches (us-central2). dclm_10k / nemotron_10k feed the sliced,
-# simulated-epoching expC_T33T sweep.
+# simulated-epoching expC_T33T sweep. Override with --caches name=gs://... to
+# check other caches (e.g. the fineweb 10k pair).
 DEFAULT_CACHES: dict[str, str] = {
     "dclm_10k": "gs://marin-us-central2/tokenized/dclm_400m_1x_10k_dclm-3df0ba/train",
     "nemotron_10k": "gs://marin-us-central2/tokenized/dclm_400m_1x_10k_nemotron_full-3dcb75/train",
@@ -77,12 +78,20 @@ def check_cache(name: str, cache_dir: str, n_samples: int, tokenizer) -> dict:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--samples", type=int, default=40, help="docs to sample per cache")
+    parser.add_argument(
+        "--caches",
+        nargs="+",
+        metavar="NAME=GS_PATH",
+        help="caches to check as name=gs://.../train pairs (default: the ExpC 10k pair)",
+    )
     args = parser.parse_args()
+
+    caches = dict(spec.split("=", 1) for spec in args.caches) if args.caches else DEFAULT_CACHES
 
     tokenizer = load_tokenizer(TOKENIZER)
     print(f"bos_id={tokenizer.bos_token_id}  eos_id={tokenizer.eos_token_id}", flush=True)
 
-    results = [check_cache(name, d, args.samples, tokenizer) for name, d in DEFAULT_CACHES.items()]
+    results = [check_cache(name, d, args.samples, tokenizer) for name, d in caches.items()]
 
     print("\n=== SUMMARY ===")
     for r in results:

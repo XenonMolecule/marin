@@ -27,12 +27,15 @@ import argparse
 import json
 import logging
 import os
+import threading
 import time
 from collections import defaultdict, deque
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from flask import Flask, jsonify, send_file
+
+from experiments.fast_curation.spec import Extractor, get_spec
 
 logger = logging.getLogger(__name__)
 app = Flask(__name__)
@@ -52,6 +55,26 @@ RUN_RECENCY = 3600.0
 RATE_WINDOW = 900.0
 PHASES = ("a", "b", "c")
 PHASE_LABEL = {"a": "A · decode+fastText", "b": "B · ModernBERT (TPU)", "c": "C · JustText"}
+
+
+def _phase_labels(spec_id: str) -> dict[str, str]:
+    """Stage labels for a run, derived from its spec rather than hardcoded.
+
+    A run's cascade is spec-defined (the lpv11 line adds a pooled pre-filter and swaps jusText for
+    the Rust resiliparse engine), so a fixed label set silently mislabels it — the dashboard would
+    claim "JustText" over a corpus jusText never touched.
+    """
+    labels = dict(PHASE_LABEL)
+    try:
+        spec = get_spec(spec_id)
+    except Exception:
+        return labels  # an unknown/older run keeps the legacy names
+    if spec.pooled_ckpt:
+        labels["b"] = "B · pooled+ModernBERT (TPU)"
+    if spec.extraction_engine is Extractor.RESILIPARSE_RS:
+        labels["c"] = "C · resiliparse-rs"
+    return labels
+
 
 # In-memory throughput series (bounded, O(snapshots)): the slope over a window gives realized rate.
 _series: dict[tuple[str, str], deque] = defaultdict(lambda: deque(maxlen=240))  # (run, phase) -> [(ts, done)]
@@ -75,10 +98,30 @@ _tunnel_cm = None
 # ---------------------------------------------------------------------------
 
 
-def _storage_client():
-    from google.cloud import storage as gcs
+# Threads used to fan out heartbeat reads. The GCS client's HTTP pool is sized to match: urllib3
+# defaults to 10 connections, so a 64-thread fan-out spends its time discarding and re-opening
+# sockets ("Connection pool is full") instead of reading. At 5 regions x ~300 workers that turned a
+# sub-second scan into a multi-minute one and the UI just sat on "Loading...".
+GCS_FANOUT = 64
+_gcs_client = None
 
-    return gcs.Client()
+
+def _storage_client():
+    """Process-wide GCS client with a pool big enough for the fan-out.
+
+    Cached: a fresh ``gcs.Client()`` per call re-does auth and starts with an empty pool, which is
+    most of the cost when every dashboard refresh scans hundreds of blobs.
+    """
+    global _gcs_client
+    if _gcs_client is None:
+        import requests
+        from google.cloud import storage as gcs
+
+        client = gcs.Client()
+        adapter = requests.adapters.HTTPAdapter(pool_connections=GCS_FANOUT, pool_maxsize=GCS_FANOUT, max_retries=3)
+        client._http.mount("https://", adapter)
+        _gcs_client = client
+    return _gcs_client
 
 
 def list_active_runs() -> list[str]:
@@ -107,7 +150,7 @@ def read_heartbeats(run: str) -> list[dict]:
 
     if not blobs:
         return []
-    with ThreadPoolExecutor(max_workers=min(64, len(blobs))) as ex:
+    with ThreadPoolExecutor(max_workers=min(GCS_FANOUT, len(blobs))) as ex:
         return [h for h in ex.map(_read, blobs) if h]
 
 
@@ -176,7 +219,14 @@ def _sparkline(series: deque, now: float, n: int = 30) -> list[list]:
 
 
 def _phase_summary(
-    run: str, phase: str, hbs: list[dict], reg_done: int, region_done: dict[str, dict[str, int]], total: int, now: float
+    run: str,
+    phase: str,
+    hbs: list[dict],
+    reg_done: int,
+    region_done: dict[str, dict[str, int]],
+    total: int,
+    now: float,
+    labels: dict[str, str] | None = None,
 ) -> dict:
     """Aggregate one phase. Done-count is the AUTHORITATIVE registry/file count (``reg_done`` global,
     ``region_done`` per region); heartbeats supply only live-worker counts + the docs funnel."""
@@ -222,7 +272,7 @@ def _phase_summary(
 
     return {
         "phase": phase,
-        "label": PHASE_LABEL[phase],
+        "label": labels[phase] if labels else PHASE_LABEL[phase],
         "kind": rows[0].get("kind", "") if rows else "",
         "done": done,
         "total": total,
@@ -250,7 +300,8 @@ def aggregate_run(run: str, total: int, now: float) -> dict | None:
     counts = _counts(run, regions_present)  # authoritative (registry + per-region files)
     gdone = counts.get("global", {})
     region_done = {r: counts.get(r, {}) for r in regions_present}
-    phases = [_phase_summary(run, p, hbs, int(gdone.get(p, 0)), region_done, total, now) for p in PHASES]
+    labels = _phase_labels(run.rpartition("-")[0])
+    phases = [_phase_summary(run, p, hbs, int(gdone.get(p, 0)), region_done, total, now, labels) for p in PHASES]
     by_phase = {p["phase"]: p for p in phases}
     run_done = int(gdone.get("c", 0))  # final corpus = Phase C output (registry)
 
@@ -260,6 +311,8 @@ def aggregate_run(run: str, total: int, now: float) -> dict | None:
     def _ret(p: dict) -> float | None:
         return round(100.0 * p["docs_out"] / p["docs_in"], 1) if p["docs_in"] else None
 
+    ext_label = "resiliparse-rs extract" if labels["c"].endswith("resiliparse-rs") else "JustText extract"
+    b_label = "pooled+ModernBERT filter" if labels["b"].startswith("B · pooled") else "ModernBERT filter"
     funnel = {
         "stages": [
             {
@@ -271,14 +324,14 @@ def aggregate_run(run: str, total: int, now: float) -> dict | None:
             },
             {
                 "phase": "b",
-                "label": "ModernBERT filter",
+                "label": b_label,
                 "in": by_phase["b"]["docs_in"],
                 "out": by_phase["b"]["docs_out"],
                 "retention": _ret(by_phase["b"]),
             },
             {
                 "phase": "c",
-                "label": "JustText extract",
+                "label": ext_label,
                 "in": by_phase["c"]["docs_in"],
                 "out": by_phase["c"]["docs_out"],
                 "retention": _ret(by_phase["c"]),
@@ -471,10 +524,34 @@ def index():
     return send_file(Path(__file__).parent / "dashboard.html", mimetype="text/html")
 
 
+# A full scan costs O(regions x workers) GCS reads — ~19s at 5 regions x 300 workers. The UI polls
+# every few seconds, so without this every poll re-scans and the page sits on "Loading...". Serving a
+# few seconds stale is the right trade for a monitor; the numbers move on a minutes timescale.
+RUNS_TTL_SECONDS = 20.0
+_runs_cache: tuple[float, dict] | None = None
+_runs_lock = threading.Lock()
+
+
+def _runs_cached() -> dict:
+    """``fetch_runs()`` behind a short TTL, with one in-flight scan shared by all callers."""
+    global _runs_cache
+    now = time.time()
+    cached = _runs_cache
+    if cached and now - cached[0] < RUNS_TTL_SECONDS:
+        return cached[1]
+    with _runs_lock:  # a second request that arrives mid-scan waits and reuses the result
+        cached = _runs_cache
+        if cached and time.time() - cached[0] < RUNS_TTL_SECONDS:
+            return cached[1]
+        data = fetch_runs()
+        _runs_cache = (time.time(), data)
+        return data
+
+
 @app.route("/api/runs")
 def api_runs():
     try:
-        return jsonify({"ok": True, **fetch_runs()})
+        return jsonify({"ok": True, **_runs_cached()})
     except Exception as e:
         logger.exception("runs fetch failed")
         return jsonify({"ok": False, "error": str(e)}), 500

@@ -76,6 +76,12 @@ MODELS: dict[str, tuple[str, int]] = {
     "bert_useful_prob_large_1M_surv": ("mb-clf-large-1M-surv-e5", 8192),
     "bert_useful_prob_base_10M": ("mb-clf-base-10M-c8192", 8192),
     "bert_useful_prob_large_10M": ("mb-clf-large-10M-c8192", 8192),
+    # lpv11-trained survivors (target = llm_pipeline_v1_1, not the 8B high_quality run).
+    "bert_lpv11_prob_base_1M_c8192": ("mb-clf-lpv11-base-1M-c8192", 8192),
+    "bert_lpv11_prob_base_10M_c8192": ("mb-clf-lpv11-base-10M-c8192", 8192),
+    # Ettin-68m geometry (h512 L19) — ModernBERT architecture at 68M params, so it loads through this
+    # same path; run_score reads the dims (and `classifier_pooling="mean"`) from its own config.json.
+    "bert_lpv11_prob_ettin68_10M": ("mb-clf-lpv11-ettin68-10M", 8192),
 }
 
 
@@ -184,7 +190,9 @@ def run_score(col: str, batch_size: int, limit: int | None, num_shards: int, sha
         num_labels=2,
         pad_token_id=PAD_TOKEN_ID,
     )
-    logger.info("arch: hidden=%d layers=%d heads=%d (from checkpoint)", config.hidden_dim, config.num_layers, config.num_heads)
+    logger.info(
+        "arch: hidden=%d layers=%d heads=%d (from checkpoint)", config.hidden_dim, config.num_layers, config.num_heads
+    )
     tokenizer = AutoTokenizer.from_pretrained(TOKENIZER_REF)
 
     # Data-parallel mesh with haliax's resource axes; set_mesh (not jax `with mesh:`) so the
@@ -263,7 +271,9 @@ def run_join() -> None:
             new_raw = [staged[r][0] if staged.get(r, (None,))[0] is not None else old_raw[k] for k, r in enumerate(rids)]
             idx = t.column_names.index("raw_html")
             t = t.set_column(idx, "raw_html", pa.array(new_raw, type=pa.string()))
-            t = t.append_column("text_justext", pa.array([staged.get(r, (None, None))[1] for r in rids], type=pa.string()))
+            t = t.append_column(
+                "text_justext", pa.array([staged.get(r, (None, None))[1] for r in rids], type=pa.string())
+            )
         out_path = f"{SCORED_OUT}/sample-{i:05d}-of-{n_shards:05d}.parquet"
         with fsspec.open(out_path, "wb") as fh:
             pq.write_table(t, fh)

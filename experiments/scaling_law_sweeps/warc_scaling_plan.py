@@ -54,9 +54,38 @@ from experiments.scaling_law_sweeps.fixed_model_plan import _candidate_for_fixed
 # hurt scheduling. Large-batch corners are bumped further in _memory_gb_for_plan.
 _MEMORY_FLOOR_GB: int = 48
 
+# Approx parameter counts (billions) per hidden dim under the AdamH architecture.
+# Used to size host RAM for the checkpoint-SERIALIZATION peak (below).
+_APPROX_PARAMS_B: dict[int, float] = {
+    256: 0.069,
+    512: 0.157,
+    768: 0.273,
+    1024: 0.5,
+    1536: 0.998,
+    2432: 2.9,
+    3328: 6.0,
+    3584: 8.1,
+}
+
 
 def _memory_gb_for_hidden(hidden_dim: int) -> int:
-    return _MEMORY_FLOOR_GB
+    """Host-RAM request, scaled with MODEL SIZE.
+
+    The 48 GB floor covers the size-independent overhead (in-training eval datasets,
+    loader prefetch, tokenizer, JAX/wandb). LARGE models add host RAM on top: at every
+    checkpoint the trainer materializes params + Adam(m, v) (~12 bytes/param in fp32)
+    on host and streams them through tensorstore write buffers. That serialization peak
+    is what OOM-killed d2432-B8 (2.9B) at the flat floor (exit 137 during
+    array_serialization, 2026-07-23) — a LARGE-MODEL failure that the old batch-only
+    bumps in ``_memory_gb_for_plan`` missed entirely (B8 is a small batch). Scaling the
+    base with param count protects every large cell regardless of batch; small models
+    stay at the floor. Calibrated so d2432 -> ~128 GB (the value already proven safe for
+    the B>=32 serialization OOMs)."""
+    params_b = _APPROX_PARAMS_B.get(hidden_dim)
+    if params_b is None:  # conservative fallback for unlisted sizes: ~12*L*d^2, L ~ d/100
+        params_b = 12 * max(1, hidden_dim // 100) * hidden_dim**2 / 1e9
+    state_gb = 12.0 * params_b  # params + m + v, fp32
+    return max(_MEMORY_FLOOR_GB, int(_MEMORY_FLOOR_GB + 2.3 * state_gb))
 
 
 # Big batch sizes balloon host RAM (gradient bookkeeping, JAX layout caches,
@@ -124,6 +153,27 @@ WARC_METHOD_BASE_NAMES: tuple[str, ...] = (
     "dclm_random",
     "nemotron_full_random",
     "high_quality_random",
+    # llm_pipeline_v1 two-stage extraction (decon'd), N=300 only so far. Same seed-0
+    # random WARCs as the *_random ladder; resolves to METHODS["llm_pipeline_v1_random_300"].
+    "llm_pipeline_v1_random",
+    # markdown-extraction upgrade; resolves to METHODS["llm_pipeline_v1_1_random_300"]. Cache us-central1.
+    "llm_pipeline_v1_1_random",
+    # llm_simple_v1 one-call extraction (decon'd), N=300 only. Same seed-0 random WARCs;
+    # resolves to METHODS["llm_simple_v1_random_300"]. Cache pinned us-central1.
+    "llm_simple_v1_random",
+    # med_quality LLM-extraction over the 300 seed-0 random WARCs; resolves to
+    # METHODS["med_quality_random_300"]. Cache pinned us-central1.
+    "med_quality_random",
+    # low_quality (lowest LLM-extraction tier). Cache/training pinned us-east5.
+    "low_quality_random",
+    # high_quality_v2 extractor over the 300 random WARCs; resolves to METHODS["high_quality_v2_random_300"].
+    "high_quality_v2_random",
+    # fastpipe_v3 keep-top-X% bands @ N=300 (token-for-token quality/quantity sweep).
+    "fastpipe_v3_100_random",
+    "fastpipe_v3_80_random",
+    "fastpipe_v3_60_random",
+    "fastpipe_v3_40_random",
+    "fastpipe_v3_20_random",
 )
 
 # Per-N model size lineup. Each entry is a list of hidden_sizes under the

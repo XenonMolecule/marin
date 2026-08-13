@@ -708,8 +708,15 @@ exec {quoted_cmd}
         # Mounts
         for rm in self._resolved_mounts:
             if rm.kind == MountKind.TMPFS:
-                # Use Docker --tmpfs for per-container isolation instead of shared bind mount
-                cmd.extend(["--tmpfs", rm.container_path])
+                # Use Docker --tmpfs for per-container isolation instead of shared bind mount.
+                # Docker's default tmpfs size is 50% of HOST RAM regardless of the container's
+                # memory limit, which silently caps big-memory jobs (a 690GB request on a 700GiB
+                # host still got a 355GiB /tmp). Size the tmpfs to the memory limit instead; the
+                # cgroup already accounts tmpfs pages against the same limit.
+                if effective_memory_mb:
+                    cmd.extend(["--tmpfs", f"{rm.container_path}:size={effective_memory_mb}m"])
+                else:
+                    cmd.extend(["--tmpfs", rm.container_path])
             else:
                 cmd.extend(["-v", f"{rm.host_path}:{rm.container_path}:{rm.mode}"])
 

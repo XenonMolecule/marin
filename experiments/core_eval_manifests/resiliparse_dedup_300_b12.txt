@@ -1,0 +1,2 @@
+run_name,region,output_path,hf_dir
+curation-resiliparse_dedup_300-expWARC_natural-1e+19-d512-L6-B64,us-east5,gs://marin-us-east5/checkpoints/isoflop-curation/curation-resiliparse_dedup_300-expWARC_natural-1e+19-d512-L6-B64,

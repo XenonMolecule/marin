@@ -554,24 +554,16 @@ function renderProgress(data, updatedAt, mode) {
   const claimedPct = (claimed / total * 100).toFixed(1);
 
   // Batch-level progress.
-  // We have ground truth from the legacy (low_quality) run for every WARC's
-  // exact num_batches — the source records are deterministic and we use the
-  // same DEFAULT_BATCH_SIZE = 500 chunking. Use those exact counts whenever
-  // available; only fall back to an estimate for hashes the legacy data
-  // doesn't cover (e.g. running on a 10k-WARC manifest that wasn't in the
-  // 3k legacy run).
+  // Ground truth per WARC = num_batches from THIS spec's own _done markers
+  // (served on done_stats, at the spec's real batch size). The old code seeded
+  // this from the legacy low_quality map (batch_size 500), which is HALF the true
+  // count for the group-size-250 pipeline runners — so don't use legacy here. Not-
+  // done WARCs fall back to the per-spec avgBatchesPerWarc below.
   let batchPct = null;
   let batchSummary = '';
-  const knownTotals = {}; // hash -> num_batches (exact ground truth)
+  const knownTotals = {}; // hash -> num_batches (exact, this spec's _done markers)
   let completedAvg = 0;
   let inProgressP75 = 0;
-  // Legacy ground truth wins for any hash it covers.
-  const legacy = data.legacy_num_batches || {};
-  for (const [h, nb] of Object.entries(legacy)) {
-    knownTotals[h] = nb;
-  }
-  // _done stats from THIS spec's run also count as ground truth — defer to
-  // them over legacy so the displayed status matches the live extraction.
   if (data.done_stats) {
     for (const s of data.done_stats) {
       if (s.num_batches) knownTotals[s.hash] = s.num_batches;
@@ -588,37 +580,38 @@ function renderProgress(data, updatedAt, mode) {
       inProgressP75 = inProgressCounts[Math.floor(inProgressCounts.length * 0.75)];
     }
   }
-  // Estimate fallback for hashes we have no ground truth on. Lifted from the
-  // empirical legacy mean (~93 batches/WARC); 95 nudge for headroom.
-  const avgBatchesPerWarcFallback = Math.max(95, completedAvg, inProgressP75);
-  // Total batches: ground truth from server (legacy ∩ manifest). Server has
-  // already intersected legacy with the actual manifest, so the count is
-  // exact when every manifest hash has a legacy entry.
-  let totalBatchesEstimate = 0;
-  let knownCoverage = data.legacy_num_batches_known_count || 0;
-  const knownBatchesSum = data.legacy_num_batches_total_known || 0;
-  let unknownCoverage = Math.max(total - knownCoverage, 0);
-  if (data.batch_counts !== undefined) {
-    totalBatchesEstimate = knownBatchesSum + unknownCoverage * avgBatchesPerWarcFallback;
+  // batches/WARC for the bar + per-WARC estimates. The server computes this from
+  // THIS spec's own _done markers (spec_nb), at its real batch size — group-size
+  // 250 (~180/WARC) for the pipeline runners, batch_size 500 (~93/WARC) for the
+  // legacy single-call specs. Prefer it; the local Math.max heuristic is only a
+  // pre-deep-scan fallback (the old hardcoded 95 was the legacy batch size and
+  // halved pipeline estimates).
+  const avgBatchesPerWarc = data.avg_batches_per_warc || Math.max(95, completedAvg, inProgressP75);
+  // Total batches: the server's canonical estimate (batches_done + remaining
+  // WARCs x this spec's real batches/WARC), the SAME basis as its ETA. Do not
+  // re-derive from the legacy batch_size-500 map here — that halves pipeline
+  // totals. Fall back to a local recompute only until the first deep scan lands.
+  const remainingWarcs = Math.max(total - done, 0);
+  let totalBatchesEstimate = data.total_batches_estimate || 0;
+  if (!totalBatchesEstimate && data.batch_counts !== undefined) {
+    totalBatchesEstimate = (data.batches_done || 0) + remainingWarcs * avgBatchesPerWarc;
   }
   if (data.batch_counts && totalBatchesEstimate > 0) {
-    // batches_done = finished WARCs' batches (from ground truth) + in-progress
+    // batches_done = finished WARCs' batches (exact from _done markers) + in-progress
     // partials. Finished WARCs aren't enumerated, so data.total_batches alone
     // (in-progress only) would read ~0% — use batches_done for the bar.
     const totalBatchesDone = data.batches_done || 0;
     batchPct = Math.min(100, totalBatchesDone / totalBatchesEstimate * 100);
     const batchRate = data.batches_per_hour ? `${data.batches_per_hour.toLocaleString()} batches/hr` : '';
-    const exact = unknownCoverage === 0;
+    const exact = remainingWarcs === 0;
     const totalLabel = exact
       ? totalBatchesEstimate.toLocaleString()
       : `~${totalBatchesEstimate.toLocaleString()}`;
     const coverage = exact
-      ? `(exact: ${knownCoverage} WARCs from legacy ground truth)`
-      : `(${knownCoverage} exact + ${unknownCoverage} est. @ ~${avgBatchesPerWarcFallback}/WARC)`;
+      ? `(exact: ${done} WARCs)`
+      : `(${done} exact + ${remainingWarcs} est. @ ~${avgBatchesPerWarc}/WARC)`;
     batchSummary = `${totalBatchesDone.toLocaleString()} / ${totalLabel} batches ${coverage} ${batchRate}`;
   }
-  // Backwards-compat alias used elsewhere in the file.
-  const avgBatchesPerWarc = avgBatchesPerWarcFallback;
 
   // Two ETAs:
   //   etaLifetime — uses all-time average rate. Pessimistic but stable; what you expect
@@ -1197,8 +1190,13 @@ async function doKill(jobId) {
 // baseline. Keep in sync with the server-side map.
 const SPEC_MANIFESTS = {
   'high_quality': 'experiments/distill/dclm_400m_1x_warcs.txt',
+  'llm_pipeline_v1': 'experiments/distill/random_subsets/random_warcs_300.txt',
+  'llm_simple_v1': 'experiments/distill/random_subsets/random_warcs_300.txt',
 };
 const DEFAULT_MANIFEST = 'experiments/distill/baseline_warcs_3000.txt';
+// Multi-call pipeline ids launch with --pipeline (not --spec). Keep in sync with
+// pipeline_specs.PIPELINES.
+const PIPELINE_IDS = ['llm_pipeline_v1', 'llm_simple_v1'];
 
 function syncManifestToSpec() {
   const spec = document.getElementById('launch-spec').value;
@@ -1227,7 +1225,7 @@ function confirmLaunch() {
   const endVal = document.getElementById('launch-end').value;
 
   const parentPriorityFlag = parentPriority ? ` --priority ${parentPriority}` : '';
-  const specFlag = spec ? ` --spec ${spec}` : '';
+  const specFlag = spec ? (PIPELINE_IDS.includes(spec) ? ` --pipeline ${spec}` : ` --spec ${spec}`) : '';
   const manifestFlag = manifest ? ` --manifest ${manifest}` : '';
   const startFlag = startVal ? ` --start ${startVal}` : '';
   const endFlag = endVal ? ` --end ${endVal}` : '';

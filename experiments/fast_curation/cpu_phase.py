@@ -46,6 +46,7 @@ from experiments.baseline_collection.decode_warcs_clean import (
 )
 from experiments.baseline_collection.run_extract_standalone import (
     _claim_warc_atomic,
+    _list_fresh_claims,
     _load_completed_registry,
     _refresh_claim,
     _register_completed_warc,
@@ -215,6 +216,30 @@ def _gcs_exists(path: str) -> bool:
     return fs.exists(p)
 
 
+def _list_upstream_present(upstream_path_fn, pairs) -> set[str] | None:
+    """Upstream paths that exist, from ONE fresh listing of their shared parent dir.
+
+    Replaces a per-WARC ``exists()`` probe per manifest entry per pass. All known
+    ``upstream_path_fn``s map every hash into one flat directory; this is verified
+    on a sample and, if it ever stops holding, returns None so the caller falls
+    back to per-WARC probes. ``refresh=True`` bypasses gcsfs's process-lifetime
+    dircache so newly-produced inputs are visible.
+    """
+    sample_parents = {upstream_path_fn(h).rsplit("/", 1)[0] for _, h in pairs[:8]}
+    if len(sample_parents) != 1:
+        return None
+    parent = sample_parents.pop()
+    fs, parent_path = fsspec.core.url_to_fs(parent)
+    try:
+        names = fs.ls(parent_path, refresh=True)
+    except FileNotFoundError:
+        return set()  # upstream dir not created yet — nothing present
+    except Exception as e:
+        logger.warning("upstream listing failed for %s: %s", parent, e)
+        return None
+    return {f"{parent}/{p.rsplit('/', 1)[-1]}" for p in names}
+
+
 def _load_registry_mtimes(registry_prefix: str) -> dict[str, float]:
     """Like ``_load_completed_registry`` but returns ``hash -> completion-epoch`` (the marker mtime).
 
@@ -226,7 +251,9 @@ def _load_registry_mtimes(registry_prefix: str) -> dict[str, float]:
     fs = fsspec.filesystem("gcs")
     out: dict[str, float] = {}
     try:
-        for e in fs.ls(registry_prefix.replace("gs://", ""), detail=True):
+        # refresh=True: gcsfs caches listings for the life of the process, and the
+        # rescue loop relies on this listing actually reflecting new completions.
+        for e in fs.ls(registry_prefix.replace("gs://", ""), detail=True, refresh=True):
             name = e["name"].rsplit("/", 1)[-1]
             if not name.startswith("data-"):
                 continue
@@ -240,6 +267,45 @@ def _load_registry_mtimes(registry_prefix: str) -> dict[str, float]:
     except Exception as e:
         logger.warning("rescue: failed to load registry mtimes for %s: %s", registry_prefix, e)
     return out
+
+
+def _phase_is_complete(phase_end_path: str, manifest_path: str) -> bool:
+    """True only if a phase-end sentinel exists AND it was written for THIS manifest.
+
+    The sentinel is a cheap "this phase is globally done, exit now" flag so idle workers don't
+    re-list an O(WARCs) registry every poll. But it is namespace-scoped while a run is
+    manifest-scoped: a 300-WARC smoke sharing the namespace would finish, write the flag, and then
+    every worker of the real 10k run exits ~5 min after start having claimed nothing — silently, as
+    SUCCEEDED. That cost hours across three separate launches. Matching on the manifest makes a
+    smaller run's sentinel harmless to a larger one.
+
+    A sentinel with no recorded manifest is unattributable, so it is IGNORED rather than honoured.
+    Trusting it re-opens the exact trap above from the writer side: ``tpu_phase`` shipped without the
+    manifest field, so a straggler of the 300-WARC run wrote an unlabeled ``_phase_b_end.json`` and
+    every subsequently-launched B worker of the 10k run exited in ~42 s as SUCCEEDED. The cost of
+    ignoring a genuinely-final unlabeled sentinel is bounded (workers idle out after
+    ``max_idle_passes`` instead of exiting instantly); the cost of honouring a stale one is a
+    silently dead run.
+    """
+    try:
+        with fsspec.open(phase_end_path, "r") as f:
+            payload = json.load(f)
+    except FileNotFoundError:
+        return False
+    except Exception:
+        return False  # unreadable sentinel must not wedge a worker
+    written_for = payload.get("manifest")
+    if not written_for:
+        logger.warning("ignoring unlabeled phase-end sentinel %s (no manifest recorded)", phase_end_path)
+        return False
+    if written_for != manifest_path:
+        logger.info(
+            "ignoring phase-end sentinel written for a different manifest (%s != %s)",
+            written_for,
+            manifest_path,
+        )
+        return False
+    return True
 
 
 def _write_once(path: str, payload: dict) -> None:
@@ -375,22 +441,32 @@ def run_claim_loop(
         # Fast, scalable self-exit: once the phase-end sentinel exists the phase is globally complete,
         # so exit on a single cheap blob check instead of re-listing the O(WARCs) registry every pass
         # (that listing is what left idle workers lingering at 10k and would be untenable at 7M).
-        if _gcs_exists(phase_end_path):
+        if _phase_is_complete(phase_end_path, manifest_path):
             logger.info("phase %s: %s present — phase complete; exiting.", phase_key, phase_end_path)
             hb.close("done")
             break
         completed = _load_completed_registry(registry_prefix)
         if my_hashes <= completed:
-            _write_once(phase_end_path, {"epoch": time.time()})
+            _write_once(phase_end_path, {"epoch": time.time(), "manifest": manifest_path})
             logger.info("phase %s: all %d of this worker's WARCs complete; exiting.", phase_key, len(pairs))
             hb.close("done")
             break
+        # One listing each for claims and upstream inputs per pass, instead of a
+        # per-WARC probe pair against the central bucket per manifest entry (the
+        # per-WARC probes were ~20M class-B GETs/hour fleet-wide on us-central1).
+        claimed_fresh = _list_fresh_claims(claim_root, claim_stale_hours)
+        upstream_present = _list_upstream_present(upstream_path_fn, pairs) if upstream_path_fn is not None else None
         progressed = 0
         for warc_path, h in pairs:
             if h in completed:
                 continue
-            if upstream_path_fn is not None and not _gcs_exists(upstream_path_fn(h)):
-                continue  # upstream phase hasn't produced this WARC's input yet.
+            if upstream_present is not None:
+                if upstream_path_fn(h) not in upstream_present:
+                    continue  # upstream phase hasn't produced this WARC's input yet.
+            elif upstream_path_fn is not None and not _gcs_exists(upstream_path_fn(h)):
+                continue  # upstream listing unavailable — per-WARC fallback.
+            if h in claimed_fresh:
+                continue  # freshly claimed by another worker; can't be won.
             claim_path = f"{claim_root}/data-{h}"
             if not _claim_warc_atomic(claim_path, stale_hours=claim_stale_hours):
                 continue
@@ -405,7 +481,9 @@ def run_claim_loop(
         if progressed == 0:
             idle += 1
             # Don't exit while the upstream phase is still producing inputs we'll need.
-            upstream_done = upstream_done_path is None or _gcs_exists(upstream_done_path)
+            # Same manifest scoping as our own sentinel: an unlabeled or foreign upstream sentinel
+            # must not convince us the feeder is finished and send us into terminal drain.
+            upstream_done = upstream_done_path is None or _phase_is_complete(upstream_done_path, manifest_path)
             hb.tick("draining" if upstream_done else "idle")
             logger.info(
                 "phase %s idle pass %d/%d (%d in registry, upstream_done=%s)",
@@ -490,10 +568,14 @@ def run_cpu_worker(
             logger.info("all %d of this worker's WARCs complete; exiting.", total)
             break
 
+        # One listing per pass instead of a per-WARC claim probe per manifest entry.
+        claimed_fresh = _list_fresh_claims(f"{spec.namespace(bucket)}/_cpu_claims", 3.0)
         progressed = 0
         for warc_path, h in pairs:
             if h in completed:
                 continue
+            if h in claimed_fresh:
+                continue  # freshly claimed by another worker; can't be won.
             claim_dir = f"{spec.namespace(bucket)}/_cpu_claims/data-{h}"
             if not _claim_warc_atomic(claim_dir):
                 continue  # another worker owns it (or it's a non-stale done claim).

@@ -305,3 +305,119 @@ def test_classifier_hf_roundtrip(pooling, local_gpt2_tokenizer_path):
 
     assert torch_out.shape == jax_out.shape, f"{torch_out.shape} != {jax_out.shape}"
     assert np.isclose(torch_out, jax_out, rtol=1e-4, atol=1e-4).all(), f"{torch_out} != {jax_out}"
+
+
+# --------------------------------------------------------------------------------------
+# Architecture registry + pruned warm start
+# --------------------------------------------------------------------------------------
+
+
+def test_build_classifier_dispatches_on_config_type():
+    from levanter.models.classification import build_classifier
+
+    config = _small_config()
+    with use_test_mesh():
+        model = build_classifier(config, Axis("vocab", 128), key=random.PRNGKey(0), warm_start=False)
+    assert isinstance(model, ModernBertForSequenceClassification)
+    assert len(model.model.layers) == config.num_layers
+
+
+def test_build_classifier_unregistered_config_raises():
+    from dataclasses import dataclass
+
+    from levanter.models.classification import build_classifier
+
+    @dataclass(frozen=True)
+    class NotRegistered:
+        pass
+
+    with pytest.raises(ValueError, match="no classifier builder"):
+        build_classifier(NotRegistered(), Axis("vocab", 128), key=random.PRNGKey(0), warm_start=False)
+
+
+def test_pruned_config_random_init_uses_pruned_depth():
+    from levanter.models.modernbert import PrunedModernBertConfig
+
+    config = PrunedModernBertConfig(
+        max_seq_len=64,
+        hidden_dim=64,
+        intermediate_dim=128,
+        num_layers=2,
+        num_heads=4,
+        local_attention=16,
+        num_labels=2,
+        pad_token_id=0,
+    )
+    from levanter.models.classification import build_classifier
+
+    with use_test_mesh():
+        model = build_classifier(config, Axis("vocab", 128), key=random.PRNGKey(0), warm_start=False)
+    assert len(model.model.layers) == 2
+
+
+@skip_if_no_torch
+def test_pruned_warm_start_keeps_bottom_layers(local_gpt2_tokenizer_path):
+    """Warm-starting a pruned config loads the reference at full depth and keeps the bottom layers
+    (weights identical to the full load's first N layers)."""
+    import torch  # noqa: PLC0415
+    from transformers.models.modernbert import modeling_modernbert  # noqa: PLC0415
+    from transformers.models.modernbert.configuration_modernbert import ModernBertConfig as HfModernBertConfig
+
+    from levanter.models.classification import build_classifier
+    from levanter.models.modernbert import PrunedModernBertConfig
+
+    hf_config = HfModernBertConfig(
+        vocab_size=1024,
+        hidden_size=64,
+        intermediate_size=128,
+        num_hidden_layers=4,
+        num_attention_heads=4,
+        max_position_embeddings=128,
+        global_attn_every_n_layers=3,
+        local_attention=16,
+        tie_word_embeddings=True,
+        pad_token_id=0,
+        _attn_implementation="eager",
+    )
+    torch.random.manual_seed(0)
+    torch_model = modeling_modernbert.ModernBertForMaskedLM(hf_config)
+
+    with tempfile.TemporaryDirectory() as tmpdir, use_test_mesh():
+        model_path = f"{tmpdir}/torch_model"
+        torch_model.save_pretrained(model_path)
+        pruned_config = PrunedModernBertConfig(
+            max_seq_len=128,
+            hidden_dim=64,
+            intermediate_dim=128,
+            num_layers=2,
+            num_heads=4,
+            local_attention=16,
+            num_labels=2,
+            pad_token_id=0,
+            reference_checkpoint=model_path,
+            tokenizer=local_gpt2_tokenizer_path,
+        )
+        pruned = build_classifier(pruned_config, Axis("vocab", 1024), key=random.PRNGKey(0), warm_start=True)
+        assert len(pruned.model.layers) == 2
+
+        full_config = ModernBertConfig(
+            max_seq_len=128,
+            hidden_dim=64,
+            intermediate_dim=128,
+            num_layers=4,
+            num_heads=4,
+            local_attention=16,
+            num_labels=2,
+            pad_token_id=0,
+            reference_checkpoint=model_path,
+            tokenizer=local_gpt2_tokenizer_path,
+        )
+        full = build_classifier(full_config, Axis("vocab", 1024), key=random.PRNGKey(0), warm_start=True)
+        for i in range(2):
+            got = np.array(pruned.model.layers[i].mlp.Wi.weight.array)
+            want = np.array(full.model.layers[i].mlp.Wi.weight.array)
+            assert np.allclose(got, want), f"layer {i} Wi mismatch after pruning"
+        assert np.allclose(
+            np.array(pruned.model.embeddings.tok_embeddings.weight.array),
+            np.array(full.model.embeddings.tok_embeddings.weight.array),
+        )

@@ -24,6 +24,7 @@ import logging
 import time
 from dataclasses import dataclass
 
+import fsspec
 import requests
 import warcio
 from fray.types import ResourceConfig
@@ -60,17 +61,36 @@ def _warc_path_hash(warc_path: str) -> str:
     return hashlib.sha256(warc_path.encode()).hexdigest()[:12]
 
 
-def _download_one_warc(warc_path: str) -> list[dict]:
-    """Download a single WARC file and extract HTML response records.
+def _warc_cache_path(warc_path: str) -> str | None:
+    """In-region GCS path for a WARC's cached raw ``.warc.gz``, or ``None`` (local runs).
 
-    Retries on transient errors. Raises on permanent failure.
-    Returns list of {id, html, url, metadata} dicts.
+    STRICTLY within-region: derived from ``marin_prefix()`` — the worker's OWN region
+    bucket — and NEVER references another region. A WARC is multi-GB, so a cross-region
+    read here would be paid egress; on any resolution error we return ``None`` and the
+    caller falls back to Common Crawl. The ``tmp/ttl=2d/`` prefix is auto-expired by the
+    bucket lifecycle rule (delete after 2 days), so the cache self-cleans — no code-side
+    deletion, no bucket-config changes.
+    """
+    try:
+        from rigging.filesystem import marin_prefix
+
+        prefix = marin_prefix()
+        if not prefix.startswith("gs://"):
+            return None
+        return f"{prefix}/tmp/ttl=2d/warc-cache/{_warc_path_hash(warc_path)}.warc.gz"
+    except Exception:
+        return None
+
+
+def _download_warc_bytes_from_cc(warc_path: str) -> bytes:
+    """Fetch a WARC's raw ``.warc.gz`` bytes from Common Crawl over HTTP.
+
+    Retries on transient errors; raises ``RuntimeError`` on permanent failure.
     """
     url = _s3_to_https(warc_path)
-
     for attempt in range(MAX_RETRIES):
         try:
-            logger.info(f"Downloading WARC (attempt {attempt + 1}): {warc_path}")
+            logger.info(f"Downloading WARC from Common Crawl (attempt {attempt + 1}): {warc_path}")
             response = requests.get(url, stream=True, timeout=HTTP_TIMEOUT)
 
             if response.status_code in RETRYABLE_STATUS_CODES:
@@ -83,67 +103,111 @@ def _download_one_warc(warc_path: str) -> list[dict]:
                 continue
 
             response.raise_for_status()
-
-            records = []
-            raw_bytes = io.BytesIO(response.content)
-            parse_errors = 0
-
-            for record in warcio.ArchiveIterator(raw_bytes):
-                try:
-                    if record.rec_type != "response":
-                        continue
-
-                    http_headers = record.http_headers
-                    if http_headers is None:
-                        continue
-                    content_type = http_headers.get_header("Content-Type") or ""
-                    if "text/html" not in content_type.lower():
-                        continue
-
-                    content = record.content_stream().read()
-                    html = content.decode("utf-8", errors="replace")
-                    record_id = record.rec_headers.get_header("WARC-Record-ID") or ""
-                    target_uri = record.rec_headers.get_header("WARC-Target-URI") or ""
-
-                    records.append(
-                        {
-                            "id": record_id,
-                            "html": html,
-                            "url": target_uri,
-                            "metadata": {
-                                "warc_file": warc_path,
-                                "content_length": len(html),
-                            },
-                        }
-                    )
-                except Exception as e:
-                    # Some WARC records have brotli decompression issues or other
-                    # corruption. Skip the individual record, not the whole file.
-                    parse_errors += 1
-                    if parse_errors <= 3:
-                        logger.warning(f"Skipping corrupt record in {warc_path}: {e}")
-
-            if parse_errors > 0:
-                logger.warning(f"Skipped {parse_errors} corrupt records in {warc_path}")
-
-            if not records:
-                logger.warning(f"WARC yielded 0 HTML records: {warc_path}")
-            else:
-                logger.info(f"Extracted {len(records)} HTML pages from {warc_path}")
-
-            return records
+            return response.content
 
         except requests.exceptions.RequestException as e:
             delay = RETRY_BASE_DELAY * (2**attempt)
             if attempt < MAX_RETRIES - 1:
-                logger.warning(
-                    f"Download error on {warc_path} (attempt {attempt + 1}): {e}. " f"Retrying in {delay:.0f}s"
-                )
+                logger.warning(f"Download error on {warc_path} (attempt {attempt + 1}): {e}. Retrying in {delay:.0f}s")
                 time.sleep(delay)
             else:
                 raise RuntimeError(f"Failed to download {warc_path} after {MAX_RETRIES} attempts: {e}") from e
 
     raise RuntimeError(f"Failed to download {warc_path} after {MAX_RETRIES} attempts")
+
+
+def _fetch_warc_bytes(warc_path: str) -> bytes:
+    """Return a WARC's raw ``.warc.gz`` bytes: in-region GCS cache first, else Common
+    Crawl (populating the cache on the way).
+
+    Read-through, within-region cache under ``tmp/ttl=2d/`` (see ``_warc_cache_path``).
+    Purpose: make preemption cheap — a resumed worker re-reads the local copy instead of
+    re-pulling multi-GB from Common Crawl — and cut CC egress to one fetch per WARC per
+    region. Correctness never depends on the cache: a miss or any read/write error falls
+    back to Common Crawl. Cached bytes are the verbatim CC ``response.content``, so
+    extraction output is byte-for-byte unchanged.
+    """
+    cache_path = _warc_cache_path(warc_path)
+
+    if cache_path is not None:
+        try:
+            with fsspec.open(cache_path, "rb") as f:
+                data = f.read()
+            logger.info(f"WARC cache HIT (in-region): {warc_path}")
+            return data
+        except FileNotFoundError:
+            pass
+        except Exception as e:
+            logger.warning(f"WARC cache read failed for {warc_path} ({e}) — using Common Crawl")
+
+    data = _download_warc_bytes_from_cc(warc_path)
+
+    if cache_path is not None:
+        try:
+            with fsspec.open(cache_path, "wb") as f:
+                f.write(data)
+            logger.info(f"WARC cache WRITE (in-region): {warc_path}")
+        except Exception as e:
+            # Best-effort: a race (another worker wrote it) or transient error is harmless.
+            logger.info(f"WARC cache write skipped for {warc_path} ({e})")
+
+    return data
+
+
+def _download_one_warc(warc_path: str) -> list[dict]:
+    """Fetch a single WARC (in-region cache or Common Crawl) and extract HTML response
+    records.
+
+    Returns list of {id, html, url, metadata} dicts. Raises on permanent download failure.
+    """
+    raw_bytes = io.BytesIO(_fetch_warc_bytes(warc_path))
+
+    records = []
+    parse_errors = 0
+    for record in warcio.ArchiveIterator(raw_bytes):
+        try:
+            if record.rec_type != "response":
+                continue
+
+            http_headers = record.http_headers
+            if http_headers is None:
+                continue
+            content_type = http_headers.get_header("Content-Type") or ""
+            if "text/html" not in content_type.lower():
+                continue
+
+            content = record.content_stream().read()
+            html = content.decode("utf-8", errors="replace")
+            record_id = record.rec_headers.get_header("WARC-Record-ID") or ""
+            target_uri = record.rec_headers.get_header("WARC-Target-URI") or ""
+
+            records.append(
+                {
+                    "id": record_id,
+                    "html": html,
+                    "url": target_uri,
+                    "metadata": {
+                        "warc_file": warc_path,
+                        "content_length": len(html),
+                    },
+                }
+            )
+        except Exception as e:
+            # Some WARC records have brotli decompression issues or other
+            # corruption. Skip the individual record, not the whole file.
+            parse_errors += 1
+            if parse_errors <= 3:
+                logger.warning(f"Skipping corrupt record in {warc_path}: {e}")
+
+    if parse_errors > 0:
+        logger.warning(f"Skipped {parse_errors} corrupt records in {warc_path}")
+
+    if not records:
+        logger.warning(f"WARC yielded 0 HTML records: {warc_path}")
+    else:
+        logger.info(f"Extracted {len(records)} HTML pages from {warc_path}")
+
+    return records
 
 
 def _load_manifest(manifest_path: str) -> list[str]:

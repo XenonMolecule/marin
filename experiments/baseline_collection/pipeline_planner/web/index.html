@@ -16,7 +16,7 @@
     <div class="row" id="toolbar" style="margin-bottom: 10px;"></div>
     <p class="muted" id="intro">
       Design a cascaded curation pipeline left→right. Add/disable/reorder classifier stages and swap the terminal
-      extractor; F1 &amp; Levenshtein are vs the 8B gold, projected to <span id="nwarc-lbl"></span> WARCs.
+      extractor; F1 &amp; Levenshtein are vs the selected agreement target (<span id="target-lbl">…</span>), projected to <span id="nwarc-lbl"></span> WARCs.
     </p>
 
     <div class="panel">
@@ -52,7 +52,7 @@
     </div>
     <div class="panel collapsible" id="losses-panel">
       <h2>Pipeline losses — dropped good docs</h2>
-      <div id="losses" class="muted">Click <b>🎲 dropped good docs</b> (toolbar) to see random docs the 8B keeps but this pipeline drops (the recall cost), with where in the cascade each was dropped + how to recover it.</div>
+      <div id="losses" class="muted">Click <b>🎲 dropped good docs</b> (toolbar) to see random docs the agreement target keeps but this pipeline drops (the recall cost), with where in the cascade each was dropped + how to recover it.</div>
     </div>
     <div class="panel collapsible" id="borderline-panel">
       <h2>Borderline inspector</h2>

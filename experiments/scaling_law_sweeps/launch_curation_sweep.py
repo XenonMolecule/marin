@@ -170,6 +170,10 @@ def submit_one(
         # WandB's default init_timeout is 90s, which we've seen time out on
         # TPU workers with slow egress to wandb.ai. Bump to 5 min.
         "WANDB_INIT_TIMEOUT": "300",
+        # Make the TPU compile cache slice-portable so a preempted cell RESUMES
+        # instead of recompiling from scratch. Without this, under any preemption
+        # pressure cells burn all their time recompiling and never complete.
+        "LEVANTER_PORTABLE_TPU_CACHE": "1",
     }
     if hf_token:
         env_vars["HF_TOKEN"] = hf_token
@@ -388,12 +392,21 @@ def submit_all(
     *,
     tracker_prefix: str,
     skip_if_done: bool = True,
+    wave_size: int | None = None,
+    wave_delay: float = 360.0,
     **submit_kwargs,
 ) -> tuple[list[str], list[curation_plan.PlannedRun]]:
-    """Eager-submit all plans. Iris queues whatever can't immediately schedule.
+    """Submit all plans, optionally in throttled waves. Iris queues what can't schedule.
 
     When `skip_if_done=True` (default), we skip any plan whose output path
     contains a `.data_curation_DONE` marker from a prior successful run.
+
+    `wave_size` throttles COLD STARTS, not scheduling. Every training child hits the HF Hub at
+    startup (levanter probes the base config/tokenizer), and the Hub caps at 1000 requests per
+    5 minutes PER TOKEN. Submitting a whole grid at once means every child cold-starts together
+    and the tail gets 429'd to death: measured on the lambda=0.01 launch, 72 simultaneous
+    children killed 14 of them outright, concentrated on multi-host cells where one rate-limited
+    host takes down the whole gang. `None` keeps the old eager behaviour for small launches.
 
     Returns (submitted_job_ids, skipped_plans).
     """
@@ -430,6 +443,14 @@ def submit_all(
                     fixed_model_run_name_core(plan),
                 )
                 continue
+        if wave_size and submitted and len(submitted) % wave_size == 0:
+            logger.info(
+                "wave throttle: %d submitted, sleeping %.0fs before the next %d (HF Hub cold-start cap)",
+                len(submitted),
+                wave_delay,
+                wave_size,
+            )
+            time.sleep(wave_delay)
         try:
             job_id = submit_one(client, plan, tracker_prefix=tracker_prefix, **submit_kwargs)
             submitted.append(job_id)

@@ -130,6 +130,20 @@ BM25_SPECS: dict[str, Bm25DatasetSpec] = {
             ),
             small_provenance=_llm_provenance_globs("llm_pipeline_v1"),
         ),
+        # llm_pipeline_v1_1: a SECOND 300-WARC llm_pipeline_v1 run (dedup + decon
+        # still landing 2026-07-27). Same text-only tier -> url via provenance join
+        # keyed on its own spec_id. The warc-count dir segment (300warcs vs the
+        # 3000_nested draw it was staged from) is wildcarded so the poll fires on
+        # whichever the decon step wrote. landed=False until the decon tree exists.
+        Bm25DatasetSpec(
+            dataset="llm_pipeline_v1_1",
+            region=_C1,
+            small=IndexSource.at(
+                "gs://marin-us-central1/documents/baseline_llm_pipeline_v1_1_decon_deduped/" "*/deduped/data-*.jsonl.gz",
+                landed=False,
+            ),
+            small_provenance=_llm_provenance_globs("llm_pipeline_v1_1"),
+        ),
         # llm_simple_v1 (one-call twin pipeline): 300 dedup + decon, text-only.
         Bm25DatasetSpec(
             dataset="llm_simple_v1",

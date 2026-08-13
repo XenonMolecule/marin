@@ -15,7 +15,7 @@ Results land IN-REGION at
 
 Handoff (run via iris so the parent can submit children and keep them alive):
 
-    iris --cluster marin job run -e WANDB_API_KEY -e HF_TOKEN \\
+    iris --cluster marin job run -e WANDB_API_KEY "$WANDB_API_KEY" -e HF_TOKEN "$HF_TOKEN" \\
         -- python -m experiments.scaling_law_sweeps.olmo_bpb.launch_olmo_bpb_manifest \\
                --manifest experiments/core_eval_manifests/checkpoint_manifest_10k_with_fastpipe_341.txt \\
                --launch
@@ -34,6 +34,7 @@ import logging
 import os
 import sys
 import time
+from collections import Counter
 from dataclasses import dataclass
 
 from iris.cluster.constraints import (
@@ -66,6 +67,10 @@ class CheckpointRow:
     run_name: str
     region: str
     output_path: str  # gs://<bucket>/checkpoints/... (no /hf)
+    # Templated `{run_name}` results dir, relative to the checkpoint's bucket. Overridable so a
+    # side sweep (a different task subset, a reproducibility re-run) writes somewhere else
+    # instead of overwriting the canonical `olmo_bpb_results/<run>/results.json`.
+    results_subpath: str = RESULTS_SUBPATH
 
     @property
     def bucket(self) -> str:
@@ -75,7 +80,7 @@ class CheckpointRow:
         return f"{self.output_path.rstrip('/')}/hf/"
 
     def output_dir(self) -> str:
-        return f"gs://{self.bucket}/{RESULTS_SUBPATH.format(run_name=self.run_name)}"
+        return f"gs://{self.bucket}/{self.results_subpath.format(run_name=self.run_name)}"
 
     def results_json(self) -> str:
         return f"{self.output_dir()}results.json"
@@ -87,7 +92,7 @@ class CheckpointRow:
         return f"gs://{self.bucket}/{HUB_CACHE_SUBPATH}"
 
 
-def rows_from_manifest(manifest_path: str) -> list[CheckpointRow]:
+def rows_from_manifest(manifest_path: str, results_subpath: str = RESULTS_SUBPATH) -> list[CheckpointRow]:
     rows: list[CheckpointRow] = []
     with open(manifest_path, newline="") as f:
         for row in csv.DictReader(f):
@@ -96,6 +101,7 @@ def rows_from_manifest(manifest_path: str) -> list[CheckpointRow]:
                     run_name=row["run_name"].strip(),
                     region=row["region"].strip(),
                     output_path=row["output_path"].strip().rstrip("/"),
+                    results_subpath=results_subpath,
                 )
             )
     return rows
@@ -115,6 +121,8 @@ def submit_one(
     memory_gb: int,
     merge: bool,
     done_marker: str | None,
+    tpu_variants: tuple[str, ...],
+    hub_offline: bool,
 ) -> str:
     cmd_args = [
         "python",
@@ -151,6 +159,15 @@ def submit_one(
         "PYTHONUNBUFFERED": "1",
         "MARIN_MIRROR_BUDGET_GB": "25",
     }
+    if hub_offline:
+        # Zero Hub traffic: the eval requests are staged raw text and the checkpoint carries its
+        # own config + tokenizer, so nothing here NEEDS the network. The historical blocker was
+        # `HFCheckpointConverter.from_hf`, whose registry scan probes every registered config's
+        # default repo and raises offline on a cache miss -- `run_olmo_bpb_eval` now catches that
+        # and resolves LevConfig from the checkpoint's local config.json instead. Verify on one
+        # checkpoint before a wave: an offline miss fails the child rather than falling back.
+        env_vars["HF_HUB_OFFLINE"] = "1"
+        env_vars["TRANSFORMERS_OFFLINE"] = "1"
 
     region_constraint = Constraint.create(
         key=WellKnownAttribute.REGION,
@@ -159,13 +176,13 @@ def submit_one(
         mode=job_pb2.CONSTRAINT_MODE_REQUIRED,
     )
     constraints = [preemptible_constraint(True), region_constraint]
-    if len(set(DEFAULT_TPU_VARIANTS)) > 1:
-        constraints.append(device_variant_constraint(list(DEFAULT_TPU_VARIANTS)))
+    if len(set(tpu_variants)) > 1:
+        constraints.append(device_variant_constraint(list(tpu_variants)))
 
     job = client.submit(
         entrypoint=Entrypoint.from_command(*cmd_args),
         name=f"olmobpb-{row.run_name}{name_suffix}"[:200],
-        resources=ResourceSpec(cpu=8, memory=f"{memory_gb}GB", disk="50GB", device=tpu_device(DEFAULT_TPU_VARIANTS[0])),
+        resources=ResourceSpec(cpu=8, memory=f"{memory_gb}GB", disk="50GB", device=tpu_device(tpu_variants[0])),
         environment=EnvironmentSpec(extras=["tpu", "eval"], env_vars=env_vars),
         constraints=constraints,
         max_retries_preemption=20,
@@ -195,13 +212,49 @@ def main():
         "e.g. _qa_rc.done",
     )
     ap.add_argument("--name-suffix", default="", help="Suffix on child job names to dodge JobAlreadyExists.")
+    ap.add_argument(
+        "--results-subpath",
+        default=RESULTS_SUBPATH,
+        help="Templated '{run_name}' results dir under the checkpoint's bucket. Point a side sweep "
+        "elsewhere so it does not overwrite the canonical olmo_bpb_results/<run>/results.json.",
+    )
     ap.add_argument("--max-count", type=int, default=None, help="Only submit the first N not-yet-done checkpoints.")
     ap.add_argument("--memory-gb", type=int, default=64, help="Child worker memory.")
+    ap.add_argument(
+        "--wave-size",
+        type=int,
+        default=8,
+        help="Pause --wave-delay after this many launches. 0 = all at once. The HF Hub caps at "
+        "1000 API requests / 5 min PER TOKEN and the model load is inherently online (levanter "
+        "probes gpt2), so a big simultaneous launch rate-limits itself. Worse, it rate-limits "
+        "TRAINING children too -- an unthrottled 138-child launch killed 2 runs out of the live "
+        "sweep. Default 8 deliberately: this tool previously had no throttle at all.",
+    )
+    ap.add_argument("--wave-delay", type=float, default=420.0, help="Seconds between waves. Default 420.")
+    ap.add_argument(
+        "--tpu-variants",
+        default=",".join(DEFAULT_TPU_VARIANTS),
+        help="Comma-separated TPU variants for the children. The default exists in us-east5 / "
+        "us-central1 / europe-west4 but NOT in us-west4, which only has v5litepod-*. A child "
+        "asking for a variant its pinned region lacks is rejected at SUBMIT time, so a "
+        "us-west4 manifest must pass e.g. 'v5litepod-4'. Applies to the whole wave, so keep "
+        "one wave per region when the hardware differs.",
+    )
+    ap.add_argument(
+        "--hub-offline",
+        action="store_true",
+        help="Set HF_HUB_OFFLINE/TRANSFORMERS_OFFLINE on the children so they make NO Hub calls. "
+        "The 1000-req/5-min cap is per TOKEN across every job -- eval waves have rate-limited "
+        "live TRAINING children to death -- so going offline removes the whole failure mode "
+        "rather than pacing around it. Requires the staged hub cache to cover every repo the "
+        "load path touches; verify on one checkpoint first, because an offline cache miss is a "
+        "hard failure instead of a silent online fetch.",
+    )
     ap.add_argument("--keepalive-timeout", type=float, default=43200.0, help="Max seconds to hold the parent open.")
     ap.add_argument("--keepalive-poll", type=float, default=300.0, help="Seconds between keep-alive GCS polls.")
     args = ap.parse_args()
 
-    rows = rows_from_manifest(args.manifest)
+    rows = rows_from_manifest(args.manifest, results_subpath=args.results_subpath)
     logger.info("Loaded %d checkpoints from %s", len(rows), args.manifest)
 
     def completion_path(row: CheckpointRow) -> str:
@@ -221,6 +274,12 @@ def main():
     submitted_results: list[str] = []
     skipped: list[str] = []
     incomplete: list[str] = []
+    # Kept separate from `incomplete` on purpose. "No HF checkpoint yet" is expected and
+    # self-healing; "iris refused the submission" is a config error that will never heal and
+    # silently drops the row from the wave. Conflating them hid 132 us-west4 evals -- every
+    # one rejected for requesting a TPU variant that region does not have -- behind a count
+    # that read as ordinary training lag.
+    rejected: list[str] = []
 
     for i, row in enumerate(rows):
         if args.max_count is not None and len(submitted) >= args.max_count:
@@ -255,18 +314,42 @@ def main():
                 memory_gb=args.memory_gb,
                 merge=args.merge,
                 done_marker=args.done_marker,
+                tpu_variants=tuple(v.strip() for v in args.tpu_variants.split(",") if v.strip()),
+                hub_offline=args.hub_offline,
             )
         except Exception as e:
-            logger.error("[%3d] SUBMIT FAILED for %s: %s", i, row.run_name, e)
-            incomplete.append(row.run_name)
+            logger.error("[%3d] SUBMIT REJECTED for %s (region=%s): %s", i, row.run_name, row.region, e)
+            rejected.append(row.run_name)
             continue
         submitted.append((row.run_name, job_id))
         submitted_results.append(completion_path(row))
         logger.info("[%3d] LAUNCHED %s -> %s (region=%s)", i, row.run_name, job_id, row.region)
 
-    logger.info("Summary: submitted=%d skipped=%d incomplete=%d", len(submitted), len(skipped), len(incomplete))
+        if args.wave_size and len(submitted) % args.wave_size == 0:
+            logger.info(
+                "Wave of %d launched; pausing %.0fs to stay under the Hub rate limit...", args.wave_size, args.wave_delay
+            )
+            time.sleep(args.wave_delay)
+
+    logger.info(
+        "Summary: submitted=%d skipped=%d incomplete=%d rejected=%d",
+        len(submitted),
+        len(skipped),
+        len(incomplete),
+        len(rejected),
+    )
     if incomplete:
-        logger.warning("Incomplete: %s", ", ".join(incomplete))
+        logger.warning("Incomplete (no HF checkpoint yet, will heal): %s", ", ".join(incomplete))
+    if rejected:
+        # Loud and per-region: a rejection is a config error, and the region is almost always
+        # the discriminating fact (a variant the region lacks, a bucket it cannot read).
+        by_region = Counter(r.region for r in rows if r.run_name in set(rejected))
+        logger.error(
+            "%d submissions were REJECTED and are NOT running. By region: %s. "
+            "These rows will never complete until the cause is fixed and the wave re-run.",
+            len(rejected),
+            dict(by_region),
+        )
 
     # Keep the parent alive until every child's results.json lands, so iris does not
     # orphan-kill the nested children when the parent exits.

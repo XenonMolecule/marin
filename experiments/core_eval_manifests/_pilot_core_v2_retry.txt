@@ -1,0 +1,3 @@
+run_name,region,output_path
+olmix-high_quality_10k-s42-K363-i0100-w271a855d,europe-west4,gs://marin-eu-west4/checkpoints/olmix-swarm/olmix-high_quality_10k-s42-K363-i0100-w271a855d
+olmix-dclm_10k-s42-K363-i0085-w7983b27c,europe-west4,gs://marin-eu-west4/checkpoints/olmix-swarm/olmix-dclm_10k-s42-K363-i0085-w7983b27c

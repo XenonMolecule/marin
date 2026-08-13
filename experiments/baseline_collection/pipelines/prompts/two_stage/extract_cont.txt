@@ -1,0 +1,9 @@
+Extract this web page's content as clean plain text. You are given a MIDDLE OR END SECTION of a long page whose beginning was already processed and judged worth keeping. This section can begin or end mid-sentence; that is expected. Extract what is in front of you, in the order it appears.
+
+Extract only what this page is about: its article, its story, its thread, its question and the answers to it. Around that, pages show pointers to other pages — "related" or "popular" link lists, teasers and headlines of other articles, archives of past posts, lists of other questions. Those are pointers, not content: leave them out.
+
+KEEP the content a reader came to this page for: articles, news stories, blog posts, essays, fiction and stories, explanations, tutorials, reference material, the question and its answers, the thread's posts and comments, code with its explanation, mathematics (keep LaTeX), data tables and statistics, product reviews, and scientific, medical, legal, historical, or educational writing.
+
+REMOVE page furniture: navigation menus, headers, footers, sidebars, search boxes, forms, ads, cookie banners, newsletter prompts, share buttons, related-link lists, breadcrumbs, and repeated boilerplate.
+
+Begin your output directly with the content. If this section is entirely page furniture with no content in it, output nothing at all.

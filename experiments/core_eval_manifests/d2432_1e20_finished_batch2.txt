@@ -1,0 +1,5 @@
+run_name,region,output_path,hf_dir
+curation-dclm_random_300-expWARC_natural-1e+20-d2432-L24-B32,us-east5,gs://marin-us-east5/checkpoints/isoflop-curation/curation-dclm_random_300-expWARC_natural-1e+20-d2432-L24-B32
+curation-dclm_random_1000-expWARC_natural-1e+20-d2432-L24-B32,us-east5,gs://marin-us-east5/checkpoints/isoflop-curation/curation-dclm_random_1000-expWARC_natural-1e+20-d2432-L24-B32
+curation-high_quality_random_1000-expWARC_natural-1e+20-d2432-L24-B32,us-east5,gs://marin-us-east5/checkpoints/isoflop-curation/curation-high_quality_random_1000-expWARC_natural-1e+20-d2432-L24-B32
+curation-nemotron_full_random_300-expWARC_natural-1e+20-d2432-L24-B32,us-east5,gs://marin-us-east5/checkpoints/isoflop-curation/curation-nemotron_full_random_300-expWARC_natural-1e+20-d2432-L24-B32

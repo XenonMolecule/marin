@@ -31,6 +31,7 @@ from haliax.state_dict import ModuleWithStateDictSerialization, StateDict, from_
 
 from levanter.compat.hf_checkpoints import HFCheckpointConverter, HFCompatConfig
 from levanter.layers.attention import AttentionBackend, AttentionMask, dot_product_attention
+from levanter.models.classification import ClassificationExample, register_classifier_arch
 from levanter.layers.normalization import LayerNormConfig
 from levanter.layers.rotary import DefaultRotaryEmbeddingsConfig, RotaryEmbeddings
 from levanter.models.lm_model import LmConfig, LmHeadModel
@@ -494,27 +495,6 @@ class ModernBertForMaskedLM(ModuleWithStateDictSerialization, LmHeadModel[Modern
         return dataclasses.replace(self, model=new_model, decoder=new_decoder)
 
 
-class ClassificationExample(eqx.Module):
-    """A single (tokens, label) example for sequence classification.
-
-    ``attn_mask`` is bidirectional by default (encoder); pad positions are handled via
-    ``segment_ids`` on the mask rather than truncation so XLA shapes stay static.
-    """
-
-    tokens: NamedArray
-    label: NamedArray  # scalar int (no Pos axis)
-    attn_mask: AttentionMask | NamedArray | None = None
-
-    @staticmethod
-    def init(
-        tokens: NamedArray,
-        label: NamedArray,
-        *,
-        attn_mask: AttentionMask | NamedArray | None = None,
-    ) -> "ClassificationExample":
-        return ClassificationExample(tokens=tokens, label=label, attn_mask=attn_mask)
-
-
 class ModernBertForSequenceClassification(ModuleWithStateDictSerialization):
     """ModernBERT encoder + HF-compatible classification head (pool -> head -> classifier).
 
@@ -637,6 +617,68 @@ def load_hf_sequence_classifier(
     return _load(template)
 
 
+@LmConfig.register_subclass("modernbert_pruned")
+@dataclass(frozen=True)
+class PrunedModernBertConfig(ModernBertConfig):
+    """Layer-pruned warm start: the reference checkpoint is loaded at its own full depth and
+    truncated to the BOTTOM ``num_layers`` layers ("Poor Man's BERT": bottom layers carry most of
+    the classification signal). ``num_layers`` here is the PRUNED depth. Keeping a prefix preserves
+    each kept layer's global/local attention assignment and rope theta (both fixed at layer init).
+    """
+
+
+def _build_modernbert_classifier(
+    config: ModernBertConfig, Vocab: Axis, *, key, warm_start: bool, axis_mapping=None, compute_dtype=None
+) -> ModernBertForSequenceClassification:
+    if not warm_start:
+        return ModernBertForSequenceClassification.init(Vocab, config, key=key)
+    converter = config.hf_checkpoint_converter()
+    masked_lm = converter.load_pretrained(
+        ModernBertForMaskedLM,
+        ref=config.reference_checkpoint,
+        config=config,
+        axis_mapping=axis_mapping,
+        dtype=compute_dtype,
+    )
+    return ModernBertForSequenceClassification.from_masked_lm(masked_lm, config, key=key)
+
+
+def _build_pruned_modernbert_classifier(
+    config: PrunedModernBertConfig, Vocab: Axis, *, key, warm_start: bool, axis_mapping=None, compute_dtype=None
+) -> ModernBertForSequenceClassification:
+    if not warm_start:
+        return ModernBertForSequenceClassification.init(Vocab, config, key=key)
+    converter = config.hf_checkpoint_converter()
+    hf_config = converter.hf_config_from_hf_checkpoint(config.reference_checkpoint)
+    if config.num_layers > hf_config.num_hidden_layers:
+        raise ValueError(
+            f"pruned num_layers={config.num_layers} exceeds reference depth {hf_config.num_hidden_layers}"
+        )
+    full_config = dataclasses.replace(config, num_layers=hf_config.num_hidden_layers)
+    masked_lm = converter.load_pretrained(
+        ModernBertForMaskedLM,
+        ref=config.reference_checkpoint,
+        config=full_config,
+        axis_mapping=axis_mapping,
+        dtype=compute_dtype,
+    )
+    pruned_encoder = dataclasses.replace(
+        masked_lm.model, config=config, layers=masked_lm.model.layers[: config.num_layers]
+    )
+    pruned_lm = dataclasses.replace(masked_lm, model=pruned_encoder)  # pyrefly: ignore[bad-specialization]
+    return ModernBertForSequenceClassification.from_masked_lm(pruned_lm, config, key=key)
+
+
+def _save_modernbert_classifier(config: ModernBertConfig, model, path: str) -> None:
+    config.hf_checkpoint_converter().save_pretrained(model, path, save_tokenizer=True)
+
+
+register_classifier_arch(ModernBertConfig, build=_build_modernbert_classifier, save=_save_modernbert_classifier)
+register_classifier_arch(
+    PrunedModernBertConfig, build=_build_pruned_modernbert_classifier, save=_save_modernbert_classifier
+)
+
+
 __all__ = [
     "ClassificationExample",
     "ModernBertConfig",
@@ -644,5 +686,6 @@ __all__ = [
     "ModernBertForMaskedLM",
     "ModernBertForSequenceClassification",
     "ModernBertPredictionHead",
+    "PrunedModernBertConfig",
     "load_hf_sequence_classifier",
 ]

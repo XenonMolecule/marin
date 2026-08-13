@@ -67,6 +67,7 @@ def _process_one(
     tokenizer,
     bucket: str,
     chunk_records: int = CHUNK_RECORDS,
+    cleanup_chunks: bool = True,
 ) -> dict:
     t0 = time.monotonic()
     records = _decode_one_warc(warc_path)
@@ -125,6 +126,9 @@ def _process_one(
     merged = pa.concat_tables(tables) if tables else batch_format.PRESURVIVOR_SCHEMA.empty_table()
     batch_format.write_table(presurvivor_path, merged)
     n_presurv = merged.num_rows
+    del tables, merged
+    if cleanup_chunks:
+        batch_format.drop_chunk_dir(chunk_dir)
 
     try:
         with fsspec.open(f"{spec.namespace(bucket)}/timing_a/data-{warc_hash}.json", "w") as f:
@@ -233,6 +237,13 @@ def main() -> None:
     )
     ap.add_argument("--rescue-stale-minutes", type=float, default=RESCUE_STALE_MINUTES)
     ap.add_argument("--chunk-records", type=int, default=CHUNK_RECORDS, help="Sub-WARC checkpoint size (input records).")
+    ap.add_argument(
+        "--keep-chunks",
+        dest="cleanup_chunks",
+        action="store_false",
+        default=True,
+        help="Keep sub-WARC checkpoint chunks after merge (default deletes: ~4 TiB at 10k scale).",
+    )
     args = ap.parse_args()
 
     _check_deps()
@@ -255,7 +266,13 @@ def main() -> None:
         return
 
     process_one = functools.partial(
-        _process_one, spec=spec, model=model, tokenizer=tokenizer, bucket=args.bucket, chunk_records=args.chunk_records
+        _process_one,
+        spec=spec,
+        model=model,
+        tokenizer=tokenizer,
+        bucket=args.bucket,
+        chunk_records=args.chunk_records,
+        cleanup_chunks=args.cleanup_chunks,
     )
     run_claim_loop(
         spec,

@@ -10,6 +10,7 @@ import json
 
 import numpy as np
 import pyarrow as pa
+import pytest
 
 from experiments.fast_curation import batch_format
 
@@ -154,3 +155,67 @@ def test_keeplist_roundtrip(tmp_path):
     assert t.schema.equals(batch_format.KEEPLIST_SCHEMA)
     got = dict(zip(t.column("doc_id").to_pylist(), t.column("modernbert_prob").to_pylist(), strict=True))
     assert abs(got["a"] - 0.30) < 1e-6 and abs(got["b"] - 0.05) < 1e-6
+
+
+def test_pooled_keeplist_marks_unscored_docs_nan(tmp_path):
+    """A doc the pooled pre-filter drops is never scored by ModernBERT, so it must carry NaN — and
+    Phase C's ``prob >= threshold`` must then exclude it with no special-casing (NaN compares False).
+    If this regressed, pooled-dropped docs would silently flow into the final corpus."""
+    path = str(tmp_path / "keeplist.parquet")
+    doc_ids = ["kept", "pooled_dropped", "mb_dropped"]
+    mb = [0.9, float("nan"), 0.01]
+    pooled = [0.8, 0.01, 0.8]
+    batch_format.write_keeplist(path, doc_ids, mb, pooled_probs=pooled)
+
+    table = batch_format.read_table(path)
+    assert table.schema.names == ["doc_id", "modernbert_prob", "pooled_prob"]
+    prob_of = dict(zip(table.column("doc_id").to_pylist(), table.column("modernbert_prob").to_pylist(), strict=True))
+    threshold = 0.41
+    keep = [d for d in doc_ids if prob_of[d] >= threshold]
+    assert keep == ["kept"], "only the doc that passed BOTH stages survives"
+    assert np.isnan(prob_of["pooled_dropped"]), "pooled-dropped must stay NaN, not 0.0"
+
+
+def test_keeplist_without_pooled_keeps_the_legacy_schema(tmp_path):
+    """The v1-v3 line must be byte-compatible: fastpipe_v3 is live with ~3,602 extracted WARCs."""
+    path = str(tmp_path / "legacy.parquet")
+    batch_format.write_keeplist(path, ["a", "b"], [0.9, 0.1])
+    assert batch_format.read_table(path).schema.names == ["doc_id", "modernbert_prob"]
+
+
+def test_pooled_kept_schema_is_conditional_and_survives_the_write(tmp_path):
+    """`pooled_prob` must reach disk for a pooled spec, and must NOT widen the schema of the live
+    v1-v3 line (KEPT_SCHEMA is shared, and Phase C concat_tables would mix schemas)."""
+    from experiments.fast_curation.spec import get_spec
+
+    assert batch_format.kept_schema_for(get_spec("fastpipe_v3")) is batch_format.KEPT_SCHEMA
+    pooled_schema = batch_format.kept_schema_for(get_spec("lpv11_fastpipe_v1"))
+    assert "pooled_prob" in pooled_schema.names
+
+    row = {
+        n: v
+        for n, v in zip(
+            batch_format.KEPT_SCHEMA.names,
+            ["d1", "http://x", "h", "CC-MAIN-2020-05", 0.9, "text", [1, 2, 3], 3, 0.8],
+            strict=True,
+        )
+    }
+    table = pa.table({**{k: [v] for k, v in row.items()}, "pooled_prob": [0.55]}, schema=pooled_schema)
+    path = str(tmp_path / "kept.parquet")
+    batch_format.write_kept(path, table, pooled_schema)
+    back = batch_format.read_table(path)
+    assert back.schema.equals(pooled_schema), "the write must not silently narrow the schema"
+    assert back.column("pooled_prob").to_pylist() == pytest.approx([0.55])  # stored float32
+
+
+def test_drop_chunk_dir_is_safe_and_best_effort(tmp_path, monkeypatch):
+    """Chunk cleanup must never fail a WARC that is otherwise complete."""
+    # A nonexistent dir is a no-op, not an error.
+    assert batch_format.drop_chunk_dir("gs://marin-us-east5/definitely/not/a/real/chunk/dir/xyz") == 0
+
+    class Boom:
+        def exists(self, p):
+            raise RuntimeError("GCS is having a day")
+
+    monkeypatch.setattr(batch_format.fsspec, "filesystem", lambda *a, **k: Boom())
+    assert batch_format.drop_chunk_dir("gs://whatever") == 0, "a GCS failure must not propagate"

@@ -79,6 +79,25 @@ METHOD_NAMES: tuple[str, ...] = (
     "fineweb_cc_10k",
     "fineweb_edu_10k",
     "resiliparse_10k",
+    # OLMIX-optimized mixture arms over each corpus's own 24x5 grid (R=30B, k=20).
+    # Same corpus / tokenizer / d_obs as the base arm, so they sit on the identical
+    # frozen grid and are comparable cell-for-cell. Grid cells are NOT in us-central2,
+    # so these must launch with --allowed-regions us-central1 us-east5 us-west4 europe-west4.
+    "dclm_10k_mix",
+    "high_quality_10k_mix",
+    # Same solves at KL lambda=0.01 instead of 0.05 -- a weaker pull toward the natural prior,
+    # so the mixture is more concentrated. Identical grid/corpus/tokenizer as the arms above.
+    "dclm_10k_mix_lambda0p01",
+    "high_quality_10k_mix_lambda0p01",
+    # Mixtures fitted against DCLM Core v2 instead of the olmo_base_easy devset, at both KL
+    # strengths. Same grid/corpus/tokenizer as the arms above, so still cell-for-cell comparable.
+    "dclm_10k_mix_corev2_lambda0p05",
+    "dclm_10k_mix_corev2_lambda0p01",
+    "high_quality_10k_mix_corev2_lambda0p05",
+    "high_quality_10k_mix_corev2_lambda0p01",
+    # Mixtures steered toward the BLEnD cultural-knowledge benchmark (16 country tasks).
+    "dclm_10k_mix_blend_lambda0p01",
+    "high_quality_10k_mix_blend_lambda0p01",
     "fastpipe_v3_100",
     "fastpipe_v3_80",
     "fastpipe_v3_60",
@@ -203,6 +222,32 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--dry-run", action="store_true", help="Print the grid, do not submit.")
     p.add_argument("--no-skip-if-done", action="store_true", help="Re-submit completed runs.")
     p.add_argument("--max-count", type=int, default=None, help="Cap children submitted (smoke test).")
+    p.add_argument(
+        "--wave-size",
+        type=int,
+        default=8,
+        help="Submit children in waves of this size, pausing --wave-delay between them. Throttles "
+        "HF Hub COLD STARTS (1000 req/5min per token), not scheduling. Launching a 72-cell grid "
+        "unthrottled killed 14 children outright. 0 disables.",
+    )
+    p.add_argument("--wave-delay", type=float, default=360.0, help="Seconds between submit waves.")
+    p.add_argument(
+        "--max-budget",
+        type=float,
+        default=None,
+        help="Skip cells whose FLOP budget exceeds this. The top rung (1.8e21, which run names "
+        "round to '2e+21') is the two widest cells per arm and takes 48-94h each -- ~all of the "
+        "sweep's wall clock. `--max-budget 9e20` yields the 36-cell-per-arm grid.",
+    )
+    p.add_argument(
+        "--only",
+        nargs="+",
+        default=None,
+        help="Launch ONLY cells whose run_name_core contains one of these substrings, e.g. "
+        "'9e+19-d512-L6-B512'. For targeted relaunch of interrupted cells while others are still "
+        "training: the default behaviour re-dispatches every incomplete cell, which duplicates "
+        "live runs. Errors if a pattern matches nothing.",
+    )
     p.add_argument("--wandb-project", default="marin")
     p.add_argument("--wandb-entity", default="marin-community")
     p.add_argument("--wandb-group", default=DEFAULT_WANDB_GROUP)
@@ -218,6 +263,25 @@ def main(argv: list[str] | None = None) -> None:
     args = _parse_args(argv)
 
     plans = enumerate_10k_natural_plans(tuple(args.methods))
+    if args.max_budget is not None:
+        kept = [p for p in plans if p.budget <= args.max_budget]
+        logger.info(
+            "--max-budget %.1e: keeping %d of %d cells (dropped budgets: %s)",
+            args.max_budget,
+            len(kept),
+            len(plans),
+            sorted({f"{p.budget:.1e}" for p in plans if p.budget > args.max_budget}),
+        )
+        plans = kept
+    if args.only:
+        # Targeted relaunch. Without this the coordinator re-dispatches EVERY incomplete cell,
+        # and since there is no claim system that duplicates whatever is training right now.
+        # `--max-count` is not a substitute: it slices the first N plans in enumeration order.
+        unmatched = [sub for sub in args.only if not any(sub in p.run_name_core for p in plans)]
+        if unmatched:
+            raise ValueError(f"--only patterns matched no cell: {unmatched}")
+        plans = [p for p in plans if any(sub in p.run_name_core for sub in args.only)]
+        logger.info("--only selected %d cells: %s", len(plans), [p.run_name_core for p in plans])
     if args.max_count is not None:
         plans = plans[: args.max_count]
 
@@ -242,6 +306,8 @@ def main(argv: list[str] | None = None) -> None:
         plans,
         tracker_prefix=args.tracker_prefix,
         skip_if_done=not args.no_skip_if_done,
+        wave_size=args.wave_size or None,
+        wave_delay=args.wave_delay,
         child_priority_band=PRIORITY_BAND_MAP[args.child_priority],
         wandb_api_key=wandb_api_key,
         hf_token=hf_token,

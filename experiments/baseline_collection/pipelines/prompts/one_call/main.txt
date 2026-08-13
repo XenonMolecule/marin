@@ -1,0 +1,9 @@
+You are given the HTML source of a web page (scripts and styles stripped). Decide whether the page belongs in a high-quality text corpus; if it does, output its content as clean plain text. You may be given the whole page or one section of a long page — a section can begin or end mid-sentence; that is expected.
+
+FIRST, quote a few words from the main text and name their language; if not English (code counts as English), output exactly [NO_USEFUL_CONTENT] and stop. THEN apply the reader test: would a visitor READ this page start to end, or LOOK IT OVER and click away? Galleries, listings, product pages, search results, archives of teasers, profiles, login screens and event notices are looked over — output exactly [NO_USEFUL_CONTENT] and stop. Articles, stories, tutorials, discussions, Q&A and code are read.
+
+If the page would be read, output its content as clean plain text:
+- Keep the content a reader came for: articles, stories, explanations, tutorials, reference material, the question and its answers, the thread's posts and comments with their usernames and dates, code with its explanation, mathematics (keep LaTeX), data tables and statistics.
+- Leave out the furniture and the pointers: navigation menus, headers, footers, sidebars, search boxes, forms, ads, cookie banners, newsletter prompts, share buttons, "related" and "popular" link lists, teasers for other pages, breadcrumbs, and repeated boilerplate.
+- Reproduce the kept text faithfully: the same words in the same order, no summarizing, no rewriting, no added formatting syntax (no markdown headings, no ** bold, no [link](url) notation).
+- Begin your output directly with the page content. If this section is entirely furniture, output nothing at all.

@@ -30,6 +30,7 @@ from experiments.scaling_law_sweeps.completed_adamh import (
 )
 from experiments.scaling_law_sweeps.data_curation_math import (
     CurationMethod,
+    GridMixCurationMethod,
     ReweightedCurationMethod,
     implicit_target_exp_a,
     load_d_obs_from_stats,
@@ -155,6 +156,21 @@ _D_OBS_DEFAULTS: dict[str, int] = {
     "dclm_random_300warcs-cbd706": 214_838_835,
     "nemotron_full_random_300warcs-39307a": 318_293_446,
     "high_quality_random_300warcs-c6c5a5": 639_355_979,
+    # high_quality_v2 (new extractor) over the same 300 random WARCs — 3x the tokens of v1 (keeps more data).
+    "high_quality_v2_decon_300warcs-3d73da": 1_972_978_146,
+    "llm_pipeline_v1_decon_300warcs-b834c5": 3_353_097_168,
+    "llm_pipeline_v1_1_decon_300warcs-1563f5": 4_261_414_828,
+    # N=3000 nested-ladder draw (random_warcs_3000_nested.txt, 100⊂300⊂…⊂3000).
+    # 25.16M docs / 936 shards. NOTE the 3k baselines (dclm/nemotron/resiliparse_random_3000)
+    # are on the INDEPENDENT draw and overlap this set by only 1423/3000.
+    "llm_pipeline_v1_1_decon_3000warcs-aa7070": 36_648_839_862,
+    "llm_simple_v1_decon_300warcs-b8a945": 4_259_336_845,
+    # fastpipe_v3 bands @ N=300 (global 10k dedup+decon, subset to the 300 by text, then thresholded).
+    "fastpipe_v3_decon_300warcs-095914": 1_425_374_475,
+    "fastpipe_v3_80_decon_300warcs-a2ea2c": 1_196_359_639,
+    "fastpipe_v3_60_decon_300warcs-888150": 902_223_137,
+    "fastpipe_v3_40_decon_300warcs-e667fb": 569_103_297,
+    "fastpipe_v3_20_decon_300warcs-ff2322": 274_632_363,
     "dclm_random_500warcs-b8780e": 356_033_903,
     "nemotron_full_random_500warcs-3f7ddf": 520_096_252,
     "high_quality_random_500warcs-5cc14b": 1_050_918_135,
@@ -218,6 +234,13 @@ _D_OBS_DEFAULTS: dict[str, int] = {
     # conditioned_text field. us-east5 ONLY (cache not mirrored). total_tokens
     # from train/.stats.json (5,918,974 docs).
     "sysprompt_dclm_qfull1-0ba2ee": 7818175437,
+    # --- 998M three-way system-prompt ablation on the DCLM-30B corpus (9e19) ---
+    # A = [S][D] (conditioned_text), C = the SAME docs without [S] (text),
+    # B = A's docs + extra docs, token-matched to A. From train/.stats.json.
+    # Ratios confirm the design: B/A = 100.03%, C/A = 98.35% (the [S] overhead).
+    "sysprompt30b_998m_9e19_A-94f799": 14810496434,
+    "sysprompt30b_998m_9e19_B-64d3a5": 14815377151,
+    "sysprompt30b_998m_9e19_C-c94a3d": 14565835827,
     # --- WARC-scaling sweep subsamples (N ∈ {100, 500, 1000, 2000}) ---
     # Read 2026-04-29 from {bucket}/tokenized/{key}/train/.stats.json.
     # dclm: source us-central2; mirrored to us-central1.
@@ -244,6 +267,7 @@ _D_OBS_DEFAULTS: dict[str, int] = {
     # dedup_resiliparse_warc_scaling.py in us-east5 (raw extraction
     # pre-mirrored from us-central2). Tokenized in us-east5; pin_region on
     # the methods below enforces region locality.
+    "resiliparse_dedup_300warcs-24d661": 11_361_792_146,
     "resiliparse_dedup_500warcs-a491f7": 18_484_848_433,
     "resiliparse_dedup_1000warcs-4384bb": 35_289_322_730,
     "resiliparse_dedup_2000warcs-7e2171": 66_568_599_303,
@@ -294,6 +318,10 @@ _D_OBS_DEFAULTS: dict[str, int] = {
     "high_quality_2000warcs-5d569a": 7_393_534_806,
     "high_quality_3000warcs-b9cfe2": 9_445_377_136,
     "med_quality_100warcs-1c23ed": 994_571_360,
+    # random-300 draw (lpv1_300_done manifest) — the comparison point, distinct from the
+    # scaling-curve med_quality_*warcs above (which use baseline_warcs_3000 prefixes).
+    "med_quality_300warcs-b87e1b": 2_761_298_543,
+    "low_quality_300warcs-2c2db2": 4_711_077_904,
     "med_quality_500warcs-da4724": 4_568_817_591,
     "med_quality_1000warcs-84becd": 9_626_306_890,
     "med_quality_2000warcs-37ac75": 18_079_574_033,
@@ -352,6 +380,30 @@ def _method(
         sampled_warcs=sampled_warcs,
         reproduce_per_region=reproduce_per_region,
         pin_region=pin_region,
+    )
+
+
+def _grid_mix_method(name: str, base_cache_hash: str, grid_corpus: str, mixture_tag: str = "") -> GridMixCurationMethod:
+    """An OLMIX-mixture arm over `grid_corpus`'s 24x5 grid.
+
+    Reuses the BASE corpus's `d_obs` verbatim -- the grid cells partition exactly that corpus
+    (verified: dclm 7.332B, high_quality 21.297B on both sides, same Llama-3.1 tokenizer), so
+    `s` and the natural-epoch target match the base arm cell-for-cell. Anything else would make
+    the mix-vs-natural comparison measure two things at once.
+
+    `mixture_tag` selects the vendored solve; empty means the default lambda=0.05 file. The
+    KL regularizer lambda sets how far the solve may pull away from the natural distribution,
+    so a tagged arm differs from the default arm in that one number and nothing else.
+    """
+    if base_cache_hash not in _D_OBS_DEFAULTS:
+        raise KeyError(f"No hardcoded D_obs for {base_cache_hash!r}. Add to _D_OBS_DEFAULTS.")
+    return GridMixCurationMethod(
+        name=name,
+        tokenized_rel_path=f"tokenized/{base_cache_hash}/",
+        d_obs_tokens=_D_OBS_DEFAULTS[base_cache_hash],
+        sampled_warcs=EXPC_SAMPLED_WARCS,
+        grid_corpus=grid_corpus,
+        mixture_rel_path=f"experiments/data_mixing/mixtures/{grid_corpus}_R3e10_k20{mixture_tag}.json",
     )
 
 
@@ -450,6 +502,119 @@ METHODS: dict[str, CurationMethod] = {
         "high_quality_decon_10364warcs-6451c8",
         sampled_warcs=EXPC_SAMPLED_WARCS,
     ),
+    # --- OLMIX-optimized mixture arms (registered 2026-08-01) ---
+    # Same corpus, same tokenizer, same d_obs as the base arm above; the ONLY difference is the
+    # sampling weights over the 24x5 topic/quality grid, fit at the locked target R=30B, k=20.
+    # Grid cells live in us-east5 / us-central1 / europe-west4 / us-west4 but NOT us-central2,
+    # so these MUST be launched with --allowed-regions excluding us-central2 (the v4 pool).
+    "dclm_10k_mix": _grid_mix_method("dclm_10k_mix", "dclm_400m_1x_10k_dclm-3df0ba", "dclm_10k"),
+    "high_quality_10k_mix": _grid_mix_method(
+        "high_quality_10k_mix", "high_quality_decon_10364warcs-6451c8", "high_quality_10k"
+    ),
+    # --- Weaker-prior variants (registered 2026-08-03) ---
+    # Same swarm, same fitted laws, same (R, k); only the KL regularizer changes, 0.05 -> 0.01.
+    # Motivation: the lambda=0.05 mixes improved olmo_base_easy but did not transfer to DCLM
+    # Core v2, and one hypothesis is that they stay too close to the natural distribution. At
+    # lambda=0.01 the solve moves 38% (dclm) / 45% (hq) of the mixture mass off natural versus
+    # 19% / 22% at the default, and reaches ~85-90% of the gain available at lambda=0.
+    # Caveat to carry into any comparison: these were solved from a LATER fit instance than the
+    # lambda=0.05 files (torch-LBFGS is not reproducible across worker environments), which adds
+    # ~2% TV of fit noise on top of the lambda effect. See the mixture JSON's `fit_instance_note`.
+    # Tagged `lambda0p01`, not `kl0p01`: a `k`-prefixed tag beside `_k20` reads as a second
+    # repetition factor, which it is not.
+    "dclm_10k_mix_lambda0p01": _grid_mix_method(
+        "dclm_10k_mix_lambda0p01", "dclm_400m_1x_10k_dclm-3df0ba", "dclm_10k", mixture_tag="_lambda0p01"
+    ),
+    "high_quality_10k_mix_lambda0p01": _grid_mix_method(
+        "high_quality_10k_mix_lambda0p01",
+        "high_quality_decon_10364warcs-6451c8",
+        "high_quality_10k",
+        mixture_tag="_lambda0p01",
+    ),
+    # --- Core-v2-targeted mixture arms (registered 2026-08-05) ---
+    # Same swarm, same (R=30B, k=20), same grid caches as the arms above. What changes is the
+    # OBJECTIVE the per-task laws were fit against: DCLM Core v2's 22 tasks instead of the
+    # 42-task OLMo Base-Easy bpb devset. This is the direct answer to the note on the
+    # lambda0p01 arms above -- rather than hoping a bpb-optimal mixture transfers to Core v2,
+    # these solve for Core v2 itself.
+    #
+    # Core v2 enters the fit as `1 - centered_accuracy`, i.e. an ERROR. `olmix_solve` minimises
+    # a convex `sum(exp(t @ x))`; `cp.Maximize` of that is not DCP and ECOS refuses it, so the
+    # target must be lower-is-better exactly as bpb is. argmin over mixtures == argmax of
+    # centered accuracy.
+    #
+    # Three things to carry into any comparison:
+    #   * IN-SAMPLE. Core v2 is the held-out set for the bpb objective (olmix_tasks builds the
+    #     42-task devset by removing every Core v2 task). A mixture solved against Core v2 is
+    #     optimised on the metric it will be judged by -- do not report it as a held-out win.
+    #   * LOOSER LAWS. Accuracy is coarser and more quantised than bpb: average per-task fit
+    #     correlation is 0.804 (dclm) / 0.738 (hq) against the bpb fits' 0.957.
+    #   * OPPOSITE SHAPE. At lambda=0.05 the Core v2 solve stays CLOSER to natural than the bpb
+    #     solve (TV 0.155 vs 0.190 dclm; 0.100 vs 0.222 hq) and far less peaked. The bpb devset
+    #     is code/math-heavy and rewards concentration; Core v2 is commonsense QA + reading
+    #     comprehension and rewards breadth.
+    # Region constraint is identical to the arms above: grid cells are absent from us-central2.
+    "dclm_10k_mix_corev2_lambda0p05": _grid_mix_method(
+        "dclm_10k_mix_corev2_lambda0p05",
+        "dclm_400m_1x_10k_dclm-3df0ba",
+        "dclm_10k",
+        mixture_tag="_corev2_lambda0p05",
+    ),
+    "dclm_10k_mix_corev2_lambda0p01": _grid_mix_method(
+        "dclm_10k_mix_corev2_lambda0p01",
+        "dclm_400m_1x_10k_dclm-3df0ba",
+        "dclm_10k",
+        mixture_tag="_corev2_lambda0p01",
+    ),
+    "high_quality_10k_mix_corev2_lambda0p05": _grid_mix_method(
+        "high_quality_10k_mix_corev2_lambda0p05",
+        "high_quality_decon_10364warcs-6451c8",
+        "high_quality_10k",
+        mixture_tag="_corev2_lambda0p05",
+    ),
+    "high_quality_10k_mix_corev2_lambda0p01": _grid_mix_method(
+        "high_quality_10k_mix_corev2_lambda0p01",
+        "high_quality_decon_10364warcs-6451c8",
+        "high_quality_10k",
+        mixture_tag="_corev2_lambda0p01",
+    ),
+    # --- BLEnD-objective arms (16 country tasks, everyday-life QA, gold bpb) ---
+    # The one objective here that does NOT reward Science & Tech: it holds that topic at
+    # 0.78-1.05x natural in all four fits while the bpb devset pushes it to 1.9-4.4x and Core v2
+    # to 1.4-2.6x. Weight goes instead to Education & Jobs (2.6-4.2x in EVERY fit), plus Social
+    # Life and History (dclm) or Fashion & Beauty and Travel (hq). TV(BLEnD, bpb) exceeds
+    # TV(bpb, core_v2) in every fit, so this is a genuinely different direction rather than a
+    # restatement of either -- it steers an everyday-life-vs-technical-prose TOPIC axis.
+    #
+    # Unlike the corev2 arms above, this objective is DISJOINT from both the bpb devset and Core
+    # v2, so both remain genuinely held out for a model trained on these mixtures. Read the
+    # per-file `fit_instance_note` first: gold-bpb scoring never sees BLEnD's cross-country
+    # distractors, which is the construction that makes BLEnD a cultural test.
+    # Region constraint is identical to the arms above: grid cells are absent from us-central2.
+    "dclm_10k_mix_blend_lambda0p05": _grid_mix_method(
+        "dclm_10k_mix_blend_lambda0p05",
+        "dclm_400m_1x_10k_dclm-3df0ba",
+        "dclm_10k",
+        mixture_tag="_blend_lambda0p05",
+    ),
+    "dclm_10k_mix_blend_lambda0p01": _grid_mix_method(
+        "dclm_10k_mix_blend_lambda0p01",
+        "dclm_400m_1x_10k_dclm-3df0ba",
+        "dclm_10k",
+        mixture_tag="_blend_lambda0p01",
+    ),
+    "high_quality_10k_mix_blend_lambda0p05": _grid_mix_method(
+        "high_quality_10k_mix_blend_lambda0p05",
+        "high_quality_decon_10364warcs-6451c8",
+        "high_quality_10k",
+        mixture_tag="_blend_lambda0p05",
+    ),
+    "high_quality_10k_mix_blend_lambda0p01": _grid_mix_method(
+        "high_quality_10k_mix_blend_lambda0p01",
+        "high_quality_decon_10364warcs-6451c8",
+        "high_quality_10k",
+        mixture_tag="_blend_lambda0p01",
+    ),
     # --- Dilution-ablation variants of high_quality ---
     # Base hq cache + both variant caches (hq_dense, hq_epoch_sub344) exist in BOTH
     # us-central1 and us-east5, so pin_region=None lets runs float across those two
@@ -495,6 +660,32 @@ METHODS: dict[str, CurationMethod] = {
         "sysprompt_dclm_qfull1-0ba2ee",
         sampled_warcs=EXPC_SAMPLED_WARCS,
         pin_region="us-east5",
+    ),
+    # 998M three-way system-prompt ablation on the DCLM-30B corpus @ 9e19.
+    # Differ ONLY in data; optimizer HP are the frozen d1536@9e19 cell for all
+    # three, and train_steps is one epoch of each arm's own cache.
+    #   A  [S][D] prepended        (conditioned_text)
+    #   B  token-matched baseline  (A's docs + extra, text)
+    #   C  doc-matched baseline    (A's exact docs, text)
+    # Caches exist ONLY in us-central1, so pin_region forces training there —
+    # which is also where v5p-16 lives.
+    "sysprompt30b_998m_9e19_A": _method(
+        "sysprompt30b_998m_9e19_A",
+        "sysprompt30b_998m_9e19_A-94f799",
+        sampled_warcs=EXPC_SAMPLED_WARCS,
+        pin_region="us-central1",
+    ),
+    "sysprompt30b_998m_9e19_B": _method(
+        "sysprompt30b_998m_9e19_B",
+        "sysprompt30b_998m_9e19_B-64d3a5",
+        sampled_warcs=EXPC_SAMPLED_WARCS,
+        pin_region="us-central1",
+    ),
+    "sysprompt30b_998m_9e19_C": _method(
+        "sysprompt30b_998m_9e19_C",
+        "sysprompt30b_998m_9e19_C-c94a3d",
+        sampled_warcs=EXPC_SAMPLED_WARCS,
+        pin_region="us-central1",
     ),
     # --- Random 3000-WARC sample (independent from the head-biased 3000-WARC
     #     methods; uniform draw seed 0, manifest baseline_warcs_3000_random.txt).
@@ -543,6 +734,65 @@ METHODS: dict[str, CurationMethod] = {
     ),
     "high_quality_random_300": _method(
         "high_quality_random_300", "high_quality_random_300warcs-c6c5a5", sampled_warcs=300, pin_region="us-east5"
+    ),
+    # llm_pipeline_v1 = twin-pipeline two-stage extraction, decon'd (to match HQ),
+    # same 300 seed-0 WARCs as the baselines. Data-rich (3.35B tok vs hq 639M).
+    "llm_pipeline_v1_random_300": _method(
+        "llm_pipeline_v1_random_300", "llm_pipeline_v1_decon_300warcs-b834c5", sampled_warcs=300, pin_region="us-east5"
+    ),
+    # llm_pipeline_v1_1 = markdown-extraction upgrade (mdx_d5 head/cont + guard suite) over the SAME 300
+    # seed-0 random WARCs, decon'd to match HQ. Same filter as v1 → same 2.73M docs, 4.26B tok. Cache us-central1.
+    "llm_pipeline_v1_1_random_300": _method(
+        "llm_pipeline_v1_1_random_300",
+        "llm_pipeline_v1_1_decon_300warcs-1563f5",
+        sampled_warcs=300,
+        pin_region="us-central1",
+    ),
+    # Same extractor at N=3000 (nested seed-0 ladder). Trains in the FIXED-MODEL sweep
+    # (expFM_natural, 21 cells) — warc-scaling hard-fails at N=3000 since WARC_COUNTS
+    # tops out at 2000. Cache lives only in us-central1, so pin_region enforces locality.
+    "llm_pipeline_v1_1_random_3000": _method(
+        "llm_pipeline_v1_1_random_3000",
+        "llm_pipeline_v1_1_decon_3000warcs-aa7070",
+        sampled_warcs=3000,
+        pin_region="us-central1",
+    ),
+    # one-call llm extractor (llm_simple_v1) over the SAME 300 seed-0 random WARCs. Cache in us-central1.
+    "llm_simple_v1_random_300": _method(
+        "llm_simple_v1_random_300", "llm_simple_v1_decon_300warcs-b8a945", sampled_warcs=300, pin_region="us-central1"
+    ),
+    # med_quality LLM-extraction over the SAME 300 seed-0 random WARCs (no decon, matching the
+    # quality-tier convention). Cache in us-central1 (consolidation lives there).
+    "med_quality_random_300": _method(
+        "med_quality_random_300", "med_quality_300warcs-b87e1b", sampled_warcs=300, pin_region="us-central1"
+    ),
+    # low_quality (LLM extraction, lowest quality tier) over the SAME 300 random WARCs, NO decon
+    # (quality-tier convention). Deduped in us-east5 (the proven region for low_quality's dense
+    # fuzzy-CC graph — us-central1 preemptible pool churns); cache + training pinned us-east5.
+    "low_quality_random_300": _method(
+        "low_quality_random_300", "low_quality_300warcs-2c2db2", sampled_warcs=300, pin_region="us-east5"
+    ),
+    # high_quality_v2 (new extractor) over the 300 random WARCs, decon'd. Cache in us-central1,
+    # mirrored to us-east5 so the stuck 1e20 tail cells can train on us-east5-b v6e (v5p-32 there
+    # is quota-tier-blocked; v6e has free capacity).
+    "high_quality_v2_random_300": _method(
+        "high_quality_v2_random_300", "high_quality_v2_decon_300warcs-3d73da", sampled_warcs=300, pin_region="us-east5"
+    ),
+    # fastpipe_v3 keep-top-X% bands (ModernBERT-prob), N=300, us-east5. Token-for-token quality/quantity sweep.
+    "fastpipe_v3_100_random_300": _method(
+        "fastpipe_v3_100_random_300", "fastpipe_v3_decon_300warcs-095914", sampled_warcs=300, pin_region="us-east5"
+    ),
+    "fastpipe_v3_80_random_300": _method(
+        "fastpipe_v3_80_random_300", "fastpipe_v3_80_decon_300warcs-a2ea2c", sampled_warcs=300, pin_region="us-east5"
+    ),
+    "fastpipe_v3_60_random_300": _method(
+        "fastpipe_v3_60_random_300", "fastpipe_v3_60_decon_300warcs-888150", sampled_warcs=300, pin_region="us-east5"
+    ),
+    "fastpipe_v3_40_random_300": _method(
+        "fastpipe_v3_40_random_300", "fastpipe_v3_40_decon_300warcs-e667fb", sampled_warcs=300, pin_region="us-east5"
+    ),
+    "fastpipe_v3_20_random_300": _method(
+        "fastpipe_v3_20_random_300", "fastpipe_v3_20_decon_300warcs-ff2322", sampled_warcs=300, pin_region="us-east5"
     ),
     "dclm_random_500": _method(
         "dclm_random_500", "dclm_random_500warcs-b8780e", sampled_warcs=500, pin_region="us-east5"
@@ -606,7 +856,13 @@ METHODS: dict[str, CurationMethod] = {
         "resiliparse_dedup",
         "baseline_resiliparse_deduped-471baf",
     ),
-    # N=500/1000/2000 entries — fill in cache_hash + d_obs once tokenize lands.
+    # N=300/500/1000/2000 entries — fill in cache_hash + d_obs once tokenize lands.
+    "resiliparse_dedup_300": _method(
+        "resiliparse_dedup_300",
+        "resiliparse_dedup_300warcs-24d661",
+        sampled_warcs=300,
+        pin_region="us-east5",
+    ),
     "resiliparse_dedup_500": _method(
         "resiliparse_dedup_500",
         "resiliparse_dedup_500warcs-a491f7",

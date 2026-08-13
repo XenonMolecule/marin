@@ -615,8 +615,49 @@ def _fetch_final_eval_from_wandb(run_name: str, project: str, entity: str | None
             _FINAL_EVAL_STEP_SLACK,
         )
         return None
+
+    # `_step` is NOT evidence that the eval/* keys are current. It advances on every training
+    # log; eval/* only refreshes when an eval cycle runs (every few thousand steps). A child
+    # querying its own run right after training -- before the final eval has synced -- sees
+    # `_step == expected_step` while eval/* still holds the PREVIOUS eval. Observed on
+    # dclm_10k_mix 3e+17-d512: summary reported the step-10000 eval (uncheatable 1.4265) as
+    # final, when the true step-13137 value was 1.3166. That is a 0.11 BPB error, and it
+    # silently affected ~40% of runs -- enough to fabricate spikes in the scaling curves.
+    #
+    # So validate the eval's OWN step: take the last history row that actually carries eval
+    # keys and require IT to be at the final step.
+    try:
+        eval_rows = [
+            row
+            for row in run.scan_history(page_size=10000)
+            if any(k.startswith("eval/") for k in row) and row.get("_step") is not None
+        ]
+    except Exception as e:
+        logger.warning("W&B history scan failed for %s (%s); skipping W&B summary source.", run_name, e)
+        return None
+    if not eval_rows:
+        logger.warning("W&B run %s has no history rows with eval/* keys; skipping.", run_name)
+        return None
+    final_row = max(eval_rows, key=lambda r: int(r["_step"]))
+    eval_step = int(final_row["_step"])
+    if eval_step < expected_step - _FINAL_EVAL_STEP_SLACK:
+        logger.warning(
+            "W&B run %s: latest EVAL is at step=%d but expected_step=%d (slack=%d) -- the final "
+            "eval has not synced yet. Falling back to eval_metrics.jsonl.",
+            run_name,
+            eval_step,
+            expected_step,
+            _FINAL_EVAL_STEP_SLACK,
+        )
+        return None
+
+    # Read the values OUT OF the validated row, NOT out of `run.summary`. Validating that
+    # history contains a final-step eval row and then reading `run.summary` was the incomplete
+    # version of this fix: the guard passes while summary still holds an earlier cycle's values.
+    # Observed AFTER that fix shipped, on the first cell of the lambda=0.01 sweep -- all 60
+    # metric keys stale, `eval/paloma/4chan/loss` off by 8.74. One consistent cycle or nothing.
     eval_dict: dict = {}
-    for k, v in run.summary.items():
+    for k, v in final_row.items():
         if not k.startswith("eval/") or v is None:
             continue
         if isinstance(v, (int, float)) and not isinstance(v, bool):
@@ -624,7 +665,7 @@ def _fetch_final_eval_from_wandb(run_name: str, project: str, entity: str | None
         else:
             eval_dict[k] = v
     if not eval_dict:
-        logger.warning("W&B run %s has no eval/* keys in summary; skipping.", run_name)
+        logger.warning("W&B run %s: final eval row carries no eval/* keys; skipping.", run_name)
         return None
     return eval_dict
 

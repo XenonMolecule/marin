@@ -81,6 +81,8 @@ def build_command(args: argparse.Namespace, seed: int) -> list[str]:
         "--justext-procs",
         str(args.justext_procs if args.justext_procs is not None else int(args.cpu)),
     ]
+    if args.resiliparse_artifact is not None:
+        cmd += ["--resiliparse-artifact", args.resiliparse_artifact]
     if args.limit is not None:
         cmd += ["--limit", str(args.limit)]
     if args.start:
@@ -99,7 +101,14 @@ def main() -> None:
     ap.add_argument("--cpu", type=float, default=8, help="Cores per worker; JustText fans out across them.")
     ap.add_argument("--memory", default="32GB")
     ap.add_argument("--disk", default="20GB")
-    ap.add_argument("--justext-procs", type=int, default=None, help="JustText ProcessPool size (default = --cpu).")
+    ap.add_argument("--justext-procs", type=int, default=None, help="Extraction ProcessPool size (default = --cpu).")
+    ap.add_argument(
+        "--resiliparse-artifact",
+        default=None,
+        help="Prebuilt resiliparse-rs artifact prefix; pass a same-region mirror when Phase C runs "
+        "outside us-east5 so workers don't each read the artifact cross-region. Only used by specs "
+        "whose extractor is resiliparse_rs; omitted => the spec module's default.",
+    )
     ap.add_argument("--num-workers", type=int, default=1)
     ap.add_argument("--seed-start", type=int, default=0)
     ap.add_argument("--priority", default="batch", choices=["production", "interactive", "batch"])

@@ -126,6 +126,39 @@ def justext_text(
         return ""
 
 
+def resiliparse_rs_text(html: str, max_html_chars: int = MAX_JUSTEXT_HTML_CHARS) -> str:
+    """Raw HTML -> markdown main content via the XenonMolecule fork's **Rust** engine.
+
+    This is ``resiliparse._extract_rs`` (published as a prebuilt artifact by
+    ``build_resiliparse_rs.py``), NOT ``resiliparse.extract.html2text`` — that is marin's core
+    ``resiliparse`` dep, a *different* fork claiming the same import name. The two collide, so the
+    artifact directory must already sit FIRST on ``sys.path``
+    (``score_resiliparse_rs.install_extractor`` does exactly that). The import is function-local
+    because the package is downloaded at runtime rather than installed.
+
+    ~31x faster than :func:`justext_text` (291.8 vs 9.43 docs/s/core). It also **segfaults** on a
+    small fraction of pages (0.108% measured, all containing ``<frameset>``): a hard process death,
+    not a Python exception, so a caller MUST run it in a separate process and treat the loss of that
+    process as a dropped document — see ``cpu_phase_c.ResiliparseRsPool``.
+    """
+    if len(html) > max_html_chars:
+        logger.warning("skipping resiliparse-rs on %d-char page (> %d cap)", len(html), max_html_chars)
+        return ""
+    from resiliparse._extract_rs import extract_plain_text
+
+    return extract_plain_text(html, main_content=True, preserve_formatting="markdown")
+
+
+def resiliparse_rs_batch(args: tuple[list[str], int]) -> list[str]:
+    """Picklable top-level wrapper mapping :func:`resiliparse_rs_text` over a chunk of pages.
+
+    ``args`` is ``(htmls, max_html_chars)``. Batching per task amortizes task overhead; the chunk is
+    kept small by the caller so one segfaulting page costs only its chunk's worth of re-isolation.
+    """
+    htmls, max_html_chars = args
+    return [resiliparse_rs_text(h, max_html_chars) for h in htmls]
+
+
 def _justext_one(args: tuple[str, str, int, str]) -> str:
     """Picklable top-level wrapper for ProcessPool fan-out of JustText (the dominant CPU cost).
 

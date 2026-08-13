@@ -378,6 +378,8 @@ def build_steps(
     manifest_path: str,
     target_partition_bytes: int = 64 * 1024 * 1024,
     region: str = "us-central1",
+    fuzzy_ram_gb: int = 64,
+    fuzzy_preemptible: bool = True,
 ) -> list[StepSpec]:
     hashes_ordered = _load_manifest_hashes(manifest_path, n)
     logger.info("Building Marin FUZZY dedup pipeline for spec=%s n=%d region=%s", spec, n, region)
@@ -444,7 +446,12 @@ def build_steps(
         # style sync jobs evict a worker mid-iteration, the next worker picks
         # up from the last complete CC iter on disk. Trade-off: more churn,
         # but progress > paralysis.
-        worker_resources=ResourceConfig(cpu=1, ram="64g", disk="10g", preemptible=True),
+        # RAM is a CLI knob (--fuzzy-ram-gb, default 64). The CC graph density —
+        # not corpus size — drives peak memory: highly-templated corpora (e.g. the
+        # one-call llm_simple_v1, which fails at 64g with a MemoryError/exit-1 while
+        # same-size llm_pipeline_v1 succeeds) build a far denser near-dup graph and
+        # need more. Bump this, not the default, for those.
+        worker_resources=ResourceConfig(cpu=1, ram=f"{fuzzy_ram_gb}g", disk="10g", preemptible=fuzzy_preemptible),
         # Resume from the last complete CC iteration on disk. Added 2026-05-12
         # after med_low_quality fuzzy lost 5 CC iterations to cross-user
         # preemption — every subsequent relaunch had to redo iters 0..N.
@@ -519,6 +526,27 @@ def main() -> None:
             "without copying cached state will rerun from scratch."
         ),
     )
+    parser.add_argument(
+        "--fuzzy-ram-gb",
+        type=int,
+        default=64,
+        help=(
+            "Host RAM (GB) for the fuzzy connected-components worker. Default 64 is fine for "
+            "most corpora; bump (e.g. 192) for highly-templated corpora whose dense near-dup "
+            "graph OOMs the CC pass (llm_simple_v1 / one-call outputs)."
+        ),
+    )
+    parser.add_argument(
+        "--fuzzy-preemptible",
+        default=True,
+        action=argparse.BooleanOptionalAction,
+        help=(
+            "Whether the fuzzy CC worker runs preemptible (default True). Use --no-fuzzy-preemptible "
+            "for corpora where preemption mid-CC corrupts an it_N iteration: cc_resume then re-reads the "
+            "corrupt iteration and fails deterministically ('Lost/corrupted structure for node'). Delete "
+            "the fuzzy/ output first so it restarts from a clean it_0."
+        ),
+    )
     args = parser.parse_args()
 
     # CONSOLIDATED_ROOT is used by _archive_prefix / _resolved_manifest_path /
@@ -528,7 +556,15 @@ def main() -> None:
     global CONSOLIDATED_ROOT
     CONSOLIDATED_ROOT = f"{_REGIONAL_BUCKETS[args.region]}/documents/baseline_llm_extraction_consolidated"
 
-    steps = build_steps(args.spec, args.n, args.manifest, args.target_partition_bytes, args.region)
+    steps = build_steps(
+        args.spec,
+        args.n,
+        args.manifest,
+        args.target_partition_bytes,
+        args.region,
+        args.fuzzy_ram_gb,
+        args.fuzzy_preemptible,
+    )
     StepRunner().run(steps)
     logger.info("Done. Deduped tree at %s/deduped_*/", steps[-1].output_path.rsplit("/", 1)[0])
 

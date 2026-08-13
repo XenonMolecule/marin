@@ -36,6 +36,7 @@ from experiments.scaling_law_sweeps.olmo_bpb.olmo_bpb_tasks_set import (
     MATH_BPB,
     MT_MBPP_BPB,
     QA_LANG_BPB,
+    QA_RC_MC_BPB,
 )
 
 logger = logging.getLogger(__name__)
@@ -46,17 +47,53 @@ OUT_DIR = Path(__file__).parent.parent.parent / "scratch" / "plots" / "olmo_bpb"
 NS = [100, 300, 500, 1000, 2000]
 PARAMS = {256: "69M", 512: "157M", 768: "273M", 1024: "~500M", 1536: "998M", 2432: "2.9B"}
 NAME_RE = re.compile(
-    r"curation-(?P<method>high_quality|dclm)_random_(?P<n>\d+)"
+    r"curation-(?P<method>high_quality_v2|high_quality|dclm|nemotron_full|llm_pipeline_v1_1|llm_pipeline_v1|llm_simple_v1|resiliparse|fastpipe_v3_\d+)_random_(?P<n>\d+)"
     r"-expWARC_natural-(?P<budget>[0-9eE+.\-]+)-d(?P<dim>\d+)-L\d+-B\d+$"
 )
-# metric -> the task keys ("<task>/<variant>") whose bpb we average
+# metric -> the task keys ("<task>/<variant>") whose bpb we average.
+# QA_bpb is the canonical AI2 olmo3:base_easy qa_bpb (minus MMLU): the 6 generation-bpb
+# tasks PLUS the 20 multiple-choice rc:bpb tasks (arc/hellaswag/winogrande/...). The MC
+# tasks are filled in by a `--tasks qa_rc --merge` re-eval pass.
 CATEGORIES = {
     "Code_bpb": list(CODE_BPB) + list(MT_MBPP_BPB),
     "Math_bpb": list(MATH_BPB),
-    "QA_bpb": list(QA_LANG_BPB),
+    "QA_bpb": list(QA_LANG_BPB) + list(QA_RC_MC_BPB),  # canonical: 6 generation + 20 MC rc:bpb
+    "QA_rc_bpb": list(QA_RC_MC_BPB),  # the 20 multiple-choice rc:bpb tasks only
+    "QA_gen_bpb": list(QA_LANG_BPB),  # the 6 generation-bpb tasks only
 }
-HQ_COLOR = "#2ca02c"
-DCLM_COLOR = "#1f77b4"
+# LOCKED color convention (2026-07-22): dclm=blue, high_quality=green, nemotron=orange,
+# resiliparse=purple, llm_pipeline_v1=red. fastpipe bands = brown ramp (one group).
+METHOD_STYLE: dict[str, tuple[str, str, str]] = {
+    "llm_pipeline_v1": ("#d62728", "o", "llm_pipeline_v1"),
+    "llm_pipeline_v1_1": ("#8c564b", "X", "llm_pipeline_v1_1"),
+    "llm_simple_v1": ("#17becf", "s", "llm_simple_v1"),
+    "dclm": ("#1f77b4", "^", "dclm"),
+    "high_quality": ("#2ca02c", "s", "high_quality"),
+    "high_quality_v2": ("#e377c2", "D", "high_quality_v2"),
+    "nemotron_full": ("#ff7f0e", "D", "nemotron"),
+    "resiliparse": ("#9467bd", "v", "resiliparse"),
+    "fastpipe_v3_100": ("#5c3d2e", "P", "fastpipe 100%"),
+    "fastpipe_v3_80": ("#7d5540", "P", "fastpipe 80%"),
+    "fastpipe_v3_60": ("#a06e52", "P", "fastpipe 60%"),
+    "fastpipe_v3_40": ("#c08a6a", "P", "fastpipe 40%"),
+    "fastpipe_v3_20": ("#dbb28f", "P", "fastpipe 20%"),
+}
+
+
+# Numeric param counts per hidden dim (token->FLOPs epoch conversion: C ≈ 6·N·D).
+_PARAMS_NUM = {256: 69e6, 512: 157e6, 768: 273e6, 1024: 500e6, 1536: 998e6, 2432: 2.9e9, 3328: 6e9, 3584: 8.1e9}
+
+
+def _epoch_flops(method: str, n: int, dim: int) -> tuple[float | None, float | None]:
+    """(1-epoch, 2-epoch) training FLOPs for a method's data at a given model size."""
+    from experiments.scaling_law_sweeps.curation_plan import METHODS
+
+    m = METHODS.get(f"{method}_random_{n}")
+    p = _PARAMS_NUM.get(dim)
+    if m is None or p is None:
+        return None, None
+    x1 = 6.0 * p * m.d_obs_tokens
+    return x1, 2.0 * x1
 
 
 def _sh(args: list[str]) -> str:
@@ -140,11 +177,21 @@ def _grid(rows: list[dict], key: str, out: Path) -> None:
     for ri, n in enumerate(NS):
         for ci, dim in enumerate(dims):
             ax = axes[ri][ci]
-            for method, color, mk in (("high_quality", HQ_COLOR, "o"), ("dclm", DCLM_COLOR, "s")):
+            for method, (color, mk, _lab) in METHOD_STYLE.items():
                 pts = _cells(rows, method, n, dim, key)
                 if pts:
                     ax.plot([b for b, _ in pts], [v for _, v in pts], marker=mk, ms=5, lw=2, color=color)
             ax.set_xscale("log")
+            xl = ax.get_xlim()
+            for method, (color, _mk, _lab) in METHOD_STYLE.items():
+                if not _cells(rows, method, n, dim, key):
+                    continue
+                x1, x2 = _epoch_flops(method, n, dim)
+                if x1:
+                    ax.axvline(x1, color=color, ls=(0, (4, 2)), lw=0.9, alpha=0.45, zorder=0)
+                if x2:
+                    ax.axvline(x2, color=color, ls=(0, (1, 2)), lw=1.0, alpha=0.45, zorder=0)
+            ax.set_xlim(xl)
             ax.set_ylim(ylo - ypad, yhi + ypad)
             ax.grid(True, which="major", alpha=0.2)
             if ri == 0:
@@ -153,13 +200,17 @@ def _grid(rows: list[dict], key: str, out: Path) -> None:
                 ax.set_ylabel(f"N={n} WARCs\n{key}", fontsize=10)
             if ri == nrow - 1:
                 ax.set_xlabel("FLOPs", fontsize=9)
+    present = {r["method"] for r in rows if key in r}
     handles = [
-        Line2D([0], [0], color=HQ_COLOR, lw=2.5, marker="o", label="HQ (high_quality)"),
-        Line2D([0], [0], color=DCLM_COLOR, lw=2.5, marker="s", label="DCLM"),
+        Line2D([0], [0], color=c, lw=2.5, marker=mk, label=lab)
+        for m, (c, mk, lab) in METHOD_STYLE.items()
+        if m in present
     ]
-    fig.legend(handles=handles, loc="lower center", ncol=2, frameon=False, bbox_to_anchor=(0.5, -0.01))
+    fig.legend(
+        handles=handles, loc="lower center", ncol=min(len(handles), 5), frameon=False, bbox_to_anchor=(0.5, -0.01)
+    )
     fig.suptitle(
-        f"DCLM vs HQ — {key} — grid of model scale x WARC count (N=100/300/500/1000/2000 random)\n"
+        f"Curation methods — {key} — model scale × WARC count (N=100/300/500/1000/2000 random)\n"
         "OLMo Base-Easy bits-per-byte · LOWER is better",
         fontsize=13,
         y=1.0,
@@ -175,10 +226,9 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     rows = _load()
     for n in NS:
-        hq = sum(1 for r in rows if r["method"] == "high_quality" and r["n"] == n)
-        dc = sum(1 for r in rows if r["method"] == "dclm" and r["n"] == n)
-        logger.info("N=%d: HQ %d, DCLM %d", n, hq, dc)
-    for key in ("macro_bpb", "Code_bpb", "Math_bpb", "QA_bpb"):
+        counts = {m: sum(1 for r in rows if r["method"] == m and r["n"] == n) for m in METHOD_STYLE}
+        logger.info("N=%d: %s", n, {k: v for k, v in counts.items() if v})
+    for key in ("macro_bpb", "Code_bpb", "Math_bpb", "QA_bpb", "QA_rc_bpb", "QA_gen_bpb"):
         _grid(rows, key, OUT_DIR / f"olmo_bpb_random_ladder_{key}.png")
 
 

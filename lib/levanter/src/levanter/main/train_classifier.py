@@ -39,12 +39,9 @@ from levanter.data.sharded_datasource import TextUrlDataSource
 from levanter.checkpoint import discover_latest_checkpoint
 from levanter.layers.attention import AttentionMask
 from levanter.store.cache import CacheOptions, TreeCache, build_or_load_cache
-from levanter.models.modernbert import (
-    ClassificationExample,
-    ModernBertConfig,
-    ModernBertForMaskedLM,
-    ModernBertForSequenceClassification,
-)
+from levanter.models.classification import ClassificationExample, build_classifier, save_classifier
+from levanter.models.lm_model import LmConfig
+from levanter.models.modernbert import ModernBertConfig
 from levanter.optim import AdamConfig, OptimizerConfig
 from levanter.trainer import Trainer, TrainerConfig
 from levanter.utils.jax_utils import parameter_count
@@ -631,7 +628,7 @@ class ClassificationDataConfig:
 
 
 def score_texts(
-    model: ModernBertForSequenceClassification,
+    model,
     texts: list[str],
     tokenizer,
     Pos: Axis,
@@ -668,7 +665,7 @@ def score_texts(
 
 
 def score_texts_chunked(
-    model: ModernBertForSequenceClassification,
+    model,
     texts: list[str],
     tokenizer,
     Pos: Axis,
@@ -771,23 +768,14 @@ def f1_sweep(probs: np.ndarray, labels: np.ndarray) -> tuple[float, float]:
 # --------------------------------------------------------------------------------------
 
 
-def build_model(
-    config: ModernBertConfig, Vocab: Axis, *, key, warm_start: bool, axis_mapping=None, compute_dtype=None
-) -> ModernBertForSequenceClassification:
-    if not warm_start:
-        return ModernBertForSequenceClassification.init(Vocab, config, key=key)
-    converter = config.hf_checkpoint_converter()
-    masked_lm = converter.load_pretrained(
-        ModernBertForMaskedLM,
-        ref=config.reference_checkpoint,
-        config=config,
-        axis_mapping=axis_mapping,
-        dtype=compute_dtype,
+def build_model(config: LmConfig, Vocab: Axis, *, key, warm_start: bool, axis_mapping=None, compute_dtype=None):
+    """Build the classifier for any registered architecture (see levanter.models.classification)."""
+    return build_classifier(
+        config, Vocab, key=key, warm_start=warm_start, axis_mapping=axis_mapping, compute_dtype=compute_dtype
     )
-    return ModernBertForSequenceClassification.from_masked_lm(masked_lm, config, key=key)
 
 
-def classification_loss(model: ModernBertForSequenceClassification, example: ClassificationExample, *, key=None):
+def classification_loss(model, example: ClassificationExample, *, key=None):
     return model.compute_loss(example, key=key)
 
 
@@ -799,7 +787,7 @@ def classification_loss(model: ModernBertForSequenceClassification, example: Cla
 def train_classifier(
     *,
     trainer_config: TrainerConfig,
-    model_config: ModernBertConfig,
+    model_config: LmConfig,
     optimizer_config: OptimizerConfig,
     train_dataset: AsyncDataset[ClassificationExample],
     tokenizer,
@@ -810,7 +798,7 @@ def train_classifier(
     eval_chunked: bool = False,
     eval_stride: Optional[int] = None,
     eval_max_doc_tokens: int = 32768,
-) -> ModernBertForSequenceClassification:
+):
     optimizer = optimizer_config.build(trainer_config.num_train_steps)
     with Trainer(trainer_config, optimizer, classification_loss) as trainer:
         model_key, training_key = jrandom.split(jrandom.PRNGKey(trainer_config.seed), 2)
@@ -875,12 +863,11 @@ def train_classifier(
             logger.info(f"[eval] best_f1={best_f1:.4f} @ t={best_t:.2f} on {len(eval_labels)} docs")
             levanter.tracker.log_summary({"eval/best_f1": best_f1, "eval/best_threshold": best_t})
 
-        # HF save MUST also run inside the Trainer mesh: save_pretrained deshards via
+        # Save MUST also run inside the Trainer mesh: HF save_pretrained deshards via
         # with_sharding_constraint, which needs the non-empty mesh the model is sharded on.
         if hf_save_path:
-            converter = model_config.hf_checkpoint_converter()
-            converter.save_pretrained(final_model, hf_save_path, save_tokenizer=True)
-            logger.info(f"saved HF classifier to {hf_save_path}")
+            save_classifier(model_config, final_model, hf_save_path)
+            logger.info(f"saved classifier to {hf_save_path}")
     return final_model
 
 
@@ -893,7 +880,7 @@ def train_classifier(
 class TrainClassifierConfig:
     data: ClassificationDataConfig = field(default_factory=ClassificationDataConfig)
     trainer: TrainerConfig = field(default_factory=TrainerConfig)
-    model: ModernBertConfig = field(default_factory=ModernBertConfig)
+    model: LmConfig = field(default_factory=ModernBertConfig)
     optimizer: OptimizerConfig = field(default_factory=AdamConfig)
     warm_start: bool = True
     hf_save_path: Optional[str] = None
@@ -902,7 +889,13 @@ class TrainClassifierConfig:
 def main(config: TrainClassifierConfig):
     levanter.initialize(config)
     tokenizer = config.data.the_tokenizer
-    pad_id = config.model.pad_token_id
+    # pad id: model config's own (ModernBERT-family) wins; otherwise the tokenizer's. Explicit None
+    # checks — 0 is a legitimate pad id for some archs.
+    pad_id = getattr(config.model, "pad_token_id", None)
+    if pad_id is None:
+        pad_id = tokenizer.pad_token_id
+    if pad_id is None:
+        raise ValueError("no pad_token_id on the model config or the tokenizer")
 
     train_dataset = config.data.build_train(tokenizer, config.model.max_Pos, pad_id)
     eval_texts, eval_labels = config.data.build_eval()

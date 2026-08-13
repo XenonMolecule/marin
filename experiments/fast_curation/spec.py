@@ -30,10 +30,35 @@ import dataclasses
 import hashlib
 import json
 from dataclasses import dataclass
+from enum import StrEnum
 
 # Canonical checkpoint + model locations (us-east5, where the cascade was trained).
 FASTTEXT_MODEL_V1 = "gs://marin-us-east5/classifiers/useful_fasttext/body_strip_scale_w320_strat_prep_mc500/model.bin"
 MODERNBERT_CKPT_V1 = "gs://marin-us-east5/checkpoints/modernbert-useful/mb-clf-base-10M-c8192/hf"
+
+# --- lpv11-targeted line -----------------------------------------------------------------------
+# The v1-v3 models above approximate the 8B ``high_quality`` extractor. These approximate
+# ``llm_pipeline_v1_1`` instead, which is a materially different target: the two agree at only
+# 0.325 F1, keeping 21.5% vs 4.8% of pages. Do NOT mix the two families in one cascade.
+FASTTEXT_LPV11_W640 = (
+    "gs://marin-us-east5/classifiers/useful_fasttext_lpv11/body_strip_scale_w640_sub0p22_strat_prep_mc500/model.bin"
+)
+POOLED_LPV11_10M = "gs://marin-us-east5/checkpoints/modernbert-useful/mb-clf-lpv11-pooled-10M/hf"
+MODERNBERT_LPV11_10M = "gs://marin-us-east5/checkpoints/modernbert-useful/mb-clf-lpv11-base-10M-c8192/hf"
+
+# Prebuilt Linux artifact for the XenonMolecule fork's Rust extractor (resiliparse._extract_rs).
+# Pinned by the COMMIT it was built from: the extracted text is the training text, so a rebuild from
+# a different commit changes the corpus and must bump the version.
+RESILIPARSE_RS_ARTIFACT = "gs://marin-us-east5/artifacts/resiliparse_rs/latest"
+RESILIPARSE_RS_COMMIT = "850891b277e919f671ec19f12aafdce451b327f4"
+
+
+class Extractor(StrEnum):
+    """Which engine produces the training ``text`` in Phase C."""
+
+    JUSTEXT = "justext"  # XenonMolecule/jusText fork; 9.43 docs/s/core
+    RESILIPARSE_RS = "resiliparse_rs"  # XenonMolecule/chatnoir-resiliparse Rust engine; 291.8 docs/s/core
+
 
 # ModernBERT-base tokenizer / pad id (answerdotai/ModernBERT-base).
 MODERNBERT_TOKENIZER = "answerdotai/ModernBERT-base"
@@ -85,20 +110,51 @@ class PipelineSpec:
     max_length: int = 8192
     single_window: bool = True  # True: truncate to ``max_length`` (matches the deployed c8192 ckpt).
 
+    # --- stage 1c: pooled-transformer useful-filter (TPU; OPTIONAL, runs BEFORE ModernBERT) ---
+    # ~180x cheaper than ModernBERT per doc (3932.6 vs 21.5 docs/chip/s) on the SAME tokens, so it
+    # culls cheaply ahead of the expensive stage. Deploy at HIGH recall (>=0.95): it is a mid-stage,
+    # not a ModernBERT replacement.
+    #
+    # NOTE the asymmetry with ``modernbert_threshold``: ``pooled_threshold`` IS namespace-defining.
+    # A doc pooled drops is never scored by ModernBERT, so there is no stored prob to re-threshold
+    # against later — the drop is destructive, exactly like fastText's.
+    pooled_ckpt: str | None = None  # None => no pooled stage (the v1-v3 line).
+    pooled_threshold: float | None = None
+
     # --- stage 2: ModernBERT useful-filter (TPU) ---
     # The checkpoint is namespace-defining; the threshold is a cheap late-bound view.
     modernbert_ckpt: str = MODERNBERT_CKPT_V1
     modernbert_threshold: float = 0.1974  # METADATA only (NOT in compute_version).
 
+    # --- stage 3: extraction (CPU, Phase C) — produces the training ``text`` ---
+    # None means JUSTEXT. It defaults to None rather than to the enum so that specs predating this
+    # field hash exactly as they did before it existed — see ``_namespace_fields``. Read it through
+    # ``extraction_engine``, never directly.
+    extractor: Extractor | None = None
+    # Only meaningful for RESILIPARSE_RS; pins the fork commit the prebuilt .so was built from.
+    resiliparse_rs_commit: str | None = None
+
     step_order: tuple[str, ...] = DEFAULT_STEP_ORDER
+
+    @property
+    def extraction_engine(self) -> Extractor:
+        """The Phase-C engine; ``extractor=None`` is the legacy jusText default."""
+        return self.extractor or Extractor.JUSTEXT
 
     def _namespace_fields(self) -> dict:
         """The dict hashed into the version. Excludes ``spec_id`` (carried in the path) and
-        ``modernbert_threshold`` (a late-bound re-filter, not a recompute trigger)."""
+        ``modernbert_threshold`` (a late-bound re-filter, not a recompute trigger).
+
+        **Unset (None) fields are omitted.** Adding an optional field would otherwise change the
+        hash of every spec that predates it, silently re-pointing live namespaces at empty
+        directories and orphaning their corpora — a real near-miss when the pooled/extractor fields
+        were added (``fastpipe_v3`` moved da3893385e -> 47cfdfc9d2, which would have stranded 3,602
+        already-extracted WARCs). ``test_spec.py`` pins the known hashes so this cannot drift again.
+        """
         d = dataclasses.asdict(self)
         d.pop("spec_id", None)
         d.pop("modernbert_threshold", None)
-        return d
+        return {k: v for k, v in d.items() if v is not None}
 
     def compute_version(self) -> str:
         """Stable sha256 over the namespace-defining fields."""
@@ -145,6 +201,11 @@ class PipelineSpec:
     def modernbert_ckpt_for(self, bucket: str) -> str:
         return _rebucket(self.modernbert_ckpt, bucket)
 
+    def pooled_ckpt_for(self, bucket: str) -> str:
+        if self.pooled_ckpt is None:
+            raise ValueError(f"{self.spec_id} has no pooled stage")
+        return _rebucket(self.pooled_ckpt, bucket)
+
     # --- v2 (ModernBERT BEFORE JustText) 3-phase sub-paths ---
     def presurvivors_prefix(self, bucket: str = "gs://marin-us-east5") -> str:
         """v2 Phase A output: fastText-survivors carrying RAW html + tokens, NO JustText yet."""
@@ -156,6 +217,9 @@ class PipelineSpec:
 
 
 V2_STEP_ORDER = ("decode", "body_strip", "fasttext", "tokenize", "modernbert", "justext")
+# lpv11 line: pooled culls between fastText and ModernBERT (same tokens, ~180x cheaper), and the
+# terminal extraction is the Rust resiliparse fork instead of jusText.
+LPV11_STEP_ORDER = ("decode", "body_strip", "fasttext", "tokenize", "pooled", "modernbert", "resiliparse_rs")
 
 
 # Registry of all pipeline versions. ADD a new entry (never mutate an old one) per bump.
@@ -194,6 +258,27 @@ SPECS: dict[str, PipelineSpec] = {
         modernbert_ckpt=MODERNBERT_CKPT_V1,
         modernbert_threshold=0.1974,
         step_order=V2_STEP_ORDER,
+    ),
+    # lpv11_fastpipe_v1: the first cascade targeting llm_pipeline_v1_1 rather than the 8B
+    # high_quality run. Every stage is retrained/reselected for that target — mixing families would
+    # have stages pulling toward definitions of "useful" that agree at only 0.325 F1.
+    #
+    # Thresholds are the operating points the cascade planner resolved on the 100k comparison sample
+    # (fastText/pooled at recall 0.95, ModernBERT at 0.93 => F1 0.850 vs lpv11). Re-tune ModernBERT's
+    # freely (stored probs); re-tuning fastText's or pooled's requires a new namespace.
+    "lpv11_fastpipe_v1": PipelineSpec(
+        spec_id="lpv11_fastpipe_v1",
+        fasttext_model=FASTTEXT_LPV11_W640,
+        fasttext_threshold=0.130,
+        pooled_ckpt=POOLED_LPV11_10M,
+        pooled_threshold=0.178,
+        modernbert_ckpt=MODERNBERT_LPV11_10M,
+        modernbert_threshold=0.410,
+        extractor=Extractor.RESILIPARSE_RS,
+        resiliparse_rs_commit=RESILIPARSE_RS_COMMIT,
+        justext_max_html_chars=50_000_000,
+        justext_timeout=60.0,
+        step_order=LPV11_STEP_ORDER,
     ),
 }
 

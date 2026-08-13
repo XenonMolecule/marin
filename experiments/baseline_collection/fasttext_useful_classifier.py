@@ -40,6 +40,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import multiprocessing as mp
 import os
 import random
 import re
@@ -57,6 +58,8 @@ from zephyr import Dataset, ZephyrContext
 
 logger = logging.getLogger(__name__)
 
+# Default labeled dataset; override per-run with --dataset-root (e.g. the
+# llm_pipeline_v1_1_3000_distill dataset from build_lpv11_distill_dataset.py).
 DATASET_ROOT = "gs://marin-us-central2/datasets/high_quality_3000_distill"
 USEFUL_DIR = f"{DATASET_ROOT}/data"
 NO_USEFUL_DIR = f"{DATASET_ROOT}/data_no_useful"
@@ -548,7 +551,14 @@ def _prep_one_warc(spec: dict) -> dict:
     return {"index": spec["index"], "split": spec["split"], "n_useful": n_pos, "n_no_useful": n_neg, "skipped": False}
 
 
-def run_prep(representation: str, k_holdout: int, tag: str, limit_warcs: int | None, only_split: str = "all") -> None:
+def run_prep(
+    representation: str,
+    k_holdout: int,
+    tag: str,
+    limit_warcs: int | None,
+    only_split: str = "all",
+    standalone_workers: int = 0,
+) -> None:
     if representation not in REPRESENTATIONS:
         raise ValueError(f"unknown representation {representation!r}; expected {REPRESENTATIONS}")
     prep_root = f"{RESULTS_ROOT}/full_prep_{representation}{('_' + tag) if tag else ''}"
@@ -585,6 +595,21 @@ def run_prep(representation: str, k_holdout: int, tag: str, limit_warcs: int | N
         sum(1 for s in specs if s["split"] == "test"),
         prep_root,
     )
+    if standalone_workers:
+        # Process pool, not Zephyr and not threads: a contended cluster places ~1 Zephyr
+        # worker, and the per-WARC work (json/parquet decode + body_strip regex) is
+        # GIL-bound so threads collapse to one core. _prep_one_warc already writes its
+        # own shard atomically with skip-existing, so this is interchangeable/resumable
+        # with the Zephyr path.
+        ctx_mp = mp.get_context("spawn")
+        done = 0
+        with ctx_mp.Pool(standalone_workers) as pool:
+            for _ in pool.imap_unordered(_prep_one_warc, specs):
+                done += 1
+                if done % 50 == 0:
+                    logger.info("prep %d/%d WARCs", done, len(specs))
+        logger.info("standalone prep done (%d WARCs) -> %s/{train,val,test}/", len(specs), prep_root)
+        return
     manifest = f"{prep_root}/_prep_manifest-{{shard:05d}}-of-{{total:05d}}.jsonl.gz"
     pipeline = Dataset.from_iterable(specs).map(_prep_one_warc).write_jsonl(manifest, skip_existing=False)
     ctx = ZephyrContext(name="ft-useful-prep", max_workers=256, resources=ResourceConfig(cpu=2, ram="8g"))
@@ -596,24 +621,38 @@ def run_prep(representation: str, k_holdout: int, tag: str, limit_warcs: int | N
 
 
 def _shard_to_tempfile(
-    i: int, prep_root: str, neg_per_pos: float, max_chars: int | None, workdir: str
+    i: int,
+    prep_root: str,
+    neg_per_pos: float,
+    max_chars: int | None,
+    workdir: str,
+    line_keep_frac: float = 1.0,
+    sample_seed: int = 0,
 ) -> tuple[int, int, int, str | None]:
     """Decompress one full_prep shard, keep ``neg_per_pos`` negatives per positive (the shard
     stores all useful then all no_useful, so the cap is exact) + optional head-truncation, and
     write the kept lines to a per-shard temp file. Returns (index, n_pos, n_neg, tmp_path) — or
     tmp_path=None if the shard is missing. Runs in a thread pool: gzip decompression releases the
-    GIL, so per-shard work parallelizes (concat was a single-threaded ~37s/shard bottleneck)."""
+    GIL, so per-shard work parallelizes (concat was a single-threaded ~37s/shard bottleneck).
+
+    ``line_keep_frac`` < 1 subsamples docs uniformly (seeded per shard, per class) BEFORE the
+    ratio cap, so the neg cap applies to the subsampled positive count. This is the "wide-thin"
+    scaling axis: more WARCs (diversity) at fixed total bytes — motivated by the hq finding that
+    WARC diversity, not depth, breaks the fastText plateau."""
     shard = f"{prep_root}/train/data-{i:05d}.txt.gz"
     fs, rpath = fsspec.core.url_to_fs(shard)
     if not fs.exists(rpath):
         return (i, 0, 0, None)
     tmp = os.path.join(workdir, f"_shard-{i:05d}.txt")
+    rng = random.Random((sample_seed << 20) ^ i)
     pos_here = neg_here = 0
     neg_cap: int | None = None
     with fsspec.open(shard, "rt", compression="gzip", encoding="utf-8") as f, open(tmp, "w", encoding="utf-8") as out:
         for line in f:
             line = line.rstrip("\n")
             if not line:
+                continue
+            if line_keep_frac < 1.0 and rng.random() >= line_keep_frac:
                 continue
             is_pos = line.startswith(LABEL_USEFUL)
             if max_chars:
@@ -638,6 +677,7 @@ def run_train_from_prep(
     sample_seed: int,
     neg_per_pos: float,
     max_chars: int | None,
+    line_keep_frac: float,
     epoch: int,
     lr: float,
     dim: int,
@@ -698,7 +738,12 @@ def run_train_from_prep(
         logger.info("concatenating %d shards (%d workers) ...", len(train_idx), concat_workers)
         with ThreadPoolExecutor(max_workers=concat_workers) as ex:
             results = list(
-                ex.map(lambda i: _shard_to_tempfile(i, prep_root, neg_per_pos, max_chars, workdir), train_idx)
+                ex.map(
+                    lambda i: _shard_to_tempfile(
+                        i, prep_root, neg_per_pos, max_chars, workdir, line_keep_frac, sample_seed
+                    ),
+                    train_idx,
+                )
             )
         n_pos = n_neg = n_missing = 0
         with open(train_p, "w", encoding="utf-8") as out:
@@ -751,6 +796,7 @@ def run_train_from_prep(
                 "sample_seed": sample_seed,
                 "neg_per_pos": neg_per_pos,
                 "max_chars": max_chars,
+                "line_keep_frac": line_keep_frac,
                 "min_count": min_count,
                 "fixed_config": True,
                 "epoch": epoch,
@@ -968,12 +1014,13 @@ def _leaderboard_markdown(rows: list[dict]) -> str:
         "Deployment number = **natural-ratio best F1** (frozen ~12:1 test). `pilot F1` is each",
         "run's own held-out test (ratio varies with `neg/pos`). `pending` = natural eval not yet run.",
         "",
-        "| model | rep | sampling | neg/pos | recipe | train pos×neg | train snaps (front) | pilot F1 (ratio) | **natural F1** | P@F1 | R@F1 | P@R≥.90 |",
+        "| model | rep | sampling | neg/pos | recipe | train pos*neg | train snaps (front) | pilot F1 (ratio) "
+        "| **natural F1** | P@F1 | R@F1 | P@R>=.90 |",
         "|---|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for r in ranked:
         tp, tn = r.get("train_pos"), r.get("train_neg")
-        train = f"{tp:,}×{tn:,}" if tp and tn else "—"
+        train = f"{tp:,}*{tn:,}" if tp and tn else "-"
         snaps = f"{r.get('n_train_snapshots')}({r.get('front_snapshots')})"
         pilot = f"{r['pilot_test_f1']} @{r['pilot_test_ratio']}:1" if r.get("pilot_test_f1") is not None else "—"
         nat = r.get("natural_best_f1")
@@ -1101,6 +1148,12 @@ def main() -> None:
     )
 
     pp = sub.add_parser("prep", help="Parallel (Zephyr) full-corpus prep: ALL data, no balancing, split-tagged.")
+    pp.add_argument(
+        "--standalone-workers",
+        type=int,
+        default=0,
+        help="Bypass Zephyr: run on THIS box with N processes (contended-cluster fallback).",
+    )
     pp.add_argument("--representation", required=True, choices=REPRESENTATIONS)
     pp.add_argument("--k-holdout", type=int, default=1, help="WARCs per snapshot held out for val and test each.")
     pp.add_argument("--limit-warcs", type=int, default=None, help="Smoke: only prep the first N WARC shards.")
@@ -1116,6 +1169,13 @@ def main() -> None:
     pt.add_argument("--sample-seed", type=int, default=0)
     pt.add_argument("--neg-per-pos", type=float, default=12.0, help="Negatives per positive within each shard.")
     pt.add_argument("--max-chars", type=int, default=None, help="Head-truncate each doc (None=full, untruncated).")
+    pt.add_argument(
+        "--line-keep-frac",
+        type=float,
+        default=1.0,
+        help="Uniformly subsample this fraction of docs per shard (seeded; wide-thin scaling: "
+        "more WARCs at fixed bytes). Ratio cap applies to the subsample.",
+    )
     pt.add_argument("--epoch", type=int, default=5)
     pt.add_argument("--lr", type=float, default=0.1)
     pt.add_argument("--dim", type=int, default=100)
@@ -1137,14 +1197,34 @@ def main() -> None:
     pl = sub.add_parser("leaderboard", help="Scan all result JSONs and write the consolidated leaderboard.")
     pl.add_argument("--out-md", default=LEADERBOARD_MD, help="GCS/local path for the Markdown leaderboard.")
     pl.add_argument("--out-json", default=LEADERBOARD_JSON, help="GCS/local path for the leaderboard rows JSON.")
+    for sp in (p, pp, pt):
+        sp.add_argument(
+            "--dataset-root",
+            default="",
+            help="Override the labeled-dataset root (expects <root>/data and <root>/data_no_useful parquet dirs); "
+            "default is the high_quality_3000_distill dataset.",
+        )
     args = parser.parse_args()
+
+    if getattr(args, "dataset_root", ""):
+        global USEFUL_DIR, NO_USEFUL_DIR
+        USEFUL_DIR = f"{args.dataset_root}/data"
+        NO_USEFUL_DIR = f"{args.dataset_root}/data_no_useful"
+        logger.info("dataset root overridden -> %s", args.dataset_root)
 
     if args.command == "eval":
         run_eval(args.model, args.test_glob, args.out, args.quality_label, args.negative_label, args.max_chars)
     elif args.command == "leaderboard":
         run_leaderboard(args.out_md, args.out_json)
     elif args.command == "prep":
-        run_prep(args.representation, args.k_holdout, args.tag, args.limit_warcs, args.only_split)
+        run_prep(
+            args.representation,
+            args.k_holdout,
+            args.tag,
+            args.limit_warcs,
+            args.only_split,
+            args.standalone_workers,
+        )
     elif args.command == "train-from-prep":
         run_train_from_prep(
             args.representation,
@@ -1153,6 +1233,7 @@ def main() -> None:
             args.sample_seed,
             args.neg_per_pos,
             args.max_chars,
+            args.line_keep_frac,
             args.epoch,
             args.lr,
             args.dim,

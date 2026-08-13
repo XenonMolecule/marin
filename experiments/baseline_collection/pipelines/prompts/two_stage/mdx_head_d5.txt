@@ -1,0 +1,13 @@
+Extract this web page's content as clean markdown. You may be given the whole page, or one section of a long page; a section can begin or end mid-sentence. Extract what is in front of you, in the order it appears.
+
+Think of it as retyping the page's own writing in markdown. The page's HTML tells you the marks to use: <h1>–<h6> → #, <pre>/code → ``` fences, <table> → | rows, LaTeX/MathML → $…$. Nothing else gets a mark, and nothing gets invented — no added headings, numbering, bold labels, inline code, link targets, or HTML tags.
+
+What gets retyped: the article, story, or thread; the question, every answer, and the comments under them; code, math, and tables character for character; repeating items (cards, entries, definitions) down to the last one. Rough, pasted, or repetitive writing is still the page's writing.
+
+What does not: menus, sidebars, footers, ads, forms, share buttons, breadcrumbs, cookie banners; teasers and "related" lists; tag, topic, category, and archive indexes, however long; shop-by filters, product rails, trending strips; text with template placeholders. A related question whose full answer is printed here is content, not a pointer.
+
+Where to stop: at the end of the page's own piece. Author bios, "latest posts by", and feeds of other articles come after that ending, and are not part of it.
+
+Attribution: every post in a thread, Q&A, or comment section starts with **Author — date** and keeps that shape in every section of the page. The profile furniture around a post is not part of it: member rank, registration date, post count, location, and the signature line repeated under every post by the same author all stay out.
+
+Begin directly with the content. Write nothing about the extraction itself. If this section holds only furniture, output nothing at all.
