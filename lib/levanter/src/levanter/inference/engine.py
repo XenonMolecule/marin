@@ -6,12 +6,12 @@ import functools
 import logging
 import os
 import time
-import warnings
 from dataclasses import dataclass, field
 from typing import Optional, Sequence
 
 import equinox as eqx
 import haliax as hax
+import humanfriendly as hly
 from rigging.filesystem import open_url
 import haliax.haxtyping as ht
 import jax
@@ -119,10 +119,10 @@ class InferenceEngineConfig:
         return (self.max_seq_len + self.page_size - 1) // self.page_size
 
 
-def _tree_byte_size(tree) -> int:
+def _tree_byte_size(tree, axis_resources: ResourceMapping | None = None) -> int:
     """Return the per-device number of bytes represented by ``tree``."""
 
-    return sharded_tree_size(tree)
+    return sharded_tree_size(tree, mapping=axis_resources)
 
 
 def _available_hbm_budget_bytes(hbm_utilization: float) -> int:
@@ -150,7 +150,11 @@ def _available_hbm_budget_bytes(hbm_utilization: float) -> int:
     return min(budgets)
 
 
-def _infer_max_pages_from_hbm(model: LmHeadModel, config: InferenceEngineConfig) -> int:
+def _infer_max_pages_from_hbm(
+    model: LmHeadModel,
+    config: InferenceEngineConfig,
+    axis_resources: ResourceMapping | None = None,
+) -> int:
     """Infer a KV-page budget using HBM utilization targets."""
 
     max_pages_per_seq = config.max_pages_per_seq
@@ -177,7 +181,7 @@ def _infer_max_pages_from_hbm(model: LmHeadModel, config: InferenceEngineConfig)
 
         cache_shape = eqx.filter_eval_shape(initial_cache, num_pages)
 
-        return _tree_byte_size(cache_shape)
+        return _tree_byte_size(cache_shape, axis_resources)
 
     bytes_one = cache_bytes(1)
     if bytes_one > budget:
@@ -186,30 +190,17 @@ def _infer_max_pages_from_hbm(model: LmHeadModel, config: InferenceEngineConfig)
             "Provide `max_pages` explicitly or increase `hbm_utilization`."
         )
 
-    # Use the previous heuristic as the initial guess before expanding.
-    guess = max(int(config.max_seqs * max_pages_per_seq), 1)
-
+    # No engine state can use more than max_seqs fully populated sequences. Allocating pages beyond
+    # this bound only consumes the HBM needed by compilation and transient execution buffers.
+    page_capacity = max(int(config.max_seqs * max_pages_per_seq), 1)
     low = 1
-    high = guess
+    high = page_capacity
     high_bytes = cache_bytes(high)
 
     if high_bytes <= budget:
-        low = high
-        while True:
-            high *= 2
-            if high > (1 << 20):
-                warnings.warn(
-                    "KV cache size exceeded 1M pages during budget inference; "
-                    "aborting search and using current estimate."
-                )
-                high = 1 << 20
-                break
-            high_bytes = cache_bytes(high)
-            if high_bytes > budget:
-                break
-            low = high
+        low = page_capacity
 
-    # Binary search between the known-good lower bound and the first oversized bound.
+    # Binary search between one known-good page and the capacity bound when the full cache is too large.
     while low + 1 < high:
         mid = (low + high) // 2
         mid_bytes = cache_bytes(mid)
@@ -224,8 +215,6 @@ def _infer_max_pages_from_hbm(model: LmHeadModel, config: InferenceEngineConfig)
     next_bytes = cache_bytes(high)
     per_page = bytes_at_max if max_pages == 1 else bytes_at_max - cache_bytes(max_pages - 1)
     base_bytes = max(bytes_at_max - per_page * max_pages, 0)
-
-    import humanfriendly as hly
 
     logger.info(
         "Auto-computed KV cache budget: base=%s, per_page=%s, budget=%s, used=%s, next=%s -> max_pages=%d",
@@ -281,7 +270,10 @@ class GenState(eqx.Module):
         )
 
     def clone_sequence(
-        self, parent_local_id: int, child_local_id: int | None = None, seq_params: SeqDecodingParams | None = None
+        self,
+        parent_local_id: int | jax.Array,
+        child_local_id: int | jax.Array | None = None,
+        seq_params: SeqDecodingParams | None = None,
     ) -> tuple["GenState", int]:
         """Clone a sequence into a new local slot, sharing full pages and using a fresh page for the last partial page.
 
@@ -441,8 +433,9 @@ def _prefill_kernel(
     # )
 
     temps = decode_state.temperature["seq", new_slot_ids]
+    top_ps = decode_state.top_p["seq", new_slot_ids]
 
-    new_tokens, log_probs = hax.vmap(sampler, "position")(logits_at_samples, temps, key=prng_keys)
+    new_tokens, log_probs = hax.vmap(sampler, "position")(logits_at_samples, temps, top_ps=top_ps, key=prng_keys)
 
     # Update decode_state (also enqueues into the main decode queue)
     decode_state = decode_state.update_tokens(new_tokens, new_slot_ids, log_probs, num_new_tokens)
@@ -607,9 +600,10 @@ def _handle_clones(
 
     # Sample clones from the same boundary logits as their sources
     temps = gen_state.decode_state.temperature["seq", tgt_ids]
+    top_ps = gen_state.decode_state.top_p["seq", tgt_ids]
     prng_keys = gen_state.decode_state.prng_keys_for(tgt_ids, pos_ids_this_time)
 
-    new_tokens, log_probs = hax.vmap(sampler, "position")(logits_this_time, temps, key=prng_keys)
+    new_tokens, log_probs = hax.vmap(sampler, "position")(logits_this_time, temps, top_ps=top_ps, key=prng_keys)
 
     # update page table and cache for the clone targets
     decode_state = gen_state.decode_state
@@ -707,8 +701,9 @@ def _run_generation_loop(
         prng_keys = decode_state.prng_keys_for(new_slot_ids, new_pos_ids)
 
         temps = decode_state.temperature["seq", new_slot_ids]
+        top_ps = decode_state.top_p["seq", new_slot_ids]
 
-        new_tokens, log_probs = hax.vmap(sampler, "position")(logits_at_samples, temps, key=prng_keys)
+        new_tokens, log_probs = hax.vmap(sampler, "position")(logits_at_samples, temps, top_ps=top_ps, key=prng_keys)
 
         # Update decode state with the freshly sampled tokens (also enqueues them)
         decode_state = decode_state.update_tokens(new_tokens, new_slot_ids, log_probs, num_new_tokens)
@@ -863,7 +858,7 @@ class InferenceEngine:
     ) -> "InferenceEngine":
         """Build an engine using a EngineConfig for sizing knobs."""
         if config.max_pages is None:
-            inferred_pages = _infer_max_pages_from_hbm(model, config)
+            inferred_pages = _infer_max_pages_from_hbm(model, config, axis_resources)
             config = dataclasses.replace(config, max_pages=int(inferred_pages))
 
         max_pages_per_seq = config.max_pages_per_seq
@@ -947,6 +942,7 @@ class InferenceEngine:
         stop_tokens_template = decode_state.stop_tokens
         max_num_tokens = np.zeros((max_slots,), dtype=np.int32)
         temperatures = np.zeros((max_slots,), dtype=np.float32)
+        top_ps = np.ones((max_slots,), dtype=np.float32)
         prng_keys = np.zeros((max_slots, 2), dtype=np.uint32)
         if stop_tokens_template is not None:
             stop_tokens = np.full(
@@ -1000,6 +996,7 @@ class InferenceEngine:
 
             max_num_tokens[prefill_idx] = np.asarray(seq_params.max_num_tokens, dtype=np.int32).item()
             temperatures[prefill_idx] = np.asarray(seq_params.temperature, dtype=np.float32).item()
+            top_ps[prefill_idx] = np.asarray(seq_params.top_p, dtype=np.float32).item()
             prng_keys[prefill_idx] = np.asarray(seq_params.key, dtype=np.uint32)
             if stop_tokens is not None:
                 if seq_params.stop_tokens is None:
@@ -1039,6 +1036,7 @@ class InferenceEngine:
                     # Clones reuse prompt tokens from their parent; no need to copy here.
                     max_num_tokens[clone_idx] = np.asarray(child_params.max_num_tokens, dtype=np.int32).item()
                     temperatures[clone_idx] = np.asarray(child_params.temperature, dtype=np.float32).item()
+                    top_ps[clone_idx] = np.asarray(child_params.top_p, dtype=np.float32).item()
                     prng_keys[clone_idx] = np.asarray(child_params.key, dtype=np.uint32)
                     if stop_tokens is not None:
                         stop_tokens[clone_idx] = stop_tokens[prefill_idx]
@@ -1073,6 +1071,7 @@ class InferenceEngine:
                     else hax.named(jnp.asarray(stop_tokens, dtype=jnp.int32), axis=("seq", "stop_seq", "position"))
                 ),
                 temperature=jnp.asarray(temperatures, dtype=jnp.float32),
+                top_p=jnp.asarray(top_ps, dtype=jnp.float32),
                 key=jnp.asarray(prng_keys, dtype=jnp.uint32),
             ),
         )
@@ -1284,6 +1283,7 @@ class InferenceEngine:
                     max_num_tokens=jnp.zeros(max_slots, dtype=jnp.int32),
                     stop_tokens=None,
                     temperature=jnp.zeros(max_slots, dtype=jnp.float32),
+                    top_p=jnp.ones(max_slots, dtype=jnp.float32),
                     key=jnp.zeros((max_slots, 2), dtype=jnp.uint32),
                 ),
             )

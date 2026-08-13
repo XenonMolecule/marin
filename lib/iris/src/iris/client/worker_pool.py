@@ -10,7 +10,8 @@ jobs that can execute any callable.
 
 Example:
     from pathlib import Path
-    from iris.client import IrisClient, WorkerPool, WorkerPoolConfig
+    from iris.client import IrisClient
+    from iris.client.worker_pool import WorkerPool, WorkerPoolConfig
     from iris.cluster.types import ResourceSpec
 
     client = IrisClient.remote("http://controller:8080", workspace=Path("./my-project"))
@@ -28,7 +29,6 @@ Example:
 
 import logging
 import threading
-import time
 import uuid
 from collections.abc import Callable, Sequence
 from concurrent.futures import Future
@@ -42,9 +42,9 @@ import cloudpickle
 from connectrpc.errors import ConnectError
 from rigging.timing import Duration, ExponentialBackoff
 
-from iris.actor import ActorServer
 from iris.actor.client import ActorClient
 from iris.actor.resolver import Resolver
+from iris.actor.server import ActorServer
 from iris.client.client import IrisClient, Job, iris_ctx
 from iris.cluster.client import get_job_info
 from iris.cluster.types import Entrypoint, EnvironmentSpec, JobName, ResourceSpec
@@ -86,8 +86,6 @@ class PendingTask:
     serialized_args: bytes
     serialized_kwargs: bytes
     future: Future
-    fn_name: str
-    submitted_at: float
     retries_remaining: int = 0
 
 
@@ -320,7 +318,6 @@ class WorkerFuture(Generic[T]):
     """Future representing an in-flight task."""
 
     _future: Future
-    _fn_name: str
 
     def result(self, timeout: float | None = None) -> T:
         """Block until result is available.
@@ -414,10 +411,6 @@ class WorkerPool:
         return sum(1 for w in self._workers.values() if w.status in (WorkerStatus.IDLE, WorkerStatus.BUSY))
 
     @property
-    def idle_count(self) -> int:
-        return sum(1 for w in self._workers.values() if w.status == WorkerStatus.IDLE)
-
-    @property
     def job_id(self) -> JobName | None:
         return self._job.job_id if self._job else None
 
@@ -480,11 +473,9 @@ class WorkerPool:
         if min_workers is None:
             min_workers = self._config.num_workers
 
-        ExponentialBackoff(initial=0.05, maximum=1.0).wait_until_or_raise(
-            lambda: self.size >= min_workers,
-            timeout=timeout,
-            error_message=f"Only {self.size} of {min_workers} workers registered within {timeout}s",
-        )
+        backoff = ExponentialBackoff(initial=0.05, maximum=1.0)
+        if not backoff.wait_until(lambda: self.size >= min_workers, timeout=timeout):
+            raise TimeoutError(f"Only {self.size} of {min_workers} workers registered within {timeout}")
 
     def submit(
         self,
@@ -514,13 +505,11 @@ class WorkerPool:
             serialized_args=cloudpickle.dumps(args),
             serialized_kwargs=cloudpickle.dumps(kwargs),
             future=Future(),
-            fn_name=getattr(fn, "__name__", "lambda"),
-            submitted_at=time.monotonic(),
             retries_remaining=self._config.max_retries,
         )
 
         self._task_queue.put(task)
-        return WorkerFuture(_future=task.future, _fn_name=task.fn_name)
+        return WorkerFuture(_future=task.future)
 
     def map(
         self,

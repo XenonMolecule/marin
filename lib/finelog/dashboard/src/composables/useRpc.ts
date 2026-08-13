@@ -1,8 +1,12 @@
 /**
- * Connect-RPC composable for finelog services.
+ * Calls into the finelog server: the Connect-RPC services and the `/api/*`
+ * introspection routes.
  *
  * Wraps fetch() with reactive loading/error state. Caller invokes refresh() to fetch.
  * Body may be a static record or a factory that closes over reactive state.
+ *
+ * Every URL here is RELATIVE, so a dashboard served under a proxy sub-path
+ * addresses its own server rather than the proxy root.
  */
 import { ref, type Ref } from 'vue'
 
@@ -13,6 +17,27 @@ export interface RpcState<T> {
   loading: Ref<boolean>
   error: Ref<string | null>
   refresh: () => Promise<void>
+}
+
+// Connect-JSON error envelope: { code: string, message: string }. Without
+// parsing, the dashboard would display the raw JSON (escaped quotes and all),
+// which the user reads as "broken escaping" — see the iris.task GROUP-BY
+// example. We surface `message` verbatim instead; the parser-error newlines
+// and `LINE 1: ...` carets pass through to the <pre> in the error card.
+async function formatConnectError(method: string, resp: Response): Promise<string> {
+  const text = await resp.text().catch(() => '')
+  if (text) {
+    try {
+      const parsed = JSON.parse(text) as { message?: unknown }
+      if (typeof parsed.message === 'string' && parsed.message) {
+        return `${method}: ${parsed.message}`
+      }
+    } catch {
+      // fall through to the raw-text branch
+    }
+    return `${method}: ${resp.status} ${resp.statusText} — ${text}`
+  }
+  return `${method}: ${resp.status} ${resp.statusText}`
 }
 
 function useRpc<T>(service: string, method: string, body?: RpcBody): RpcState<T> {
@@ -34,8 +59,7 @@ function useRpc<T>(service: string, method: string, body?: RpcBody): RpcState<T>
       })
       if (gen !== generation) return
       if (!resp.ok) {
-        const text = await resp.text().catch(() => '')
-        throw new Error(`${method}: ${resp.status} ${resp.statusText}${text ? ` — ${text}` : ''}`)
+        throw new Error(await formatConnectError(method, resp))
       }
       const payload = (await resp.json()) as T
       if (gen !== generation) return
@@ -66,8 +90,21 @@ export async function statsRpcCall<T>(method: string, body?: Record<string, unkn
     body: JSON.stringify(body ?? {}),
   })
   if (!resp.ok) {
-    const text = await resp.text().catch(() => '')
-    throw new Error(`${method}: ${resp.status} ${resp.statusText}${text ? ` — ${text}` : ''}`)
+    throw new Error(await formatConnectError(method, resp))
+  }
+  return resp.json() as Promise<T>
+}
+
+/**
+ * GET one of the server's `/api/*` introspection routes. These are plain JSON,
+ * not Connect, so failures arrive as a status line plus a text body.
+ */
+export async function apiGet<T>(path: string, params?: Record<string, string>): Promise<T> {
+  const query = params ? `?${new URLSearchParams(params)}` : ''
+  const resp = await fetch(`api/${path}${query}`)
+  if (!resp.ok) {
+    const detail = await resp.text().catch(() => '')
+    throw new Error(`api/${path}: ${resp.status} ${resp.statusText}${detail ? ` — ${detail}` : ''}`)
   }
   return resp.json() as Promise<T>
 }
@@ -79,8 +116,7 @@ export async function logRpcCall<T>(method: string, body?: Record<string, unknow
     body: JSON.stringify(body ?? {}),
   })
   if (!resp.ok) {
-    const text = await resp.text().catch(() => '')
-    throw new Error(`${method}: ${resp.status} ${resp.statusText}${text ? ` — ${text}` : ''}`)
+    throw new Error(await formatConnectError(method, resp))
   }
   return resp.json() as Promise<T>
 }

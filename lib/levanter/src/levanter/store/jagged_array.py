@@ -5,6 +5,7 @@ import asyncio
 import contextlib
 import os
 import threading
+import uuid
 from dataclasses import dataclass
 from typing import Optional, Sequence
 
@@ -12,9 +13,9 @@ import jax.numpy as jnp
 import numpy as np
 import tensorstore as ts
 
+from rigging.filesystem import StoragePath, is_cross_region_url, record_transfer, url_to_fs
+
 from levanter.tensorstore_serialization import build_kvstore_spec
-from levanter.utils import fsspec_utils
-from levanter.utils.thread_utils import future_from_value
 
 
 CACHE_BYTES_LIMIT = int(os.getenv("LEVANTER_TS_CACHE_LIMIT", "1000000000"))
@@ -37,6 +38,42 @@ def _read_context() -> ts.Context:
             # TensorStore only shares cache_pool entries across stores that share a Context.
             _READ_CONTEXT = ts.Context({"cache_pool": _READ_CACHE_SETTINGS})
     return _READ_CONTEXT
+
+
+# Distinct datastore paths already charged against the cross-region transfer
+# budget in this process. Reads of the bulk token/offset chunks go through
+# tensorstore's native GCS driver, which bypasses fsspec and the cross-region
+# guard, so we charge a store's full on-disk size once when its reader opens.
+_charged_store_reads: set[str] = set()
+_charged_store_reads_lock = threading.Lock()
+
+
+def charge_store_read_budget(path: Optional[str]) -> None:
+    """Charge a tokenized datastore's on-disk size to the cross-region budget.
+
+    Stats the store at ``path`` and records its total size against the shared
+    transfer budget, so a job streaming a remote datastore is accounted for by
+    the same budget that guards fsspec reads. The full size is charged once, up
+    front, rather than per batch, since the tensorstore reads themselves are
+    invisible to the budget. Each distinct store path is charged once per
+    process; a no-op for local or same-region paths.
+
+    The ``du`` stat pass only runs when ``path`` is actually cross-region, so
+    the common same-region and local opens pay nothing beyond a cached region
+    lookup.
+    """
+    if not path or path == "memory" or not is_cross_region_url(path):
+        return
+    with _charged_store_reads_lock:
+        if path in _charged_store_reads:
+            return
+        _charged_store_reads.add(path)
+    fs, fs_path = url_to_fs(path)
+    try:
+        total_bytes = fs.du(fs_path, total=True)
+    except FileNotFoundError:
+        return
+    record_transfer(total_bytes, path)
 
 
 @contextlib.contextmanager
@@ -62,10 +99,6 @@ class PreparedBatch:
     data: np.ndarray
     offsets: np.ndarray
     shapes: Optional[np.ndarray]
-
-    @property
-    def byte_size(self):
-        return self.data.nbytes + self.offsets.nbytes + (self.shapes.nbytes if self.shapes is not None else 0)
 
     def astype(self, dtype):
         return PreparedBatch(self.data.astype(dtype), self.offsets, self.shapes)
@@ -129,6 +162,18 @@ def _prepare_batch(arrays, item_rank):
     offsets = np.cumsum(offsets)
     data = np.concatenate([data.reshape(-1) for data in arrays])
     return data, offsets, shapes
+
+
+@contextlib.contextmanager
+def _index_error_on_out_of_range(item):
+    """Translate tensorstore's out-of-bounds ValueError into an ``IndexError`` for ``item``."""
+    try:
+        yield
+    except ValueError as e:
+        # ts raises a ValueError for an index out of bounds OUT_OF_RANGE
+        if "OUT_OF_RANGE" in str(e):
+            raise IndexError(f"JaggedArrayStore index out of range: {item}") from e
+        raise
 
 
 @dataclass
@@ -209,7 +254,6 @@ class JaggedArrayStore:
 
     @property
     def data_size(self):
-        # return int(self.offsets[self.num_rows].read().result())
         if self._cached_data_size is not None:
             return self._cached_data_size
         result = int(self.offsets[self.num_rows].read().result())
@@ -290,7 +334,7 @@ class JaggedArrayStore:
         data_fut = self.data[new_max:old_data_size].write(np.zeros((), dtype=self.data.dtype.name))
 
         f1.result()
-        offsets_fut = self.offsets[size + 1 : old_data_size + 1].write(0)
+        offsets_fut = self.offsets[size + 1 : old_len + 1].write(0)
 
         data_fut.result()
         offsets_fut.result()
@@ -371,25 +415,8 @@ class JaggedArrayStore:
             self._cached_num_rows = num_rows + num_added
             self._cached_data_size = current_data_size + len(data)
 
-    async def reload_async(self) -> "JaggedArrayStore":
-        """
-        Calls `resolve` on the underlying tensorstore objects, updating size information
-
-        @return: new JaggedArrayStore with resolved tensorstores
-        """
-        offsets = ts.open(_unshaped_spec(self.offsets, retain_context=False), **_reload_kwargs())
-        data = ts.open(_unshaped_spec(self.data, retain_context=False), **_reload_kwargs())
-        shapes = (
-            future_from_value(None)
-            if self.shapes is None
-            else ts.open(_unshaped_spec(self.shapes, retain_context=False), **_reload_kwargs())
-        )
-
-        offsets, data, shapes = await asyncio.gather(offsets, data, shapes)
-
-        return JaggedArrayStore(offsets, data, shapes, self.item_rank)
-
     def reload(self) -> "JaggedArrayStore":
+        """Re-open the underlying tensorstores so size information reflects concurrent writes."""
         offsets = ts.open(_unshaped_spec(self.offsets, retain_context=False), **_reload_kwargs())
         data = ts.open(_unshaped_spec(self.data, retain_context=False), **_reload_kwargs())
         shapes = (
@@ -410,7 +437,7 @@ class JaggedArrayStore:
         if isinstance(item, slice):
             raise NotImplementedError("Slicing not supported")
         else:
-            try:
+            with _index_error_on_out_of_range(item):
                 start, stop, _ = await self._bounds_for_rows_async(item, item + 1)
                 data = await self.data[start:stop].read()
 
@@ -418,11 +445,6 @@ class JaggedArrayStore:
                     shapes = np.array(self.shapes[item])
                     data = data.reshape(*shapes, -1)
                 return data
-            except ValueError as e:
-                # ts raises a value error for an index out of bounds OUT_OF_RANGE
-                if "OUT_OF_RANGE" in str(e):
-                    raise IndexError(f"JaggedArrayStore index out of range: {item}") from e
-                raise
 
     async def get_batch(self, indices: Sequence[int]) -> Sequence[np.ndarray]:
         # get indices
@@ -471,7 +493,7 @@ class JaggedArrayStore:
             start, stop, step = item.indices(len(self))
             return self.get_batch_sync(list(range(start, stop, step)))
         else:
-            try:
+            with _index_error_on_out_of_range(item):
                 start, stop, _ = self._bounds_for_rows(item, item + 1)
                 data = self.data[start:stop].read().result()
 
@@ -479,11 +501,6 @@ class JaggedArrayStore:
                     shapes = np.array(self.shapes[item])
                     data = data.reshape(*shapes, -1)
                 return data
-            except ValueError as e:
-                # ts raises a value error for an index out of bounds OUT_OF_RANGE
-                if "OUT_OF_RANGE" in str(e):
-                    raise IndexError(f"JaggedArrayStore index out of range: {item}") from e
-                raise
 
     def _bounds_for_rows(self, start, stop):
         num_rows = self.num_rows
@@ -519,7 +536,7 @@ class JaggedArrayStore:
         offsets = [(offset[0], offset[-1]) for offset in offsets]
 
         if zero_pos is not None:
-            offsets[zero_pos] = [0, offsets[zero_pos][1]]
+            offsets[zero_pos] = (0, offsets[zero_pos][1])
 
         return offsets
 
@@ -543,7 +560,7 @@ class JaggedArrayStore:
         offsets = [(offset[0], offset[-1]) for offset in offsets]
 
         if zero_pos is not None:
-            offsets[zero_pos] = [0, offsets[zero_pos][1]]
+            offsets[zero_pos] = (0, offsets[zero_pos][1])
 
         return offsets
 
@@ -595,7 +612,6 @@ def _ts_open_sync(path: Optional[str], dtype: jnp.dtype, shape, *, mode):
             pass
 
     # TODO: groups?
-    # TODO: set chunk sizes
     try:
         if spec.get("kvstore", {}).get("path", "").startswith("memory://"):
             raise ValueError("No kvstore specified in spec, cannot open TensorStore")
@@ -604,11 +620,6 @@ def _ts_open_sync(path: Optional[str], dtype: jnp.dtype, shape, *, mode):
             dtype=jnp.dtype(dtype).name,
             shape=[2**54, *shape[1:]],
             **open_kwargs,
-            # chunk_layout=ts.ChunkLayout(
-            #     read_chunk_shape=[DEFAULT_CHUNK_SIZE, *shape[1:]],
-            #     write_chunk_shape=[DEFAULT_WRITE_CHUNK_SIZE, *shape[1:]]
-            # ),
-            # compression={"codec": "zstd", "compression_level": 5},
             **mode_config,
         ).result()
     except ValueError as e:
@@ -633,31 +644,23 @@ async def _ts_open_async(path: Optional[str], dtype: jnp.dtype, shape, *, mode):
             pass
 
     # TODO: groups?
-    # TODO: set chunk sizes
     return await ts.open(
         spec,
         dtype=jnp.dtype(dtype).name,
         shape=[2**54, *shape[1:]],
         **open_kwargs,
-        # chunk_layout=ts.ChunkLayout(
-        #     read_chunk_shape=[DEFAULT_CHUNK_SIZE, *shape[1:]],
-        #     write_chunk_shape=[DEFAULT_WRITE_CHUNK_SIZE, *shape[1:]]
-        # ),
-        # compression={"codec": "zstd", "compression_level": 5},
         **mode_config,
     )
 
 
 def _get_spec(path, shape):
     if path is None:
-        import uuid
-
         random_name = str(uuid.uuid4())
         spec = ts.Spec({"driver": "zarr", "kvstore": f"memory://{random_name}"})
     else:
         kvstore = build_kvstore_spec(path)
         spec = {"driver": "zarr3", "kvstore": kvstore}
-        fsspec_utils.mkdirs(os.path.dirname(path))
+        StoragePath(os.path.dirname(path)).mkdirs()
         spec["metadata"] = {
             "chunk_grid": {
                 "name": "regular",

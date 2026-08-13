@@ -4,15 +4,14 @@ Vendored Marin pipeline framework. In this file, leading `/` refers to repositor
 
 ## Key Docs
 
-- `/.agents/skills/architecture/SKILL.md` — repository structure and core concepts
 - `/.agents/skills/add-dataset/SKILL.md` — dataset addition workflow
 - `/lib/marin/pyproject.toml` — packaging metadata, extras, dependency groups
 
 ## Development
 
 ```bash
-# Run tests
-uv run --package marin pytest
+# Full safe Marin suite
+uv run --package marin-core --group test --extra cpu --extra dedup pytest tests
 
 # Lint
 ./infra/pre-commit.py --all-files --fix

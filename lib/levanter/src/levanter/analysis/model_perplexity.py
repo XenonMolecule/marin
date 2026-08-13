@@ -2,25 +2,25 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import json
-import os
 from collections import Counter
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any, Sequence
 
-import fsspec
 import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
-from rigging.filesystem import open_url
+from rigging.filesystem import StoragePath, open_url, prefix_join
 
 from levanter.analysis.perplexity_gap import (
     LOG2E,
-    _SEGMENT_RE,
     GapReportBuilder,
     RawTextDocument,
     TokenizedDocument,
     bucket_for_segment,
+    char_to_byte_offsets,
+    iter_scored_segments,
+    register_dataset_hierarchy,
     write_report_files,
 )
 
@@ -30,6 +30,8 @@ SUMMARY_FILENAME = "summary.json"
 TOKEN_COUNTS_FILENAME = "token_counts.parquet"
 TOKEN_COUNT_SUMMARY_FILENAME = "token_counts_summary.json"
 DEFAULT_RARE_TOKEN_LIMIT = 32
+EVAL_RUNTIME_METRIC_FIELDS = ("tokens", "eval_seconds", "tokens_per_second", "bytes_per_second")
+TRACKED_EVAL_RUNTIME_SCALAR_FIELDS = EVAL_RUNTIME_METRIC_FIELDS[:-1]
 
 
 @dataclass(frozen=True)
@@ -43,22 +45,44 @@ class ScoredDocument:
 class ModelLossAggregate:
     total_loss: float = 0.0
     total_bytes: int = 0
+    total_tokens: int = 0
+    elapsed_seconds: float = 0.0
     count: int = 0
 
-    def add(self, *, loss: float, num_bytes: int, count: int = 1) -> None:
+    def add(
+        self,
+        *,
+        loss: float,
+        num_bytes: int,
+        num_tokens: int = 0,
+        elapsed_seconds: float = 0.0,
+        count: int = 1,
+    ) -> None:
         self.total_loss += float(loss)
         self.total_bytes += int(num_bytes)
+        self.total_tokens += int(num_tokens)
+        self.elapsed_seconds += float(elapsed_seconds)
         self.count += int(count)
 
-    def as_dict(self, name: str) -> dict[str, Any]:
+    def as_dict(self, name: str, *, include_eval_metrics: bool = False) -> dict[str, Any]:
         bpb = None if self.total_bytes <= 0 else self.total_loss * LOG2E / self.total_bytes
-        return {
+        row = {
             "name": name,
             "documents": int(self.count),
             "bytes": int(self.total_bytes),
             "bpb": bpb,
             "bits": self.total_loss * LOG2E,
         }
+        if include_eval_metrics:
+            row["tokens"] = int(self.total_tokens)
+            row["eval_seconds"] = float(self.elapsed_seconds)
+            row["tokens_per_second"] = (
+                None if self.elapsed_seconds <= 0.0 else float(self.total_tokens) / self.elapsed_seconds
+            )
+            row["bytes_per_second"] = (
+                None if self.elapsed_seconds <= 0.0 else float(self.total_bytes) / self.elapsed_seconds
+            )
+        return row
 
 
 @dataclass
@@ -68,41 +92,42 @@ class ModelScoreReportBuilder:
     bucket_stats: dict[str, ModelLossAggregate] = field(default_factory=lambda: defaultdict(ModelLossAggregate))
     group_to_leaves: dict[str, set[str]] = field(default_factory=lambda: defaultdict(set))
 
-    def register_dataset(self, dataset_name: str, tags: Sequence[str]) -> None:
-        self.group_to_leaves[dataset_name].add(dataset_name)
-        for tag in tags:
-            self.group_to_leaves[tag].add(dataset_name)
-            self._register_hierarchy(tag, dataset_name)
-        self._register_hierarchy(dataset_name, dataset_name)
+    def add_document(
+        self,
+        *,
+        document: RawTextDocument,
+        per_byte_loss: np.ndarray,
+        token_count: int = 0,
+        elapsed_seconds: float = 0.0,
+    ) -> None:
+        register_dataset_hierarchy(self.group_to_leaves, document.dataset_name, document.tags)
 
-    def add_document(self, *, document: RawTextDocument, per_byte_loss: np.ndarray) -> None:
-        self.register_dataset(document.dataset_name, document.tags)
-
-        num_bytes = len(per_byte_loss)
+        total_doc_bytes = len(per_byte_loss)
+        score_start, score_end = document.score_span(total_doc_bytes)
+        score_start = min(score_start, total_doc_bytes)
+        score_end = min(score_end, total_doc_bytes)
+        num_bytes = max(0, score_end - score_start)
         if num_bytes <= 0:
             return
 
-        total_loss = float(per_byte_loss.sum())
-        self.dataset_stats[document.dataset_name].add(loss=total_loss, num_bytes=num_bytes)
+        total_loss = float(per_byte_loss[score_start:score_end].sum())
+        self.dataset_stats[document.dataset_name].add(
+            loss=total_loss,
+            num_bytes=num_bytes,
+            num_tokens=token_count,
+            elapsed_seconds=elapsed_seconds,
+        )
 
         prefix = np.concatenate(([0.0], np.cumsum(per_byte_loss, dtype=np.float64)))
-        byte_offsets = _char_to_byte_offsets(document.text)
-        for match in _SEGMENT_RE.finditer(document.text):
-            segment = match.group(0)
-            if not segment:
-                continue
-
-            byte_start = byte_offsets[match.start()]
-            byte_end = byte_offsets[match.end()]
-            if byte_end <= byte_start:
-                continue
-
-            segment_loss = float(prefix[byte_end] - prefix[byte_start])
-            segment_bytes = int(byte_end - byte_start)
-            self.bucket_stats[bucket_for_segment(segment)].add(loss=segment_loss, num_bytes=segment_bytes)
+        byte_offsets = char_to_byte_offsets(document.text)
+        for segment in iter_scored_segments(document.text, byte_offsets, score_start, score_end):
+            segment_loss = float(prefix[segment.byte_end] - prefix[segment.byte_start])
+            self.bucket_stats[bucket_for_segment(segment.text)].add(loss=segment_loss, num_bytes=segment.num_bytes)
 
     def build_summary(self) -> dict[str, Any]:
-        dataset_rows = [stats.as_dict(name) for name, stats in sorted(self.dataset_stats.items())]
+        dataset_rows = [
+            stats.as_dict(name, include_eval_metrics=True) for name, stats in sorted(self.dataset_stats.items())
+        ]
 
         group_rows = []
         for group, leaves in sorted(self.group_to_leaves.items()):
@@ -113,9 +138,15 @@ class ModelScoreReportBuilder:
                 leaf_stats = self.dataset_stats.get(leaf)
                 if leaf_stats is None:
                     continue
-                aggregate.add(loss=leaf_stats.total_loss, num_bytes=leaf_stats.total_bytes, count=leaf_stats.count)
+                aggregate.add(
+                    loss=leaf_stats.total_loss,
+                    num_bytes=leaf_stats.total_bytes,
+                    num_tokens=leaf_stats.total_tokens,
+                    elapsed_seconds=leaf_stats.elapsed_seconds,
+                    count=leaf_stats.count,
+                )
             if aggregate.total_bytes > 0:
-                group_rows.append(aggregate.as_dict(group))
+                group_rows.append(aggregate.as_dict(group, include_eval_metrics=True))
 
         bucket_rows = [stats.as_dict(bucket) for bucket, stats in sorted(self.bucket_stats.items())]
 
@@ -126,11 +157,6 @@ class ModelScoreReportBuilder:
             "pattern_buckets": sorted(bucket_rows, key=lambda row: row["bits"], reverse=True),
         }
 
-    def _register_hierarchy(self, tag: str, dataset_name: str) -> None:
-        parts = tag.split("/")
-        for i in range(1, len(parts)):
-            self.group_to_leaves["/".join(parts[:i])].add(dataset_name)
-
 
 def write_model_score_files(
     output_path: str,
@@ -140,18 +166,16 @@ def write_model_score_files(
     vocab_size: int | None = None,
     token_id_to_text: dict[int, str] | None = None,
 ) -> None:
-    summary_path = os.path.join(output_path, SUMMARY_FILENAME)
-    scored_documents_path = os.path.join(output_path, SCORED_DOCUMENTS_FILENAME)
-    token_counts_path = os.path.join(output_path, TOKEN_COUNTS_FILENAME)
-    token_count_summary_path = os.path.join(output_path, TOKEN_COUNT_SUMMARY_FILENAME)
-    fs, _, _ = fsspec.get_fs_token_paths(summary_path)
-    fs.makedirs(output_path, exist_ok=True)
+    summary_path = prefix_join(output_path, SUMMARY_FILENAME)
+    scored_documents_path = prefix_join(output_path, SCORED_DOCUMENTS_FILENAME)
+    token_counts_path = prefix_join(output_path, TOKEN_COUNTS_FILENAME)
+    token_count_summary_path = prefix_join(output_path, TOKEN_COUNT_SUMMARY_FILENAME)
+    StoragePath(output_path).mkdirs()
 
-    with open_url(summary_path, "w") as f:
-        json.dump(summary, f, indent=2, sort_keys=True)
+    StoragePath(summary_path).write_text(json.dumps(summary, indent=2, sort_keys=True))
 
     table = _scored_documents_table(scored_documents)
-    with fsspec.open(scored_documents_path, "wb") as f:
+    with open_url(scored_documents_path, "wb") as f:
         pq.write_table(table, f)
 
     token_count_summary, token_count_table = _token_count_artifacts(
@@ -159,29 +183,26 @@ def write_model_score_files(
         vocab_size=vocab_size,
         token_id_to_text=token_id_to_text,
     )
-    with open_url(token_count_summary_path, "w") as f:
-        json.dump(token_count_summary, f, indent=2, sort_keys=True)
-    with fsspec.open(token_counts_path, "wb") as f:
+    StoragePath(token_count_summary_path).write_text(json.dumps(token_count_summary, indent=2, sort_keys=True))
+    with open_url(token_counts_path, "wb") as f:
         pq.write_table(token_count_table, f)
 
 
 def read_model_score_summary(output_path: str) -> dict[str, Any]:
-    summary_path = os.path.join(output_path, SUMMARY_FILENAME)
-    with open_url(summary_path) as f:
-        return json.load(f)
+    summary_path = prefix_join(output_path, SUMMARY_FILENAME)
+    return json.loads(StoragePath(summary_path).read_text())
 
 
 def read_scored_documents(output_path: str) -> list[ScoredDocument]:
-    scored_documents_path = os.path.join(output_path, SCORED_DOCUMENTS_FILENAME)
-    with fsspec.open(scored_documents_path, "rb") as f:
+    scored_documents_path = prefix_join(output_path, SCORED_DOCUMENTS_FILENAME)
+    with open_url(scored_documents_path, "rb") as f:
         table = pq.read_table(f)
     return [_scored_document_from_row(row) for row in table.to_pylist()]
 
 
 def read_token_count_summary(output_path: str) -> dict[str, Any]:
-    token_count_summary_path = os.path.join(output_path, TOKEN_COUNT_SUMMARY_FILENAME)
-    with open_url(token_count_summary_path) as f:
-        return json.load(f)
+    token_count_summary_path = prefix_join(output_path, TOKEN_COUNT_SUMMARY_FILENAME)
+    return json.loads(StoragePath(token_count_summary_path).read_text())
 
 
 def compare_scored_outputs(
@@ -194,12 +215,16 @@ def compare_scored_outputs(
 ) -> dict[str, Any]:
     scored_documents_a = read_scored_documents(model_a_output_path)
     scored_documents_b = read_scored_documents(model_b_output_path)
+    score_summary_a = read_model_score_summary(model_a_output_path)
+    score_summary_b = read_model_score_summary(model_b_output_path)
     summary = compare_scored_documents(
         model_a_name=model_a_name,
         model_b_name=model_b_name,
         scored_documents_a=scored_documents_a,
         scored_documents_b=scored_documents_b,
         output_path=output_path,
+        model_a_score_summary=score_summary_a,
+        model_b_score_summary=score_summary_b,
     )
     write_report_files(output_path, summary)
     return summary
@@ -212,6 +237,8 @@ def compare_scored_documents(
     scored_documents_a: Sequence[ScoredDocument],
     scored_documents_b: Sequence[ScoredDocument],
     output_path: str,
+    model_a_score_summary: dict[str, Any] | None = None,
+    model_b_score_summary: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     docs_a_by_key = {_scored_document_key(document): document for document in scored_documents_a}
     docs_b_by_key = {_scored_document_key(document): document for document in scored_documents_b}
@@ -228,7 +255,11 @@ def compare_scored_documents(
     for key in sorted(docs_a_by_key):
         scored_a = docs_a_by_key[key]
         scored_b = docs_b_by_key[key]
-        if scored_a.document.text != scored_b.document.text or scored_a.document.tags != scored_b.document.tags:
+        if (
+            scored_a.document.text != scored_b.document.text
+            or scored_a.document.tags != scored_b.document.tags
+            or scored_a.document.score_span() != scored_b.document.score_span()
+        ):
             raise ValueError(f"Document metadata mismatch for scored document {key}.")
         report.add_document(
             document=scored_a.document,
@@ -237,7 +268,51 @@ def compare_scored_documents(
             tokenized_a=scored_a.tokenized,
             tokenized_b=scored_b.tokenized,
         )
-    return report.build_summary()
+    summary = report.build_summary()
+    if model_a_score_summary is not None and model_b_score_summary is not None:
+        attach_model_score_metrics(
+            summary,
+            model_a_score_summary=model_a_score_summary,
+            model_b_score_summary=model_b_score_summary,
+        )
+    return summary
+
+
+def attach_model_score_metrics(
+    summary: dict[str, Any],
+    *,
+    model_a_score_summary: dict[str, Any],
+    model_b_score_summary: dict[str, Any],
+) -> None:
+    for section in ("datasets", "dataset_groups"):
+        a_rows = {row["name"]: row for row in model_a_score_summary.get(section, [])}
+        b_rows = {row["name"]: row for row in model_b_score_summary.get(section, [])}
+        for row in summary.get(section, []):
+            name = row["name"]
+            _attach_prefixed_score_metrics(row, prefix="model_a", score_row=a_rows.get(name))
+            _attach_prefixed_score_metrics(row, prefix="model_b", score_row=b_rows.get(name))
+
+
+def _attach_prefixed_score_metrics(row: dict[str, Any], *, prefix: str, score_row: dict[str, Any] | None) -> None:
+    if score_row is None:
+        return
+
+    for metric_name in EVAL_RUNTIME_METRIC_FIELDS:
+        row[f"{prefix}_{metric_name}"] = score_row.get(metric_name)
+
+
+def add_prefixed_runtime_metric_scalars(
+    scalars: dict[str, float],
+    *,
+    key_prefix: str,
+    row: dict[str, Any],
+    prefix: str,
+) -> None:
+    for metric_name in TRACKED_EVAL_RUNTIME_SCALAR_FIELDS:
+        value = row.get(f"{prefix}_{metric_name}")
+        if value is None:
+            continue
+        scalars[f"{key_prefix}/{prefix}_{metric_name}"] = float(value)
 
 
 def _scored_documents_table(scored_documents: Sequence[ScoredDocument]) -> pa.Table:
@@ -247,6 +322,8 @@ def _scored_documents_table(scored_documents: Sequence[ScoredDocument]) -> pa.Ta
         "shard_name": [doc.document.shard_name for doc in scored_documents],
         "row_index": [doc.document.row_index for doc in scored_documents],
         "text": [doc.document.text for doc in scored_documents],
+        "score_byte_start": [doc.document.score_span(doc.tokenized.num_bytes)[0] for doc in scored_documents],
+        "score_byte_end": [doc.document.score_span(doc.tokenized.num_bytes)[1] for doc in scored_documents],
         "token_ids": [doc.tokenized.token_ids.tolist() for doc in scored_documents],
         "per_byte_loss": [doc.per_byte_loss.tolist() for doc in scored_documents],
         "token_byte_starts": [doc.tokenized.byte_starts.tolist() for doc in scored_documents],
@@ -260,6 +337,8 @@ def _scored_documents_table(scored_documents: Sequence[ScoredDocument]) -> pa.Ta
             ("shard_name", pa.string()),
             ("row_index", pa.int64()),
             ("text", pa.string()),
+            ("score_byte_start", pa.int32()),
+            ("score_byte_end", pa.int32()),
             ("token_ids", pa.list_(pa.int32())),
             ("per_byte_loss", pa.list_(pa.float64())),
             ("token_byte_starts", pa.list_(pa.int32())),
@@ -277,6 +356,8 @@ def _scored_document_from_row(row: dict[str, Any]) -> ScoredDocument:
         shard_name=row["shard_name"],
         row_index=int(row["row_index"]),
         text=row["text"],
+        score_byte_start=int(row.get("score_byte_start", 0)),
+        score_byte_end=int(row["score_byte_end"]) if row.get("score_byte_end") is not None else None,
     )
     token_byte_starts = np.asarray(row["token_byte_starts"], dtype=np.int32)
     token_byte_ends = np.asarray(row["token_byte_ends"], dtype=np.int32)
@@ -302,15 +383,6 @@ def _scored_document_from_row(row: dict[str, Any]) -> ScoredDocument:
 def _scored_document_key(scored_document: ScoredDocument) -> tuple[str, str, int]:
     document = scored_document.document
     return (document.dataset_name, document.shard_name, int(document.row_index))
-
-
-def _char_to_byte_offsets(text: str) -> np.ndarray:
-    offsets = np.zeros(len(text) + 1, dtype=np.int32)
-    running = 0
-    for i, ch in enumerate(text, start=1):
-        running += len(ch.encode("utf-8"))
-        offsets[i] = running
-    return offsets
 
 
 def _token_count_artifacts(

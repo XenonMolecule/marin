@@ -43,6 +43,36 @@ silence_transformer_nag()
 from transformers import ModernBertConfig as HfModernBertConfig  # noqa: E402
 from transformers import PretrainedConfig as HfConfig  # noqa: E402
 
+# transformers>=5 stores ModernBERT's per-layer attention pattern and RoPE thetas structurally
+# (``layer_types`` + nested ``rope_parameters``) instead of the flat ``global_attn_every_n_layers`` /
+# ``global_rope_theta`` / ``local_rope_theta`` kwargs. Bridge through the structural fields so the
+# config round-trips on transformers 5 without relying on popped legacy attributes.
+_HF_GLOBAL_LAYER = "full_attention"
+_HF_LOCAL_LAYER = "sliding_attention"
+
+
+def _hf_layer_types(num_layers: int, global_attn_every_n_layers: int) -> list[str]:
+    """HF ``layer_types`` list: global (full) attention every ``global_attn_every_n_layers`` layers."""
+    return [
+        _HF_GLOBAL_LAYER if idx % global_attn_every_n_layers == 0 else _HF_LOCAL_LAYER for idx in range(num_layers)
+    ]
+
+
+def _hf_rope_parameters(global_rope_theta: float, local_rope_theta: float) -> dict[str, dict]:
+    """HF ``rope_parameters`` mapping each layer type to its RoPE base wavelength."""
+    return {
+        _HF_GLOBAL_LAYER: {"rope_type": "default", "rope_theta": global_rope_theta},
+        _HF_LOCAL_LAYER: {"rope_type": "default", "rope_theta": local_rope_theta},
+    }
+
+
+def _global_attn_every_n_layers(layer_types: list[str]) -> int:
+    """Recover the global-attention period from HF ``layer_types`` (spacing between full-attention layers)."""
+    global_indices = [idx for idx, layer_type in enumerate(layer_types) if layer_type == _HF_GLOBAL_LAYER]
+    if len(global_indices) >= 2:
+        return global_indices[1] - global_indices[0]
+    return len(layer_types)
+
 
 @LmConfig.register_subclass("modernbert")
 @dataclass(frozen=True)
@@ -168,10 +198,10 @@ class ModernBertConfig(HFCompatConfig):
             classifier_bias=hf_config.classifier_bias,
             activation_function=ActivationFunctionEnum(hf_config.hidden_activation),
             classifier_activation=ActivationFunctionEnum(hf_config.classifier_activation),
-            global_attn_every_n_layers=hf_config.global_attn_every_n_layers,
+            global_attn_every_n_layers=_global_attn_every_n_layers(hf_config.layer_types),
             local_attention=hf_config.local_attention,
-            global_rope_theta=hf_config.global_rope_theta,
-            local_rope_theta=hf_config.local_rope_theta,
+            global_rope_theta=hf_config.rope_parameters[_HF_GLOBAL_LAYER]["rope_theta"],
+            local_rope_theta=hf_config.rope_parameters[_HF_LOCAL_LAYER]["rope_theta"],
             initializer_range=hf_config.initializer_range,
             tie_word_embeddings=hf_config.tie_word_embeddings,
             pad_token_id=hf_config.pad_token_id,
@@ -197,10 +227,9 @@ class ModernBertConfig(HFCompatConfig):
             classifier_bias=self.classifier_bias,
             hidden_activation=self.activation_function.value,
             classifier_activation=self.classifier_activation.value,
-            global_attn_every_n_layers=self.global_attn_every_n_layers,
+            layer_types=_hf_layer_types(self.num_layers, self.global_attn_every_n_layers),
             local_attention=self.local_attention,
-            global_rope_theta=self.global_rope_theta,
-            local_rope_theta=self.local_rope_theta,
+            rope_parameters=_hf_rope_parameters(self.global_rope_theta, self.local_rope_theta),
             initializer_range=self.initializer_range,
             tie_word_embeddings=self.tie_word_embeddings,
             pad_token_id=self.pad_token_id,

@@ -4,14 +4,24 @@ build-backend = "hatchling.build"
 
 [project]
 name = "marin-iris"
-version = "0.99"
-requires-python = ">=3.11,<3.13"
+version = "0.2.0"
+requires-python = ">=3.12,<3.14"
 dependencies = [
     "marin-rigging",
-    "marin-finelog",
+    # marin-finelog is the pure-Python client/deploy/proto. The controller also
+    # starts an in-process native log server (module `finelog_server`), which
+    # ships as the separate marin-finelog-server platform wheel; the pure client
+    # does not depend on it, so the controller — its one consumer — pulls it in
+    # explicitly.
+    "marin-finelog >= 0.2.10",
+    "marin-finelog-server>=0.2.28.dev31271949117",
+    # Platform companion wheel containing the Rust-owned public proxy listener.
+    "marin-iris-native>=0.1.6.dev31131847556",
     "click>=8.3.1",
     "cloudpickle>=3.1.2",
     "connect-python>=0.9.0",
+    # pyqwest 0.6.1 fixes SIGSEGV during interpreter shutdown with an active sync request.
+    "pyqwest>=0.6.1,<0.7",
     "fsspec>=2024.0.0",
     "gcsfs>=2024.0.0",
     "google-auth>=2.0",
@@ -21,8 +31,10 @@ dependencies = [
     "httpx>=0.28.1",
     "humanfriendly>=10.0",
     "pydantic>=2.0",
-    "PyJWT>=2.12.0",
+    # [crypto] pulls in `cryptography`, which the EdDSA service tokens need.
+    "PyJWT[crypto]>=2.12.0",
     "pyyaml>=6.0",
+    "sqlalchemy>=2.0",
     "starlette>=0.50.0",
     "tabulate>=0.9.0",
     "typing-extensions>=4.0",
@@ -32,14 +44,20 @@ dependencies = [
 
 [project.optional-dependencies]
 controller = [
-    "duckdb>=1.0.0",
-    "pyarrow>=19.0.0",
-    "kubernetes>=31.0.0",
+    "kubernetes>=31.0.0,<36",
+    # The controller resolves `gcp-secret://` config references (e.g. the auth
+    # signing key) at startup via rigging.secrets, which imports the Secret
+    # Manager client. Only the controller runs resolve_config_secrets, so this
+    # stays off the worker/CLI import path.
+    "marin-rigging[secrets]",
 ]
 worker = []
+# Interactive `iris login` against an IAP-fronted cluster (desktop OAuth flow).
+# Kept out of core so the controller/worker import path stays free of oauthlib.
+iap = ["marin-rigging[iap]"]
 
 [project.scripts]
-iris = "iris.cli:iris"
+iris = "iris.cli:main"
 iris-run = "iris.cli.run:run"
 
 [dependency-groups]
@@ -49,15 +67,12 @@ examples = [
     "nbconvert>=7.16.6",
     "nbformat>=5.10.4",
 ]
-dev = [
-    "duckdb>=1.0.0",
-    "pyarrow>=19.0.0",
-    "kubernetes>=31.0.0",
-    "ipykernel>=7.1.0",
-    "jupyter>=1.1.1",
-    "nbconvert>=7.16.6",
-    "nbformat>=5.10.4",
-    "pillow>=10.0.0",
+test = [
+    # Keep the test environment on the workspace runtime pin. The node-local
+    # XLA autotune cache requires JAX's cache-key exclusion for its directory.
+    "jax==0.11.0",
+    "kubernetes>=31.0.0,<36",
+    "memray>=1.19.3",
     "playwright>=1.49.0",
     "pytest-asyncio",
     "pytest-flakefinder>=1.1.0",
@@ -66,6 +81,10 @@ dev = [
     "pytest-xdist",
     "pytest>=8.4",
 ]
+dev = [
+    { include-group = "examples" },
+    { include-group = "test" },
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/iris"]
@@ -73,19 +92,30 @@ packages = ["src/iris"]
 [tool.hatch.build.targets.wheel.force-include]
 # Cluster YAML configs live outside src/ because they are configuration data,
 # not Python package source. force-include maps them into the wheel at
-# iris/examples/ so that when iris is installed as a wheel, the bundled configs
-# are reachable via Path(__file__).parent.parent / "examples" (the wheel-layout
-# probe in _bundled_iris_examples_dir() in iris.cli.main).
-"examples" = "iris/examples"
+# iris/config/ so that when iris is installed as a wheel, the bundled configs
+# are reachable via Path(__file__).parent.parent / "config" (the wheel-layout
+# probe in _bundled_iris_config_dir() in iris.cli.main).
+"config" = "iris/config"
+
+[tool.hatch.build.targets.sdist]
+# Without an explicit sdist scope, hatchling sweeps the whole iris/ directory
+# and bundles ~146 MiB of dashboard/node_modules (git-ignored but still on
+# disk). Restrict to source + configs so the sdist stays small.
+packages = ["src/iris"]
+
+[tool.hatch.build.targets.sdist.force-include]
+"config" = "config"
 
 [tool.pytest.ini_options]
 timeout = 10
 timeout_method = "thread"
-addopts = "-n auto --durations=25 -m 'not slow and not docker and not e2e' -v"
+addopts = "-n auto --durations=25 -m 'not slow and not docker and not requires_cluster and not manual' -v --import-mode=importlib"
+pythonpath = ["src"]
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "docker: marks tests requiring Docker runtime (slow, needs daemon)",
-    "e2e: end-to-end cluster tests (chaos, dashboard, scheduling)",
+    "manual: marks tests that run only when explicitly selected",
+    "requires_cluster: mark tests that need a running iris cluster",
 ]
 filterwarnings = ["ignore::DeprecationWarning"]
 # Cap assertion-diff output even under -v, so a single bad assertion
@@ -95,3 +125,10 @@ truncation_limit_chars = 10000
 log_level = "INFO"
 log_format = "%(asctime)s %(levelname)s %(message)s"
 log_date_format = "%Y-%m-%d %H:%M:%S"
+
+[tool.uv.sources]
+# `scripts/rust_mode.py dev` points marin-iris-native at ./rust here (and at
+# lib/iris/rust in the root pyproject) so the extension builds from source;
+# `user` mode clears the block and the pre-built wheel comes from PyPI.
+# ### BEGIN RUST-DEV SOURCES ###
+# ### END RUST-DEV SOURCES ###

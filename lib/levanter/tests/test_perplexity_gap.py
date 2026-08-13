@@ -1,6 +1,7 @@
 # Copyright The Levanter Authors
 # SPDX-License-Identifier: Apache-2.0
 
+import contextlib
 import json
 import math
 import os
@@ -25,11 +26,14 @@ from levanter.analysis.model_perplexity import (
     write_model_score_files,
 )
 import levanter.analysis.perplexity_gap as gap_analysis
+import levanter.main.perplexity_gap as perplexity_gap_main
 from levanter.analysis.perplexity_gap import (
     GapReportBuilder,
+    GapScoringDataset,
     RawTextDocument,
     TokenizedChunk,
     TokenizedDocument,
+    _iter_dataset_documents,
     _truncate_text_to_byte_limit,
     batch_chunks,
     chunk_tokenized_document,
@@ -39,41 +43,123 @@ from levanter.analysis.perplexity_gap import (
     write_report_files,
 )
 from levanter.checkpoint import save_checkpoint
-from levanter.data.text import DatasetComponent, TextLmDatasetFormat, UrlDatasetSourceConfig
+from levanter.data.sharded_datasource import ShardedDataSource
+from levanter.data.text.datasets import UrlDatasetSourceConfig
 from levanter.distributed import DistributedConfig
 from levanter.main.perplexity_gap import (
     GapFinderConfig,
     GapFinderModelConfig,
+    ModelPerplexityConfig,
     _accumulate_token_losses,
     _check_finite_losses,
+    _document_batches,
+    _elapsed_share,
     _log_report_artifact,
     main,
+    score_main,
 )
 from levanter.models.llama import LlamaConfig, LlamaLMHeadModel
 from levanter.tracker import current_tracker
 from levanter.tracker.tracker import DictTracker
-from levanter.tokenizers import load_tokenizer
 from levanter.tracker import NoopConfig
 from levanter.trainer import TrainerConfig
 
 
-def test_tokenize_text_with_byte_spans_covers_utf8_bytes():
-    tokenizer = load_tokenizer("gpt2")
+class _MemoryShardSource(ShardedDataSource[dict[str, Any]]):
+    def __init__(self, records: list[dict[str, Any]]):
+        self._shard_names = ("records",)
+        self.records = records
+
+    @property
+    def shard_names(self) -> tuple[str, ...]:
+        return self._shard_names
+
+    def open_shard_at_row(self, shard_name: str, row: int):
+        assert shard_name == "records"
+        return iter(self.records[row:])
+
+
+def test_tokenize_text_with_byte_spans_covers_utf8_bytes(local_gpt2_tokenizer):
+    tokenizer = local_gpt2_tokenizer
     hf_tokenizer = tokenizer.as_hf_tokenizer()
     text = "hello  \nnaive café"
 
     tokenized = tokenize_text_with_byte_spans(tokenizer, hf_tokenizer, text)
 
     spans = [
-        (start, end)
+        (int(start), int(end))
         for start, end in zip(tokenized.byte_starts, tokenized.byte_ends, strict=True)
         if start >= 0 and end > start
     ]
-    assert tokenized.num_bytes == len(text.encode("utf-8"))
+    encoded = text.encode("utf-8")
+    assert tokenized.num_bytes == len(encoded)
     assert spans
     assert spans[0][0] == 0
     assert spans[-1][1] == tokenized.num_bytes
-    assert sum(end - start for start, end in spans) == tokenized.num_bytes
+    # Byte spans must tile the whole document and land on UTF-8 character
+    # boundaries. Tokenizers without the merges to keep a multi-byte character
+    # in a single token fall back to per-byte tokens that share a character
+    # offset, so spans may overlap; coverage of every byte is the invariant.
+    assert all(a <= b for (a, _), (b, _) in zip(spans, spans[1:]))
+    covered = {byte_index for start, end in spans for byte_index in range(start, end)}
+    assert covered == set(range(tokenized.num_bytes))
+    for start, end in spans:
+        assert start == 0 or (encoded[start] & 0xC0) != 0x80
+        assert end == tokenized.num_bytes or (encoded[end] & 0xC0) != 0x80
+
+
+def test_iter_dataset_documents_combines_supervised_input_and_target():
+    source = _MemoryShardSource(
+        [
+            {
+                "input": "Question: café\nAnswer: ",
+                "target": "naive",
+                "text": "ignored when supervised keys are configured",
+            }
+        ]
+    )
+
+    documents = list(
+        _iter_dataset_documents(
+            dataset_name="synthetic/reasoning",
+            tags=("synthetic",),
+            source=source,
+            text_key="text",
+            input_key="input",
+            target_key="target",
+            max_docs=None,
+            max_doc_bytes=None,
+        )
+    )
+
+    assert len(documents) == 1
+    document = documents[0]
+    assert document.text == "Question: café\nAnswer: naive"
+    assert document.score_span() == (
+        len("Question: café\nAnswer: ".encode("utf-8")),
+        len("Question: café\nAnswer: naive".encode("utf-8")),
+    )
+
+
+def test_iter_dataset_documents_truncates_supervised_span_to_target_bytes():
+    source = _MemoryShardSource([{"input": "prompt:", "target": "target"}])
+
+    documents = list(
+        _iter_dataset_documents(
+            dataset_name="synthetic/reasoning",
+            tags=("synthetic",),
+            source=source,
+            text_key="text",
+            input_key="input",
+            target_key="target",
+            max_docs=None,
+            max_doc_bytes=len("prompt:targ".encode("utf-8")),
+        )
+    )
+
+    assert len(documents) == 1
+    assert documents[0].text == "prompt:targ"
+    assert documents[0].score_span() == (len("prompt:".encode("utf-8")), len("prompt:targ".encode("utf-8")))
 
 
 def test_gap_report_builder_tracks_whitespace_bucket():
@@ -98,6 +184,44 @@ def test_gap_report_builder_tracks_whitespace_bucket():
 
     assert "whitespace/multi_space" in bucket_names
     assert "paloma" in group_names
+
+
+def test_gap_report_builder_scores_only_document_score_span():
+    report = GapReportBuilder(model_a_name="a", model_b_name="b", output_path="/tmp/report")
+    prompt = "foo"
+    target = "bar"
+    document = RawTextDocument(
+        dataset_name="supervised/example",
+        tags=("supervised/example",),
+        shard_name="docs",
+        row_index=0,
+        text=prompt + target,
+        score_byte_start=len(prompt.encode("utf-8")),
+        score_byte_end=len((prompt + target).encode("utf-8")),
+    )
+    loss_a = np.concatenate(
+        [
+            np.full(len(prompt.encode("utf-8")), 100.0, dtype=np.float64),
+            np.ones(len(target.encode("utf-8")), dtype=np.float64),
+        ]
+    )
+    loss_b = np.zeros_like(loss_a)
+
+    report.add_document(document=document, per_byte_loss_a=loss_a, per_byte_loss_b=loss_b)
+
+    summary = report.build_summary()
+    dataset_row = summary["datasets"][0]
+    doc_row = summary["top_documents"]["model_a_worse"][0]
+    segment_row = summary["top_segments"]["model_a_worse"][0]
+    literal_row = summary["top_literals"]["model_a_worse"][0]
+
+    assert dataset_row["bytes"] == len(target.encode("utf-8"))
+    assert math.isclose(dataset_row["delta_bits"], len(target.encode("utf-8")) * gap_analysis.LOG2E)
+    assert doc_row["score_byte_start"] == len(prompt.encode("utf-8"))
+    assert doc_row["score_byte_end"] == len((prompt + target).encode("utf-8"))
+    assert doc_row["worst_text"] == target
+    assert segment_row["text"] == target
+    assert literal_row["name"] == target
 
 
 def test_gap_report_builder_records_per_model_literal_boundaries():
@@ -301,6 +425,8 @@ def test_model_score_files_roundtrip():
         shard_name="docs",
         row_index=0,
         text="abc",
+        score_byte_start=1,
+        score_byte_end=3,
     )
     tokenized = TokenizedDocument(
         token_ids=np.asarray([1, 2], dtype=np.int32),
@@ -314,7 +440,9 @@ def test_model_score_files_roundtrip():
         tokenized=tokenized,
     )
     summary = ModelScoreReportBuilder(model_name="model-a")
-    summary.add_document(document=document, per_byte_loss=scored_document.per_byte_loss)
+    summary.add_document(
+        document=document, per_byte_loss=scored_document.per_byte_loss, token_count=1, elapsed_seconds=0.25
+    )
     built_summary = summary.build_summary()
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -325,12 +453,37 @@ def test_model_score_files_roundtrip():
 
     assert loaded_summary["model"] == "model-a"
     assert loaded_summary["datasets"][0]["name"] == "paloma/example"
+    assert loaded_summary["datasets"][0]["bytes"] == 2
+    assert loaded_summary["datasets"][0]["tokens"] == 1
+    assert loaded_summary["datasets"][0]["eval_seconds"] == pytest.approx(0.25)
+    assert loaded_summary["datasets"][0]["tokens_per_second"] == pytest.approx(4.0)
     assert len(loaded_documents) == 1
     assert loaded_documents[0].document == document
     assert np.allclose(loaded_documents[0].per_byte_loss, scored_document.per_byte_loss)
     assert loaded_documents[0].tokenized.token_ids.tolist() == tokenized.token_ids.tolist()
     assert loaded_documents[0].tokenized.num_bytes == tokenized.num_bytes
     assert loaded_documents[0].tokenized.byte_starts.tolist() == tokenized.byte_starts.tolist()
+
+
+def test_model_score_report_builder_buckets_only_document_score_span():
+    document = RawTextDocument(
+        dataset_name="paloma/example",
+        tags=("paloma", "paloma/example"),
+        shard_name="docs",
+        row_index=0,
+        text="  ",
+        score_byte_start=1,
+        score_byte_end=2,
+    )
+    report = ModelScoreReportBuilder(model_name="model-a")
+
+    report.add_document(document=document, per_byte_loss=np.asarray([100.0, 1.0], dtype=np.float64))
+
+    summary = report.build_summary()
+
+    assert summary["datasets"][0]["bytes"] == 1
+    assert summary["pattern_buckets"][0]["name"] == "whitespace/single_space"
+    assert summary["pattern_buckets"][0]["bytes"] == 1
 
 
 def test_read_scored_documents_backfills_missing_token_ids():
@@ -412,8 +565,18 @@ def test_model_score_files_write_token_count_summary():
     )
 
     report = ModelScoreReportBuilder(model_name="model-a")
-    report.add_document(document=first_document, per_byte_loss=first_scored_document.per_byte_loss)
-    report.add_document(document=second_document, per_byte_loss=second_scored_document.per_byte_loss)
+    report.add_document(
+        document=first_document,
+        per_byte_loss=first_scored_document.per_byte_loss,
+        token_count=3,
+        elapsed_seconds=0.3,
+    )
+    report.add_document(
+        document=second_document,
+        per_byte_loss=second_scored_document.per_byte_loss,
+        token_count=2,
+        elapsed_seconds=0.2,
+    )
     summary = report.build_summary()
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -440,6 +603,95 @@ def test_model_score_files_write_token_count_summary():
         "token_id": 1,
         "token_text": "<bos>",
     }
+    summary_by_name = {row["name"]: row for row in summary["datasets"]}
+    assert summary_by_name["paloma/example"]["tokens"] == 3
+    assert summary_by_name["paloma/example"]["eval_seconds"] == pytest.approx(0.3)
+    assert summary_by_name["paloma/example"]["tokens_per_second"] == pytest.approx(10.0)
+
+
+def test_score_main_writes_outputs_without_uploading_model_score_artifact(monkeypatch):
+    document = RawTextDocument(
+        dataset_name="paloma/example",
+        tags=("paloma", "paloma/example"),
+        shard_name="docs",
+        row_index=0,
+        text="abc",
+        score_byte_end=3,
+    )
+
+    class FakeTrainer:
+        eval_batch_size = 1
+        compute_axis_mapping = {}
+        parameter_axis_mapping = {}
+
+        def use_device_mesh(self):
+            return contextlib.nullcontext()
+
+    class FakeTokenizer:
+        def __len__(self):
+            return 4
+
+    class FakeHfTokenizer:
+        def convert_ids_to_tokens(self, token_ids):
+            return [f"tok_{token_id}" for token_id in token_ids]
+
+    class FakeRunner:
+        label = "fake-model"
+        tokenizer = FakeTokenizer()
+        hf_tokenizer = FakeHfTokenizer()
+
+        def warmup(self):
+            pass
+
+        def score_texts(self, texts):
+            assert texts == ["abc"]
+            return [
+                TokenizedDocument(
+                    token_ids=np.asarray([1, 2], dtype=np.int32),
+                    byte_starts=np.asarray([0, 1], dtype=np.int32),
+                    byte_ends=np.asarray([1, 3], dtype=np.int32),
+                    num_bytes=3,
+                )
+            ], [np.asarray([0.1, 0.2, 0.3], dtype=np.float64)]
+
+    def fake_iter_raw_text_documents(*args, **kwargs):
+        yield document
+
+    monkeypatch.setattr(perplexity_gap_main.levanter.trainer, "initialize", lambda config: None)
+    monkeypatch.setattr(perplexity_gap_main, "_load_model_runner", lambda **kwargs: FakeRunner())
+    monkeypatch.setattr(perplexity_gap_main, "iter_raw_text_documents", fake_iter_raw_text_documents)
+
+    tracker = DictTracker()
+
+    def fail_artifact_upload(*args, **kwargs):
+        raise AssertionError("model perplexity scores should only be written to output_path")
+
+    tracker.log_artifact = fail_artifact_upload  # type: ignore[method-assign]
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        config = ModelPerplexityConfig(
+            model=GapFinderModelConfig(
+                checkpoint_path="fake-checkpoint",
+                model=LlamaConfig(num_layers=1, num_heads=1, num_kv_heads=1, hidden_dim=8, max_seq_len=8),
+                tokenizer="fake-tokenizer",
+            ),
+            datasets={"paloma/example": GapScoringDataset(source=UrlDatasetSourceConfig())},
+            trainer=FakeTrainer(),  # type: ignore[arg-type]
+            output_path=tmpdir,
+            max_eval_length=8,
+            max_docs_per_dataset=1,
+        )
+
+        with current_tracker(tracker):
+            score_main(config)
+
+        loaded_summary = read_model_score_summary(tmpdir)
+        loaded_documents = read_scored_documents(tmpdir)
+        token_count_summary = read_token_count_summary(tmpdir)
+
+    assert loaded_summary["model"] == "fake-model"
+    assert loaded_documents[0].document == document
+    assert token_count_summary["overall"]["total_tokens"] == 2
 
 
 def test_compare_scored_documents_matches_direct_gap_builder():
@@ -489,6 +741,55 @@ def test_compare_scored_documents_matches_direct_gap_builder():
     assert scored_summary["top_documents"] == direct_summary["top_documents"]
 
 
+def test_compare_scored_documents_attaches_per_dataset_score_metrics():
+    document = RawTextDocument(
+        dataset_name="paloma/example",
+        tags=("paloma", "paloma/example"),
+        shard_name="docs",
+        row_index=0,
+        text="abc",
+    )
+    tokenized_a = TokenizedDocument(
+        token_ids=np.asarray([1, 2, 3], dtype=np.int32),
+        byte_starts=np.asarray([0, 1, 2], dtype=np.int32),
+        byte_ends=np.asarray([1, 2, 3], dtype=np.int32),
+        num_bytes=3,
+    )
+    tokenized_b = TokenizedDocument(
+        token_ids=np.asarray([1, 2], dtype=np.int32),
+        byte_starts=np.asarray([0, 1], dtype=np.int32),
+        byte_ends=np.asarray([1, 3], dtype=np.int32),
+        num_bytes=3,
+    )
+    losses_a = np.asarray([0.2, 0.2, 0.2], dtype=np.float64)
+    losses_b = np.asarray([0.0, 0.0, 0.0], dtype=np.float64)
+
+    score_report_a = ModelScoreReportBuilder(model_name="a")
+    score_report_a.add_document(document=document, per_byte_loss=losses_a, token_count=2, elapsed_seconds=0.5)
+    score_report_b = ModelScoreReportBuilder(model_name="b")
+    score_report_b.add_document(document=document, per_byte_loss=losses_b, token_count=1, elapsed_seconds=0.25)
+
+    summary = compare_scored_documents(
+        model_a_name="a",
+        model_b_name="b",
+        scored_documents_a=[ScoredDocument(document=document, per_byte_loss=losses_a, tokenized=tokenized_a)],
+        scored_documents_b=[ScoredDocument(document=document, per_byte_loss=losses_b, tokenized=tokenized_b)],
+        output_path="/tmp/from-scores",
+        model_a_score_summary=score_report_a.build_summary(),
+        model_b_score_summary=score_report_b.build_summary(),
+    )
+
+    dataset_row = summary["datasets"][0]
+    assert dataset_row["model_a_tokens"] == 2
+    assert dataset_row["model_a_eval_seconds"] == pytest.approx(0.5)
+    assert dataset_row["model_a_tokens_per_second"] == pytest.approx(4.0)
+    assert dataset_row["model_a_bytes_per_second"] == pytest.approx(6.0)
+    assert dataset_row["model_b_tokens"] == 1
+    assert dataset_row["model_b_eval_seconds"] == pytest.approx(0.25)
+    assert dataset_row["model_b_tokens_per_second"] == pytest.approx(4.0)
+    assert dataset_row["model_b_bytes_per_second"] == pytest.approx(12.0)
+
+
 def test_render_report_markdown_escapes_table_boundaries():
     summary: dict[str, Any] = {
         "model_a": "a|model",
@@ -516,6 +817,25 @@ def test_render_report_markdown_escapes_table_boundaries():
     assert "**Model A:** a\\|model" in markdown
     assert "data\\|set" in markdown
     assert "\\|ab\\|c\\|" in markdown
+
+
+def test_document_batches_do_not_cross_dataset_boundaries():
+    documents = [
+        RawTextDocument("dataset/a", ("dataset/a",), "docs", 0, "a0"),
+        RawTextDocument("dataset/a", ("dataset/a",), "docs", 1, "a1"),
+        RawTextDocument("dataset/b", ("dataset/b",), "docs", 0, "b0"),
+    ]
+
+    batches = list(_document_batches(iter(documents), batch_size=2))
+
+    assert [[doc.dataset_name for doc in batch] for batch in batches] == [
+        ["dataset/a", "dataset/a"],
+        ["dataset/b"],
+    ]
+
+
+def test_elapsed_share_evenly_splits_zero_token_batches():
+    assert _elapsed_share(6.0, token_count=0, batch_total_tokens=0, batch_size=3) == pytest.approx(2.0)
 
 
 def test_check_finite_losses_raises_on_non_finite_values():
@@ -577,8 +897,7 @@ def test_batch_chunks_rejects_oversized_chunks():
         list(batch_chunks([chunk], batch_size=1, max_eval_length=3))
 
 
-@pytest.mark.entry
-def test_perplexity_gap_main_same_model_zero_gap():
+def test_perplexity_gap_main_same_model_zero_gap(local_gpt2_tokenizer, local_gpt2_tokenizer_path):
     model_config = LlamaConfig(
         num_layers=2,
         num_heads=2,
@@ -593,19 +912,15 @@ def test_perplexity_gap_main_same_model_zero_gap():
             f.write(json.dumps({"text": "hello  world\n"}) + "\n")
             f.write(json.dumps({"text": "tabs\tand café\n"}) + "\n")
 
-        tokenizer = load_tokenizer("gpt2")
+        tokenizer = local_gpt2_tokenizer
         vocab = haliax.Axis("vocab", len(tokenizer))
         model = LlamaLMHeadModel.init(vocab, model_config, key=jax.random.PRNGKey(0))
         ckpt_path = os.path.join(tmpdir, "ckpt")
         save_checkpoint({"model": model}, 0, ckpt_path)
 
         datasets = {
-            "tiny/raw": DatasetComponent(
-                source=UrlDatasetSourceConfig(
-                    validation_urls=[f"file://{data_path}"],
-                    format=TextLmDatasetFormat(),
-                ),
-                format=TextLmDatasetFormat(),
+            "tiny/raw": GapScoringDataset(
+                source=UrlDatasetSourceConfig(validation_urls=[f"file://{data_path}"]),
             )
         }
 
@@ -614,13 +929,13 @@ def test_perplexity_gap_main_same_model_zero_gap():
                 checkpoint_path=ckpt_path,
                 model=model_config,
                 checkpoint_is_hf=False,
-                tokenizer="gpt2",
+                tokenizer=local_gpt2_tokenizer_path,
             ),
             model_b=GapFinderModelConfig(
                 checkpoint_path=ckpt_path,
                 model=model_config,
                 checkpoint_is_hf=False,
-                tokenizer="gpt2",
+                tokenizer=local_gpt2_tokenizer_path,
             ),
             datasets=datasets,
             trainer=TrainerConfig(

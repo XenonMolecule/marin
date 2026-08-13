@@ -1,33 +1,34 @@
 # Copyright The Levanter Authors
 # SPDX-License-Identifier: Apache-2.0
 
+import atexit
+import hashlib
+import json
 import logging
 import os
+import subprocess
 import tempfile
+import threading
 import typing
 import warnings
-import json
-import hashlib
 from dataclasses import dataclass
 from typing import Any, List, Optional, Union
 
+import fsspec
 import jax
 import numpy as np
+import wandb
 from draccus import field
 from git import InvalidGitRepositoryError, NoSuchPathError, Repo
 
-from levanter.tracker import Tracker
 from levanter.tracker.background import maybe_wrap_background
 from levanter.tracker.helpers import generate_pip_freeze, infer_experiment_git_root
-from levanter.tracker.histogram import Histogram
-from levanter.tracker.tracker import TrackerConfig
+from levanter.tracker.histogram import SummaryStats
+from levanter.tracker.tracker import Tracker, TrackerConfig
 from levanter.utils import jax_utils
-
 
 if typing.TYPE_CHECKING:
     import wandb.sdk.lib.disabled
-
-    import wandb
 
 
 logger = logging.getLogger(__name__)
@@ -36,6 +37,45 @@ WandbRun = Union["wandb.sdk.wandb_run.Run", "wandb.sdk.lib.disabled.RunDisabled"
 
 
 _WANDB_ARTIFACT_NAME_MAX_LENGTH = 128
+
+
+def _teardown_wandb_service_bounded(timeout: float) -> None:
+    """Tear down the wandb-core service without letting it block the JAX shutdown barrier.
+
+    wandb starts a wandb-core service subprocess and registers its own atexit hook to
+    join it, but every wait on that service is hard-coded unbounded: ``run.finish()``
+    -> ``_atexit_cleanup`` uses ``wait_or(timeout=None)`` and the service-teardown hook
+    ends in a bare ``subprocess.wait()`` (wandb 0.26.0 exposes no timeout for either).
+    When the service wedges on a stuck upload those joins never return, which on a
+    multi-slice run holds the primary slice past the JAX distributed shutdown-barrier
+    deadline and SIGABRTs the whole job.
+
+    We run the public ``wandb.teardown()`` on a daemon watchdog thread and wait up to
+    ``timeout``. ``teardown()`` unregisters wandb's own atexit hook before it blocks, so
+    once it has started the main thread will not get stuck on wandb at interpreter exit
+    even if the upload is wedged. On timeout we abandon the watchdog thread — the same
+    thing :meth:`BackgroundTracker.finish` already does with its worker — and let the
+    process teardown reap the orphaned service. Metrics are mirrored to finelog, so
+    dropping the wandb upload tail is acceptable.
+    """
+    done = threading.Event()
+
+    def _run() -> None:
+        try:
+            wandb.teardown()
+        except Exception:
+            logger.exception("wandb.teardown() raised during bounded service teardown.")
+        finally:
+            done.set()
+
+    threading.Thread(target=_run, name="wandb-service-teardown", daemon=True).start()
+
+    if not done.wait(timeout):
+        logger.warning(
+            "wandb-core service did not tear down within %.1fs; abandoning it so the JAX shutdown "
+            "barrier is not blocked (wandb upload tail dropped; metrics are mirrored to finelog).",
+            timeout,
+        )
 
 
 class WandbTracker(Tracker):
@@ -49,8 +89,6 @@ class WandbTracker(Tracker):
         suppress_logging: bool = False,
         minimum_log_step: int = 0,
     ):
-        import wandb
-
         if run is None:
             if wandb.run is None:
                 logger.warning("Wandb run is not initialized. Initializing a new run.")
@@ -68,10 +106,23 @@ class WandbTracker(Tracker):
         self._suppress_logging = suppress_logging
         self._minimum_log_step = minimum_log_step
 
+    # The prepare hooks do the full wandb-side conversion (SummaryStats expansion,
+    # wandb.Histogram construction) so the background worker only uploads. They are
+    # idempotent, so re-running them on an already-prepared payload is a no-op.
+
+    def _prepare_log(self, metrics):
+        return _convert_metrics_to_wandb_loggable(metrics)
+
+    def _prepare_summary(self, metrics):
+        return _convert_value_to_loggable_rec(metrics)
+
+    def _prepare_hyperparameters(self, hparams):
+        return _convert_value_to_loggable_rec(hparams)
+
     def log_hyperparameters(self, hparams: dict[str, Any]):
         if self._suppress_logging:
             return
-        self.run.config.update(_convert_value_to_loggable_rec(hparams), allow_val_change=True)
+        self.run.config.update(self._prepare_hyperparameters(hparams), allow_val_change=True)
 
     def log(self, metrics: typing.Mapping[str, Any], *, step, commit=None):
         if step is None and not commit:
@@ -88,25 +139,7 @@ class WandbTracker(Tracker):
 
         step = int(step)
 
-        # wandb histograms are pretty limited: they log only the counts and the bin edges.
-        # Our histograms have the same set of things Tensorboard. we log those as separate values.
-        to_log = {}
-        for k, v in metrics.items():
-            if isinstance(v, Histogram):
-                # if the value is a Histogram, convert it to a wandb Histogram
-                # this will log the histogram counts and bin edges
-                import wandb
-
-                counts, limits = v.to_numpy_histogram()
-                wandb_hist = wandb.Histogram(np_histogram=(counts.tolist(), limits.tolist()))
-                to_log[f"{k}/histogram"] = wandb_hist
-                to_log[f"{k}/min"] = v.min
-                to_log[f"{k}/max"] = v.max
-                to_log[f"{k}/mean"] = v.mean
-                to_log[f"{k}/variance"] = v.variance
-            else:
-                # otherwise, just log the value normally
-                to_log[k] = _convert_value_to_loggable_rec(v)
+        to_log = self._prepare_log(metrics)
 
         if self._suppress_logging:
             return
@@ -124,7 +157,7 @@ class WandbTracker(Tracker):
     def log_summary(self, metrics: typing.Mapping[str, Any]):
         if self._suppress_logging:
             return
-        self.run.summary.update(_convert_value_to_loggable_rec(metrics))
+        self.run.summary.update(self._prepare_summary(metrics))
 
     def log_artifact(self, artifact_path, *, name: Optional[str] = None, type: Optional[str] = None):
         if self._suppress_logging:
@@ -136,32 +169,58 @@ class WandbTracker(Tracker):
             type=type,
         )
 
+    def log_html(self, key: str, html_path, *, step: Optional[int], commit: Optional[bool] = None):
+        if step is None and not commit:
+            step = self.run.step
+        if step is not None and step < self.run.step:
+            if step - self._last_warning_step > 500:
+                logger.warning(
+                    f"Step {step} is less than the current step {self.run.step}. Cowardly refusing to log HTML."
+                )
+                self._last_warning_step = step
+            return
+
+        wandb_step = None if step is None else int(step)
+        self.run.log({key: wandb.Html(str(html_path))}, step=wandb_step, commit=commit)
+
     def finish(self):
         if self._suppress_logging:
             return
 
+        # Write the replicate file before touching wandb: run.finish() can wedge
+        # past the background finish timeout, and by the time it raises the
+        # process is tearing down and fsspec can no longer schedule writes.
+        # This write is best-effort insurance — its failure must not keep
+        # run.finish() from running — and its summary may miss the final
+        # commit, so a successful finish rewrites the file with the flushed
+        # values below.
+        try:
+            self._write_replicate_file()
+        except Exception:
+            logger.exception("Pre-finish replicate write failed; retrying after wandb finish.")
+
         logger.info("Finishing wandb run...")
-        # Finish wandb first to ensure all metrics are synced to the summary
         self.run.finish()
-        # Then write the replicate file with the complete summary
         self._write_replicate_file()
 
     def _write_replicate_file(self):
         if self._replicate_path is None:
             return
 
-        import fsspec
-
         metrics_file = f"{self._replicate_path}/tracker_metrics.jsonl"
         fs, _, _ = fsspec.get_fs_token_paths(metrics_file)
         fs.makedirs(self._replicate_path, exist_ok=True)
 
-        with fs.open(metrics_file, "w") as f:
-            record = {
-                "config": _convert_value_to_loggable_rec(dict(self.run.config)),
-                "summary": _convert_value_to_loggable_rec(_summary_for_replicate(self.run)),
-            }
+        record = {
+            "config": _convert_value_to_loggable_rec(dict(self.run.config)),
+            "summary": _convert_value_to_loggable_rec(_summary_for_replicate(self.run)),
+        }
+        # Write to a temp name and rename into place so a failed write can never
+        # truncate an existing tracker_metrics.jsonl (e.g. the pre-finish copy).
+        tmp_file = f"{metrics_file}.tmp"
+        with fs.open(tmp_file, "w") as f:
             f.write(json.dumps(record, sort_keys=True, default=str) + "\n")
+        fs.mv(tmp_file, metrics_file)
 
 
 def _summary_for_replicate(run: WandbRun) -> dict[str, Any]:
@@ -200,6 +259,27 @@ def _set_nested(target: dict[str, Any], path: list[str], value: Any) -> None:
     cur[path[-1]] = value
 
 
+def _convert_metrics_to_wandb_loggable(metrics: typing.Mapping[str, Any]) -> dict[str, Any]:
+    """Flatten metrics into a wandb-ready dict.
+
+    Expands every :class:`SummaryStats` value into its individual loggable keys
+    (computing ``mean``/``variance``/``rms`` and building ``wandb.Histogram`` as
+    needed) and passes every other value through
+    :func:`_convert_value_to_loggable_rec`.
+
+    Pure conversion: no wandb run state is touched. Safe to call on the producer
+    thread before handing off to a :class:`BackgroundTracker` worker, and
+    idempotent when called a second time on an already-flat dict.
+    """
+    to_log: dict[str, Any] = {}
+    for k, v in metrics.items():
+        if isinstance(v, SummaryStats):
+            to_log.update(_convert_summary_stats_to_loggable(k, v))
+        else:
+            to_log[k] = _convert_value_to_loggable_rec(v)
+    return to_log
+
+
 def _convert_value_to_loggable_rec(value: Any):
     if isinstance(value, (list, tuple)):
         return [_convert_value_to_loggable_rec(v) for v in value]
@@ -217,22 +297,32 @@ def _convert_value_to_loggable_rec(value: Any):
             return value.tolist()
     elif isinstance(value, np.generic):
         return value.item()
-    elif isinstance(value, Histogram):
-        import wandb
-
-        counts, limits = value.to_numpy_histogram()
-
-        return wandb.Histogram(np_histogram=(counts.tolist(), limits.tolist()))
+    elif isinstance(value, SummaryStats):
+        return _convert_summary_stats_to_loggable("", value, include_prefix=False)
     else:
         return value
 
 
+def _convert_summary_stats_to_loggable(prefix: str, value: SummaryStats, *, include_prefix: bool = True):
+    out: dict[str, Any] = {}
+    base = f"{prefix}/" if include_prefix and prefix else ""
+    out[f"{base}min"] = _convert_value_to_loggable_rec(value.min)
+    out[f"{base}max"] = _convert_value_to_loggable_rec(value.max)
+    out[f"{base}num"] = _convert_value_to_loggable_rec(value.num)
+    out[f"{base}nonzero_count"] = _convert_value_to_loggable_rec(value.nonzero_count)
+    out[f"{base}sum"] = _convert_value_to_loggable_rec(value.sum)
+    out[f"{base}sum_squares"] = _convert_value_to_loggable_rec(value.sum_squares)
+    out[f"{base}mean"] = _convert_value_to_loggable_rec(value.mean)
+    out[f"{base}variance"] = _convert_value_to_loggable_rec(value.variance)
+    out[f"{base}rms"] = _convert_value_to_loggable_rec(value.rms)
+    if value.histogram is not None:
+        counts, limits = value.histogram.to_numpy_histogram()
+        out[f"{base}histogram"] = wandb.Histogram(np_histogram=(counts.tolist(), limits.tolist()))
+    return out
+
+
 def is_wandb_available():
-    try:
-        import wandb
-    except ImportError:
-        return False
-    return wandb is not None and wandb.run is not None
+    return wandb.run is not None
 
 
 @TrackerConfig.register_subclass("wandb")
@@ -280,9 +370,13 @@ class WandbConfig(TrackerConfig):
     background_finish_timeout: float = 120.0
     """Maximum seconds to wait for the background thread to drain on finish()."""
 
-    def init(self, run_id: Optional[str]) -> Tracker:
-        import wandb
+    service_teardown_timeout: float = 60.0
+    """Maximum seconds to wait for the wandb-core service to tear down at interpreter exit
+    before abandoning it. wandb's own service-teardown atexit hook is unbounded, which can
+    hold a slice past the JAX distributed shutdown-barrier deadline and SIGABRT a
+    multi-slice job. Kept well under that deadline."""
 
+    def init(self, run_id: Optional[str]) -> Tracker:
         if run_id is not None and self.id is not None and run_id != self.id:
             warnings.warn(
                 f"Both trainer's id {run_id} and WandB's id {self.id} are set. WandB will use the id set in its"
@@ -365,6 +459,11 @@ class WandbConfig(TrackerConfig):
             wandb.summary["num_hosts"] = jax.process_count()  # type: ignore
             wandb.summary["backend"] = jax.default_backend()  # type: ignore
 
+            # Only the primary process owns a wandb-core service subprocess whose teardown
+            # can wedge. Register the bounded teardown after wandb.init() so it runs before
+            # wandb's own (unbounded) teardown hook at exit — atexit is LIFO.
+            atexit.register(_teardown_wandb_service_bounded, self.service_teardown_timeout)
+
         return maybe_wrap_background(
             WandbTracker(
                 r,
@@ -372,7 +471,10 @@ class WandbConfig(TrackerConfig):
                 suppress_logging=not is_primary_process,
                 minimum_log_step=minimum_log_step,
             ),
-            enabled=self.background,
+            # Only the primary process actually logs; a suppressed tracker no-ops every
+            # call, so wrapping it in a background thread is pure overhead — and would
+            # make non-primary hosts stage (copy) large profile artifacts they discard.
+            enabled=self.background and is_primary_process,
             max_queue_size=self.background_max_queue_size,
             finish_timeout=self.background_finish_timeout,
         )
@@ -414,8 +516,6 @@ class WandbConfig(TrackerConfig):
             if "SHA is empty" in str(e):
                 # we have another workaround, which is to use the git command line
                 # git --git-dir={code_dir}/.git rev-parse HEAD
-                import subprocess
-
                 try:
                     out = subprocess.run(
                         ["git", "--git-dir", f"{code_dir}/.git", "rev-parse", "HEAD"], check=True, capture_output=True
@@ -446,6 +546,94 @@ def _truncate_wandb_artifact_name(name: Optional[str]) -> Optional[str]:
         truncated,
     )
     return truncated
+
+
+_WANDB_RUN_NAME_MAX_LENGTH = 64
+_WANDB_RUN_NAME_MIN_PREFIX_LENGTH = 24
+_WANDB_RUN_NAME_AGGRESSIVE_TRUNCATION_CHARS = 16
+_WANDB_RUN_NAME_SUFFIX_MARKERS = ("_seed", "-seed", "_step", "-step")
+
+
+def _preferred_wandb_suffix_start(name: str) -> int | None:
+    """Return the preferred suffix start for a truncated W&B run name.
+
+    We prefer underscore-delimited semantic tails like ``lr7.5e-7_seed2`` or
+    ``foo_step400``. This avoids splitting on the ``-`` inside scientific
+    notation, which would corrupt names like ``lr7.5e-7``.
+    """
+    for marker in _WANDB_RUN_NAME_SUFFIX_MARKERS:
+        marker_start = name.rfind(marker)
+        if marker_start == -1:
+            continue
+
+        prior_slash = name.rfind("/", 0, marker_start)
+        prior_underscore = name.rfind("_", 0, marker_start)
+        if prior_underscore > prior_slash:
+            return prior_underscore
+        return marker_start
+
+    last_underscore = name.rfind("_")
+    if last_underscore == -1:
+        return None
+
+    prior_slash = name.rfind("/", 0, last_underscore)
+    second_last_underscore = name.rfind("_", 0, last_underscore)
+    if second_last_underscore > prior_slash:
+        return second_last_underscore
+
+    return last_underscore
+
+
+def truncate_wandb_run_name(name: str) -> str:
+    """Truncate a run name to fit within W&B's run-name length limit.
+
+    W&B rejects run names longer than 64 characters. This trims an over-long name
+    while preserving a readable prefix and the trailing semantic suffix (e.g.
+    ``lr7.5e-7_seed2``), avoiding splits inside scientific-notation tails, and logs
+    a warning so the truncation is visible. Exposed as a public helper so callers
+    (e.g. experiment configs) share one run-name policy.
+    """
+    if len(name) <= _WANDB_RUN_NAME_MAX_LENGTH:
+        return name
+
+    old_name = name
+    suffix_start = _preferred_wandb_suffix_start(name)
+
+    if suffix_start is None:
+        name = name[:_WANDB_RUN_NAME_MAX_LENGTH]
+        preserved_suffix = ""
+    else:
+        suffix = name[suffix_start:]
+        preserved_suffix = suffix
+        if len(suffix) >= _WANDB_RUN_NAME_MAX_LENGTH:
+            name = name[:_WANDB_RUN_NAME_MAX_LENGTH]
+            preserved_suffix = ""
+        else:
+            prefix_budget = _WANDB_RUN_NAME_MAX_LENGTH - len(suffix)
+            prefix = name[:prefix_budget]
+
+            # Prefer trimming at a token boundary so the retained prefix stays readable.
+            boundary = max(prefix.rfind("_"), prefix.rfind("/"))
+            if boundary >= _WANDB_RUN_NAME_MIN_PREFIX_LENGTH:
+                prefix = prefix[:boundary]
+
+            name = prefix + suffix
+
+    logger.warning(f"Truncated name from {old_name} to {name} to fit within WANDB limits.")
+
+    removed_chars = len(old_name) - len(name)
+    retained_prefix_len = len(name) - len(preserved_suffix)
+    if (
+        removed_chars >= _WANDB_RUN_NAME_AGGRESSIVE_TRUNCATION_CHARS
+        or retained_prefix_len < _WANDB_RUN_NAME_MIN_PREFIX_LENGTH
+    ):
+        logger.warning(
+            "W&B run name %r required aggressive truncation to %r. Consider shortening the explicit name.",
+            old_name,
+            name,
+        )
+
+    return name
 
 
 def _default_wandb_artifact_name(artifact_path: Any) -> str:

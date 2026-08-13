@@ -59,8 +59,14 @@ class LevelPrefixFormatter(logging.Formatter):
     Produces lines like: I20260306 12:44:05 iris.worker starting up
     """
 
+    # Bind the prefix table to the class so the formatter survives
+    # interpreter shutdown, when Python clears module globals to None.
+    # Late log emissions (e.g. tqdm.__del__ via tqdm_loggable) used to
+    # crash with AttributeError on the module-global lookup. See #5578.
+    _prefix_table = _LEVEL_PREFIX
+
     def format(self, record: logging.LogRecord) -> str:
-        record.levelprefix = _LEVEL_PREFIX.get(record.levelname, "?")
+        record.levelprefix = self._prefix_table.get(record.levelname, "?")
         return super().format(record)
 
 
@@ -175,12 +181,20 @@ def install_fault_handler(*, sigusr_dump: bool = True) -> bool:
 
     Returns:
         True if faulthandler was enabled by this call (or already enabled);
-        False if it was skipped because of the opt-out env var.
+        False if it was skipped because of the opt-out env var or because
+        stderr has no real file descriptor.
     """
     global _fault_handler_installed
     if _fault_handler_installed:
         return True
     if os.environ.get(FAULTHANDLER_DISABLE_ENV):
+        return False
+    # faulthandler writes to a raw fd; a harness that captures sys.stderr
+    # (click's CliRunner, some notebook kernels) substitutes an object
+    # without one.
+    try:
+        sys.stderr.fileno()
+    except (OSError, ValueError, AttributeError):
         return False
 
     # faulthandler dup()s the fd at enable-time, so later reassignments of
@@ -243,5 +257,10 @@ def configure_logging(level: int = logging.INFO) -> LogRingBuffer:
     logging.getLogger("httpcore").setLevel(logging.WARNING)
     logging.getLogger("fsspec").setLevel(logging.WARNING)
     logging.getLogger("fsspec.caching").setLevel(logging.WARNING)
+    # botocore/aiobotocore log credential discovery ("Found credentials in
+    # environment variables.") and retry chatter at INFO, once per fresh S3
+    # session -- pure noise on every S3-backed task (e.g. CoreWeave object store).
+    logging.getLogger("botocore").setLevel(logging.WARNING)
+    logging.getLogger("aiobotocore").setLevel(logging.WARNING)
 
     return _global_buffer

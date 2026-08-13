@@ -8,7 +8,6 @@
 
 from functools import lru_cache, partial
 import math
-import os
 from typing import Optional
 
 import jax
@@ -20,7 +19,8 @@ from jaxtyping import Array, Float, Int
 
 from .config import BlockSizes
 from .tuned_block_sizes import infer_xla_v_block_size
-from ..cost_estimate_utils import with_io_bytes_accessed
+from levanter.kernels.pallas import autotune_utils
+from levanter.kernels.pallas.cost_estimate_utils import with_io_bytes_accessed
 from .xla import _linear_softmax_cross_entropy_loss_streaming_bwd
 
 
@@ -65,89 +65,6 @@ def _fwd_cost_estimate(
     body_cost = pl.estimate_cost(
         _forward_lse_cost_reference,
         x,
-        w,
-        dtype=dtype,
-        logit_soft_cap=logit_soft_cap,
-        precision=precision,
-    )
-    return with_io_bytes_accessed(
-        body_cost,
-        kernel_inputs_specs=kernel_inputs_specs,
-        kernel_outputs_specs=kernel_outputs_specs,
-    )
-
-
-def _backward_cost_reference(
-    dout_loss: jax.Array,
-    dout_lse: jax.Array,
-    lse: jax.Array,
-    x: jax.Array,
-    labels: jax.Array,
-    w: jax.Array,
-    *,
-    dtype: jnp.dtype | None,
-    logit_soft_cap: float | None,
-    precision: jax.lax.PrecisionLike,
-) -> tuple[jax.Array, jax.Array]:
-    logits = jax.lax.dot_general(
-        x,
-        w,
-        (((1,), (0,)), ((), ())),
-        precision=precision,
-    )
-    if dtype is not None:
-        logits = logits.astype(dtype)
-
-    cap_deriv = jnp.asarray(1.0, dtype=logits.dtype)
-    if logit_soft_cap is not None:
-        tanh_arg = logits / logit_soft_cap
-        tanh_val = jnp.tanh(tanh_arg)
-        logits = tanh_val * logit_soft_cap
-        cap_deriv = (1.0 - tanh_val**2).astype(logits.dtype)
-
-    probs = jnp.exp(logits - lse[:, None].astype(logits.dtype))
-    delta = (dout_loss[:, None].astype(logits.dtype) + dout_lse[:, None].astype(logits.dtype)) * probs
-    delta = delta.at[jnp.arange(labels.shape[0], dtype=labels.dtype), labels].add(-dout_loss.astype(logits.dtype))
-    delta = (delta * cap_deriv).astype(logits.dtype)
-
-    x_grad = jax.lax.dot_general(
-        delta,
-        w,
-        (((1,), (1,)), ((), ())),
-        precision=precision,
-        preferred_element_type=jnp.float32,
-    )
-    w_grad = jax.lax.dot_general(
-        x,
-        delta,
-        (((0,), (0,)), ((), ())),
-        precision=precision,
-        preferred_element_type=jnp.float32,
-    )
-    return x_grad, w_grad
-
-
-def _bwd_cost_estimate(
-    dout_loss: jax.Array,
-    dout_lse: jax.Array,
-    lse: jax.Array,
-    x: jax.Array,
-    labels: jax.Array,
-    w: jax.Array,
-    *,
-    dtype: jnp.dtype | None,
-    logit_soft_cap: float | None,
-    precision: jax.lax.PrecisionLike,
-    kernel_inputs_specs,
-    kernel_outputs_specs,
-) -> pl.CostEstimate | None:
-    body_cost = pl.estimate_cost(
-        _backward_cost_reference,
-        dout_loss,
-        dout_lse,
-        lse,
-        x,
-        labels,
         w,
         dtype=dtype,
         logit_soft_cap=logit_soft_cap,
@@ -311,7 +228,7 @@ def linear_softmax_lse_forward_fori_pallas_kernel(
 
         m_curr = jnp.max(logits_f32, axis=-1)[:, None]
         m_next = jnp.maximum(m_prev, m_curr)
-        s_curr = jnp.exp(logits_f32 - pltpu.repeat(m_next, repeats, axis=1))
+        s_curr = jnp.exp(logits_f32 - jnp.tile(m_next, (1, repeats)))
         l_curr = jax.lax.broadcast_in_dim(s_curr.sum(axis=-1), l_prev.shape, (0,))
         alpha = jnp.exp(m_prev - m_next)
         l_next = l_curr + alpha * l_prev
@@ -669,13 +586,8 @@ def _zeros_like_if_needed(ct, like):
     return ct
 
 
-def _env_flag(name: str) -> bool:
-    value = os.environ.get(name)
-    return value is not None and value.strip().lower() in {"1", "true", "yes", "on"}
-
-
 def _use_bwd_xla_streaming() -> bool:
-    return _env_flag(_BWD_USE_XLA_STREAMING_ENV)
+    return autotune_utils.env_flag(_BWD_USE_XLA_STREAMING_ENV, default=False)
 
 
 @lru_cache(maxsize=None)
@@ -730,6 +642,7 @@ def _make_custom_vjp(
                 dout_lse,
                 block_size=xla_block_size,
                 dtype=dtype,
+                batch_block_size=block_sizes.b_block_size,
                 logit_soft_cap=logit_soft_cap,
                 precision=precision,
             )

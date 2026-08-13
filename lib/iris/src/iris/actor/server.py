@@ -18,7 +18,6 @@ import threading
 import time
 import uuid
 from collections.abc import Callable
-from concurrent.futures import Future
 from dataclasses import dataclass, field
 from typing import Any, NewType
 
@@ -28,6 +27,8 @@ from connectrpc.code import Code
 from connectrpc.errors import ConnectError
 from connectrpc.request import RequestContext
 from rigging.timing import Duration, ExponentialBackoff, Timestamp
+from starlette.applications import Starlette
+from starlette.routing import Mount
 
 from iris.managed_thread import ThreadContainer, get_thread_container
 from iris.rpc import actor_pb2
@@ -35,6 +36,8 @@ from iris.rpc.actor_connect import ActorServiceASGIApplication
 from iris.rpc.compression import IRIS_RPC_COMPRESSIONS
 
 logger = logging.getLogger(__name__)
+
+ACTOR_SERVER_STARTUP_TIMEOUT = Duration.from_seconds(5.0)
 
 # Type aliases
 ActorId = NewType("ActorId", str)
@@ -51,10 +54,15 @@ class RegisteredActor:
 
 @dataclass
 class OperationState:
-    """Server-side state for a long-running operation."""
+    """Server-side state for a long-running operation.
+
+    Completion is signaled by ``_run_operation`` setting ``completed_at`` in
+    its ``finally`` block; readers derive ``state`` from that and the
+    optional ``error``/``cancelled`` fields. No Future is retained because
+    the result is recorded on this object directly.
+    """
 
     operation_id: str
-    future: Future
     cancelled: threading.Event = field(default_factory=threading.Event)
     serialized_result: bytes | None = None
     error: actor_pb2.ActorError | None = None
@@ -62,10 +70,10 @@ class OperationState:
 
     @property
     def state(self) -> int:
-        if self.cancelled.is_set() and self.future.done():
-            return actor_pb2.Operation.CANCELLED
-        if not self.future.done():
+        if self.completed_at is None:
             return actor_pb2.Operation.RUNNING
+        if self.cancelled.is_set():
+            return actor_pb2.Operation.CANCELLED
         if self.error is not None:
             return actor_pb2.Operation.FAILED
         return actor_pb2.Operation.SUCCEEDED
@@ -101,7 +109,7 @@ class ActorServer:
         self._host = host
         self._port = port
         self._actors: dict[str, RegisteredActor] = {}
-        self._app: ActorServiceASGIApplication | None = None
+        self._app: Starlette | None = None
         self._actual_port: int | None = None
         self._threads = threads if threads is not None else get_thread_container()
         self._server: uvicorn.Server | None = None
@@ -143,7 +151,7 @@ class ActorServer:
         try:
             method, args, kwargs = self._resolve_method(request)
         except ConnectError as e:
-            error = actor_pb2.ActorError(error_type="NotFound", message=e.message)
+            error = actor_pb2.ActorError(error_type=e.code.value, message=e.message)
             return actor_pb2.ActorResponse(error=error)
 
         try:
@@ -225,7 +233,9 @@ class ActorServer:
         actor_name = request.actor_name or next(iter(self._actors), "")
         actor = self._actors.get(actor_name)
         if not actor:
-            raise ConnectError(Code.NOT_FOUND, f"Actor '{actor_name}' not found")
+            # The resolver can briefly return an endpoint from the previous
+            # attempt while a restarted actor registers its replacement.
+            raise ConnectError(Code.UNAVAILABLE, f"Actor '{actor_name}' not found")
         method = actor.methods.get(request.method_name)
         if not method:
             raise ConnectError(Code.NOT_FOUND, f"Method '{request.method_name}' not found on '{actor_name}'")
@@ -252,17 +262,14 @@ class ActorServer:
         method, args, kwargs = self._resolve_method(request)
 
         op_id = uuid.uuid4().hex
-        op = OperationState(operation_id=op_id, future=Future())
+        op = OperationState(operation_id=op_id)
 
         with self._operations_lock:
             self._operations[op_id] = op
 
-        # Submit to thread pool. _run_operation fills in result/error on the
-        # OperationState directly; the Future is just for tracking completion.
-        def run():
-            self._run_operation(op, method, args, kwargs)
-
-        op.future = self._executor.submit(run)
+        # _run_operation writes result/error onto `op` and stamps `completed_at`
+        # in its finally block; the executor Future itself is not retained.
+        self._executor.submit(self._run_operation, op, method, args, kwargs)
 
         logger.debug("Started operation %s for %s.%s", op_id, request.actor_name, request.method_name)
         return op.to_proto()
@@ -297,8 +304,9 @@ class ActorServer:
         logger.info("Cancelled operation %s", request.operation_id)
         return op.to_proto()
 
-    def _create_app(self) -> ActorServiceASGIApplication:
-        return ActorServiceASGIApplication(service=self, compressions=IRIS_RPC_COMPRESSIONS)
+    def _create_app(self) -> Starlette:
+        rpc_app = ActorServiceASGIApplication(service=self, compressions=IRIS_RPC_COMPRESSIONS)
+        return Starlette(routes=[Mount(rpc_app.path, app=rpc_app)])
 
     def serve_background(self, port: int | None = None) -> int:
         """Start server in background thread.
@@ -319,30 +327,49 @@ class ActorServer:
 
         self._app = self._create_app()
 
-        if bind_port == 0:
-            with socket.socket() as s:
-                s.bind(("", 0))
-                self._actual_port = s.getsockname()[1]
-        else:
-            self._actual_port = bind_port
+        # Keep the kernel allocation bound until Uvicorn adopts it. Probing an
+        # ephemeral port and closing the socket first lets concurrent actors
+        # select the same port before either server begins listening.
+        family = socket.AF_INET6 if ":" in self._host else socket.AF_INET
+        listener = socket.socket(family=family)
+        try:
+            listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            listener.bind((self._host, bind_port))
+        except OSError:
+            listener.close()
+            raise
+        self._actual_port = listener.getsockname()[1]
 
-        assert self._actual_port is not None
-        config = uvicorn.Config(
-            self._app,
-            host=self._host,
-            port=self._actual_port,
-            log_level="error",
-            log_config=None,
-            timeout_keep_alive=120,
+        try:
+            config = uvicorn.Config(
+                self._app,
+                host=self._host,
+                port=self._actual_port,
+                log_level="error",
+                log_config=None,
+                timeout_keep_alive=120,
+            )
+            self._server = uvicorn.Server(config)
+            thread = self._threads.spawn_server(
+                self._server,
+                name=f"actor-server-{self._actual_port}",
+                sockets=[listener],
+            )
+        except Exception:
+            listener.close()
+            raise
+
+        ready_or_exited = ExponentialBackoff(initial=0.05, maximum=0.5).wait_until(
+            lambda: self._server.started or not thread.is_alive,
+            timeout=ACTOR_SERVER_STARTUP_TIMEOUT,
         )
-        self._server = uvicorn.Server(config)
-
-        self._threads.spawn_server(self._server, name=f"actor-server-{self._actual_port}")
-
-        ExponentialBackoff(initial=0.05, maximum=0.5).wait_until(
-            lambda: self._server.started,
-            timeout=Duration.from_seconds(5.0),
-        )
+        if not ready_or_exited:
+            raise TimeoutError(
+                f"Actor server did not start on {self._host}:{self._actual_port} within "
+                f"{ACTOR_SERVER_STARTUP_TIMEOUT.to_seconds():g} seconds"
+            )
+        if not self._server.started:
+            raise RuntimeError(f"Actor server exited before listening on {self._host}:{self._actual_port}")
 
         return self._actual_port
 

@@ -1,4 +1,4 @@
-.PHONY: help clean check fix setup_pre_commit rust-dev rust-user rust-status rust-package
+.PHONY: help clean check fix setup_pre_commit rust-dev rust-user rust-status configure_gcp_registry_all
 .DEFAULT: help
 
 
@@ -21,6 +21,8 @@ help:
 	@echo "    Switch to user mode (install dupekit from pre-built wheel)"
 	@echo "make rust-status"
 	@echo "    Show current Rust build mode"
+	@echo "make configure_gcp_registry_all"
+	@echo "    Apply the 30d Artifact Registry cleanup policy to the marin repo in every canonical region."
 
 init:
 	conda install -c conda-forge pandoc
@@ -46,20 +48,15 @@ fix:
 lint:
 	./infra/pre-commit.py --all-files
 
+# Apply the 30d cleanup policy to the marin repo across every canonical region.
+# The region list is sourced from config/marin.yaml.
+configure_gcp_registry_all:
+	uv run infra/configure_gcp_registry.py marin --all-regions
+
 test:
 	export HUGGING_FACE_HUB_TOKEN=$HF_TOKEN
 	export HF_HUB_TOKEN=$HF_TOKEN
 	RAY_ADDRESS= PYTHONPATH=tests:. pytest tests --durations=0 -n 4 --tb=no -v
-
-# Target to configure GCP registry cleanup policy for all standard regions
-CLUSTER_REPOS = us-central2 us-central1 europe-west4 us-west4 us-east5 us-east1
-default_registry_name = marin
-configure_gcp_registry_all:
-	@echo "Configuring GCP registry cleanup policy for all standard regions..."
-	$(foreach region,$(CLUSTER_REPOS), \
-		python infra/configure_gcp_registry.py $(default_registry_name) --region=$(region) ; \
-	)
-	@echo "Cleanup policy configured for all regions."
 
 
 # stuff for setting up locally
@@ -137,9 +134,6 @@ rust-dev:
 rust-user:
 	@python3 scripts/rust_mode.py user
 	uv sync
-
-rust-package:
-	@python3 scripts/rust_package.py
 
 rust-status:
 	@python3 scripts/rust_mode.py status

@@ -1,100 +1,57 @@
 # Copyright The Marin Authors
 # SPDX-License-Identifier: Apache-2.0
 
-"""E2E tests for WorkerPool using IrisClient.local()."""
+"""Live-adapter proofs for the public WorkerPool API."""
 
 import pytest
-from iris.client import IrisClient
 from iris.client.worker_pool import (
     WorkerPool,
     WorkerPoolConfig,
 )
 from iris.cluster.types import ResourceSpec
 
-pytestmark = pytest.mark.e2e
+pytestmark = pytest.mark.requires_cluster
 
 
-@pytest.fixture
-def local_client():
-    """Create a local IrisClient for true E2E testing.
-
-    Starts a real Controller and Worker with in-process execution,
-    ensuring WorkerPool tests go through the full job submission infrastructure.
-    """
-    client = IrisClient.local()
-    yield client
-    client.shutdown(wait=True)
+def _add(a: int, b: int) -> int:
+    return a + b
 
 
-class TestWorkerPoolE2E:
-    """True end-to-end tests for WorkerPool using IrisClient.local().
+def _square(value: int) -> int:
+    return value * value
 
-    These tests exercise the full job submission flow:
-    WorkerPool -> IrisClient -> RemoteClusterClient -> Controller -> Worker -> task execution.
-    """
 
-    def test_submit_executes_task(self, local_client):
-        """submit() dispatches a task through real job infrastructure and returns correct result."""
-        config = WorkerPoolConfig(
-            num_workers=1,
-            resources=ResourceSpec(cpu=1, memory="512m"),
-        )
+def _fail() -> None:
+    raise ValueError("intentional error")
 
-        with WorkerPool(local_client, config, timeout=30.0) as pool:
 
-            def add(a, b):
-                return a + b
+def _pool_config(num_workers: int) -> WorkerPoolConfig:
+    return WorkerPoolConfig(
+        num_workers=num_workers,
+        resources=ResourceSpec(cpu=1, memory="512m"),
+    )
 
-            future = pool.submit(add, 10, 20)
-            result = future.result(timeout=60.0)
 
-            assert result == 30
+def test_worker_pool_executes_submitted_and_mapped_calls(local_iris_client):
+    with WorkerPool(local_iris_client, _pool_config(2), timeout=30.0) as pool:
+        submitted = pool.submit(_add, 10, 20)
+        mapped = pool.map(_square, [1, 2, 3, 4, 5])
 
-    def test_map_executes_tasks(self, local_client):
-        """map() distributes work through real job infrastructure."""
-        config = WorkerPoolConfig(
-            num_workers=2,
-            resources=ResourceSpec(cpu=1, memory="512m"),
-        )
+        assert submitted.result(timeout=60.0) == 30
+        assert [future.result(timeout=60.0) for future in mapped] == [1, 4, 9, 16, 25]
 
-        with WorkerPool(local_client, config, timeout=30.0) as pool:
 
-            def square(x):
-                return x * x
+def test_worker_pool_propagates_user_exception(local_iris_client):
+    with WorkerPool(local_iris_client, _pool_config(1), timeout=30.0) as pool:
+        future = pool.submit(_fail)
 
-            futures = pool.map(square, [1, 2, 3, 4, 5])
-            results = [f.result(timeout=60.0) for f in futures]
+        with pytest.raises(ValueError, match="intentional error"):
+            future.result(timeout=60.0)
 
-            assert results == [1, 4, 9, 16, 25]
 
-    def test_exception_propagates_to_caller(self, local_client):
-        """Exceptions raised by user code propagate through job infrastructure to caller."""
-        config = WorkerPoolConfig(
-            num_workers=1,
-            resources=ResourceSpec(cpu=1, memory="512m"),
-        )
+def test_worker_pool_after_shutdown_rejects_submission(local_iris_client):
+    with WorkerPool(local_iris_client, _pool_config(1), timeout=30.0) as pool:
+        assert pool.job_id is not None
 
-        with WorkerPool(local_client, config, timeout=30.0) as pool:
-
-            def fail():
-                raise ValueError("intentional error")
-
-            future = pool.submit(fail)
-
-            with pytest.raises(ValueError, match="intentional error"):
-                future.result(timeout=60.0)
-
-    def test_shutdown_prevents_new_submissions(self, local_client):
-        """After shutdown, submit() raises RuntimeError."""
-        config = WorkerPoolConfig(
-            num_workers=1,
-            resources=ResourceSpec(cpu=1, memory="512m"),
-        )
-
-        pool = WorkerPool(local_client, config, timeout=30.0)
-        pool.__enter__()
-
-        pool.shutdown(wait=False)
-
-        with pytest.raises(RuntimeError, match="shutdown"):
-            pool.submit(lambda: 42)
+    with pytest.raises(RuntimeError, match="shutdown"):
+        pool.submit(_square, 42)

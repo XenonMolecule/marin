@@ -5,7 +5,7 @@
 """Analyze cross-region GCS operations from archived Iris task logs.
 
 This script:
-- locates archived log parquet segments under ``<remote_state_dir>/logs``
+- locates finelog log parquet segments under ``<finelog.remote_log_dir>/log``
 - downloads the recent segments needed for a time window
 - downloads the latest controller checkpoint unless a checkpoint directory is supplied
 - joins task log entries against task attempt / worker region metadata
@@ -13,8 +13,6 @@ This script:
 
 The default mode analyzes the last 24 hours.
 """
-
-from __future__ import annotations
 
 import csv
 import datetime as dt
@@ -31,7 +29,8 @@ from pathlib import Path
 import click
 import duckdb
 import fsspec
-from iris.cluster.config import IrisConfig
+from finelog.deploy.config import load_finelog_config
+from iris.cluster.config import IrisClusterConfig, load_config
 from iris.cluster.controller.checkpoint import _find_latest_checkpoint_dir, download_checkpoint_to_local
 from rigging.filesystem import get_bucket_location, region_from_prefix
 
@@ -65,7 +64,29 @@ LARGE_EXTS = frozenset(
 )
 # Compressed record streams — individually moderate but usually many per job.
 MEDIUM_EXTS = frozenset({".jsonl.gz", ".json.gz", ".jsonl.zst", ".jsonl.xz", ".jsonl", ".csv.gz"})
-SMALL_EXTS = frozenset({".json", ".yaml", ".yml", ".txt", ".log", ".md", ".toml", ".csv", ".cfg", ".ini"})
+# `.lock` is distributed-lock coordination churn (a few bytes); it lives under
+# `checkpoints/`, so without an explicit small classification the path-pattern
+# override below would tag it `large`.
+SMALL_EXTS = frozenset({".json", ".yaml", ".yml", ".txt", ".log", ".md", ".toml", ".csv", ".cfg", ".ini", ".lock"})
+
+# Lowercased substrings that mark a whole log line as a non-transfer event — a
+# log-shipping retry or other diagnostic that names a gs:// path without moving
+# its bytes. Lines matching these are forced to the `small` tier regardless of
+# the path's extension, so they don't show up as large-egress offenders.
+SMALL_LINE_SUBSTRINGS = (
+    "failed to download logs",
+    "failed to upload logs",
+)
+
+# Filename Levanter writes at the root of a tokenized datastore. The ledger
+# itself is a tiny JSON, but loading it is the only fsspec-visible step of
+# opening a datastore: the bulk token chunks are then streamed through
+# tensorstore's native GCS driver, which bypasses fsspec and emits no gs:// log
+# line of its own. So the ledger load is the only proxy this log-based report
+# has for a datastore read that can move hundreds of GB cross-region — we tag it
+# `large` (see classify_size_tier) so a job streaming a remote datastore shows
+# up as a large-egress offender instead of hiding behind the `.json` suffix.
+LEVANTER_DATASTORE_LEDGER = "shard_ledger.json"
 
 
 def _extension(path: str) -> str:
@@ -85,6 +106,12 @@ def _extension(path: str) -> str:
 
 
 def classify_size_tier(path: str) -> str:
+    lower = path.lower()
+    # Levanter datastore ledger: a small JSON that stands in for a bulk
+    # tensorstore read. Checked before the extension fallback, which would
+    # otherwise tag the `.json` ledger `small`.
+    if lower.endswith("/" + LEVANTER_DATASTORE_LEDGER):
+        return "large"
     ext = _extension(path)
     if ext in LARGE_EXTS:
         return "large"
@@ -92,7 +119,6 @@ def classify_size_tier(path: str) -> str:
         return "medium"
     if ext in SMALL_EXTS:
         return "small"
-    lower = path.lower()
     # Path patterns that override a missing/ambiguous extension.
     if "compilation-cache" in lower or "cache_ledger" in lower:
         return "small"
@@ -101,6 +127,16 @@ def classify_size_tier(path: str) -> str:
     if "/documents/" in lower or "/tokenized/" in lower or "/data/" in lower:
         return "medium"
     return "unknown"
+
+
+def is_small_line(data: str) -> bool:
+    """True for log lines that name a gs:// path but move no bulk data.
+
+    These are diagnostics (log-shipping retries, etc.) — their paths should be
+    classified `small` so they don't surface as large-egress offenders.
+    """
+    lower = data.lower()
+    return any(sub in lower for sub in SMALL_LINE_SUBSTRINGS)
 
 
 def extract_user(task_id: str) -> str:
@@ -125,14 +161,14 @@ class TimeWindow:
 
 def parse_window(end_time: str | None, hours: float) -> TimeWindow:
     if end_time is None:
-        end = dt.datetime.now(dt.timezone.utc)
+        end = dt.datetime.now(dt.UTC)
     else:
         text = end_time.replace("Z", "+00:00")
         end = dt.datetime.fromisoformat(text)
         if end.tzinfo is None:
-            end = end.replace(tzinfo=dt.timezone.utc)
+            end = end.replace(tzinfo=dt.UTC)
         else:
-            end = end.astimezone(dt.timezone.utc)
+            end = end.astimezone(dt.UTC)
     start = end - dt.timedelta(hours=hours)
     return TimeWindow(start=start, end=end)
 
@@ -221,7 +257,7 @@ def choose_log_objects(
     before_window: dict | None = None
     chosen: list[dict] = []
     for entry in entries:
-        entry_mtime = entry["mtime"].astimezone(dt.timezone.utc)
+        entry_mtime = entry["mtime"].astimezone(dt.UTC)
         if entry_mtime < mtime_cutoff:
             before_window = entry
             continue
@@ -229,12 +265,12 @@ def choose_log_objects(
 
     if before_window is not None:
         chosen.insert(0, before_window)
-        before_mtime = before_window["mtime"].astimezone(dt.timezone.utc)
+        before_mtime = before_window["mtime"].astimezone(dt.UTC)
         logging.info(f"Included 1 file before cutoff (mtime: {before_mtime.isoformat()})")
 
     if chosen:
-        oldest = chosen[0]["mtime"].astimezone(dt.timezone.utc)
-        newest = chosen[-1]["mtime"].astimezone(dt.timezone.utc)
+        oldest = chosen[0]["mtime"].astimezone(dt.UTC)
+        newest = chosen[-1]["mtime"].astimezone(dt.UTC)
         logging.info(f"Selected {len(chosen)} files (mtime range: {oldest.isoformat()} to {newest.isoformat()})")
         logging.info(f"File names: {[Path(e['name']).name for e in chosen]}")
     return chosen
@@ -307,10 +343,10 @@ def validate_parquet_files(paths: list[Path]) -> list[Path]:
     return good
 
 
-def download_checkpoint(config: IrisConfig, outdir: Path, checkpoint_dir: str | None) -> Path:
-    chosen = checkpoint_dir or _find_latest_checkpoint_dir(config.proto.storage.remote_state_dir)
+def download_checkpoint(config: IrisClusterConfig, outdir: Path, checkpoint_dir: str | None) -> Path:
+    chosen = checkpoint_dir or _find_latest_checkpoint_dir(config.storage.remote_state_dir)
     if chosen is None:
-        raise RuntimeError(f"No checkpoint found under {config.proto.storage.remote_state_dir}")
+        raise RuntimeError(f"No checkpoint found under {config.storage.remote_state_dir}")
     # Key the local cache on the remote checkpoint id so reruns that pick up
     # a newer checkpoint don't collide with a stale one.
     checkpoint_id = chosen.rstrip("/").rsplit("/", 1)[-1]
@@ -321,7 +357,7 @@ def download_checkpoint(config: IrisConfig, outdir: Path, checkpoint_dir: str | 
         logging.info(f"Checkpoint {checkpoint_id} already cached at {db_path}")
         return db_path
     logging.info(f"Downloading checkpoint {chosen}")
-    ok = download_checkpoint_to_local(config.proto.storage.remote_state_dir, checkpoint_outdir, chosen)
+    ok = download_checkpoint_to_local(config.storage.remote_state_dir, checkpoint_outdir, chosen)
     if not ok:
         raise RuntimeError(f"Failed to download checkpoint from {chosen}")
     if not db_path.exists():
@@ -418,6 +454,7 @@ def analyze(
     job_counts = Counter()
     task_counts = Counter()
     user_counts = Counter()
+    large_user_counts = Counter()
     size_tier_counts = Counter()
     cross_region_size_tier_counts = Counter()
     cross_region_extension_counts = Counter()
@@ -494,13 +531,16 @@ def analyze(
 
         user = extract_user(task_id)
         line_cross_region = False
+        # Diagnostic lines (log-shipping retries, etc.) name a path without
+        # moving its bytes — force their paths to the `small` tier.
+        small_line = is_small_line(data)
         for path in paths:
             parts = path.split("/", 3)
             bucket_name = parts[2] if len(parts) > 2 else ""
             if not bucket_name:
                 unknown_buckets["<empty>"] += 1
                 continue
-            size_tier = classify_size_tier(path)
+            size_tier = "small" if small_line else classify_size_tier(path)
             size_tier_counts[size_tier] += 1
             region = bucket_region(bucket_name, bucket_cache)
             if region is None:
@@ -517,6 +557,8 @@ def analyze(
                 job_counts[task_id.rsplit("/", 1)[0]] += 1
                 task_counts[task_id] += 1
                 user_counts[user] += 1
+                if size_tier == "large":
+                    large_user_counts[user] += 1
 
                 sample_key = (task_id, attempt_id, path, epoch_ms)
                 if sample_key in seen_sample_keys:
@@ -582,6 +624,7 @@ def analyze(
         "cross_region_jobs": dict(job_counts.most_common(50)),
         "cross_region_tasks": dict(task_counts.most_common(50)),
         "cross_region_users": dict(user_counts.most_common()),
+        "cross_region_large_users": dict(large_user_counts.most_common()),
         "unmatched_tasks_top25": dict(unmatched_tasks.most_common(25)),
         "unknown_buckets_top25": dict(unknown_buckets.most_common(25)),
         "samples": samples,
@@ -590,7 +633,7 @@ def analyze(
 
 
 def _fmt_ms(ms: int) -> str:
-    return dt.datetime.fromtimestamp(ms / 1000, tz=dt.timezone.utc).isoformat()
+    return dt.datetime.fromtimestamp(ms / 1000, tz=dt.UTC).isoformat()
 
 
 def _md_table(headers: list[str], rows: list[list]) -> str:
@@ -600,6 +643,19 @@ def _md_table(headers: list[str], rows: list[list]) -> str:
     for row in rows:
         out.append("| " + " | ".join(str(c) for c in row) + " |")
     return "\n".join(out) + "\n"
+
+
+def _format_handle(user: str) -> str:
+    """Prefix GH-style handles with `@`; leave `<unknown>` alone."""
+    return f"@{user}" if user and user != "<unknown>" else user
+
+
+def _split_owner_path(prefix: str) -> tuple[str, str]:
+    """Split an Iris task/job key (``/<user>/<rest>``) into (owner, rest)."""
+    parts = prefix.split("/", 2)
+    if len(parts) >= 3 and parts[1]:
+        return parts[1], parts[2]
+    return "<unknown>", prefix
 
 
 def write_markdown(summary: dict, path: Path) -> None:
@@ -677,9 +733,23 @@ def write_markdown(summary: dict, path: Path) -> None:
     lines.append(
         _md_table(
             ["User", "Mentions"],
-            [[k, v] for k, v in list(summary["cross_region_users"].items())[:25]],
+            [[_format_handle(k), v] for k, v in list(summary["cross_region_users"].items())[:25]],
         )
     )
+
+    large_users = summary.get("cross_region_large_users") or {}
+    if large_users:
+        lines.append("\n## Cross-region by user (large-tier only)\n")
+        lines.append(
+            "_Only path mentions in the `large` tier (model/checkpoint shards). "
+            "This is the closest proxy we have to bytes-of-egress per user._\n"
+        )
+        lines.append(
+            _md_table(
+                ["User", "Large-tier mentions"],
+                [[_format_handle(k), v] for k, v in list(large_users.items())[:25]],
+            )
+        )
 
     lines.append("\n## Top region pairs (source → destination)\n")
     lines.append(
@@ -698,20 +768,18 @@ def write_markdown(summary: dict, path: Path) -> None:
     )
 
     lines.append("\n## Top cross-region jobs\n")
-    lines.append(
-        _md_table(
-            ["Job", "Mentions"],
-            [[k, v] for k, v in list(summary["cross_region_jobs"].items())[:25]],
-        )
-    )
+    job_rows = []
+    for k, v in list(summary["cross_region_jobs"].items())[:25]:
+        owner, rest = _split_owner_path(k)
+        job_rows.append([_format_handle(owner), rest, v])
+    lines.append(_md_table(["Owner", "Job", "Mentions"], job_rows))
 
     lines.append("\n## Top cross-region tasks\n")
-    lines.append(
-        _md_table(
-            ["Task", "Mentions"],
-            [[k, v] for k, v in list(summary["cross_region_tasks"].items())[:25]],
-        )
-    )
+    task_rows = []
+    for k, v in list(summary["cross_region_tasks"].items())[:25]:
+        owner, rest = _split_owner_path(k)
+        task_rows.append([_format_handle(owner), rest, v])
+    lines.append(_md_table(["Owner", "Task", "Mentions"], task_rows))
 
     if summary.get("unknown_buckets_top25"):
         lines.append("\n## Buckets with unknown region\n")
@@ -735,7 +803,10 @@ def write_markdown(summary: dict, path: Path) -> None:
             user_samples = samples_by_user[user]
             if not user_samples:
                 continue
-            lines.append(f"### `{user}` ({summary['cross_region_users'].get(user, len(user_samples))} mentions)\n")
+            lines.append(
+                f"### {_format_handle(user)} "
+                f"({summary['cross_region_users'].get(user, len(user_samples))} mentions)\n"
+            )
             rows = []
             for s in user_samples:
                 ts = _fmt_ms(s["timestamp_ms"]).split("+")[0]
@@ -772,6 +843,8 @@ def write_csv(summary: dict, path: Path) -> None:
             writer.writerow(["task", key, value])
         for key, value in summary["cross_region_users"].items():
             writer.writerow(["user", key, value])
+        for key, value in (summary.get("cross_region_large_users") or {}).items():
+            writer.writerow(["user_large_tier", key, value])
         for key, value in summary["cross_region_size_tier_counts"].items():
             writer.writerow(["size_tier", key, value])
         for key, value in summary["cross_region_extensions"].items():
@@ -781,8 +854,8 @@ def write_csv(summary: dict, path: Path) -> None:
 @click.command(help=__doc__)
 @click.option(
     "--config",
-    default="lib/iris/examples/marin.yaml",
-    help="Iris cluster config to use. Defaults to lib/iris/examples/marin.yaml.",
+    default="lib/iris/config/marin.yaml",
+    help="Iris cluster config to use. Defaults to lib/iris/config/marin.yaml.",
 )
 @click.option(
     "--outdir",
@@ -844,8 +917,15 @@ def main(
     logging.info(f"Starting cross-region analysis for {window.start.isoformat()} to {window.end.isoformat()}")
     logging.info(f"Output directory: {out_path}")
 
-    cfg = IrisConfig.load(config)
-    remote_logs_dir = f"{cfg.proto.storage.remote_state_dir.rstrip('/')}/logs"
+    cfg = load_config(config)
+    if not cfg.finelog.config:
+        raise click.ClickException(
+            f"Iris config {config!r} has no finelog.config; cross-region analysis " "requires logs shipped via finelog."
+        )
+    finelog_cfg = load_finelog_config(cfg.finelog.config)
+    if not finelog_cfg.remote_log_dir:
+        raise click.ClickException(f"finelog config {cfg.finelog.config!r} has no remote_log_dir.")
+    remote_logs_dir = f"{finelog_cfg.remote_log_dir.rstrip('/')}/log"
 
     log_entries = choose_log_objects(remote_logs_dir, window, download_lookback_hours)
     local_logs_dir = out_path / "logs"

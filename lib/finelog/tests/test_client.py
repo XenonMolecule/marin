@@ -1,8 +1,6 @@
 # Copyright The Marin Authors
 # SPDX-License-Identifier: Apache-2.0
 
-from __future__ import annotations
-
 import io
 import logging
 import threading
@@ -13,19 +11,28 @@ from typing import ClassVar
 import pyarrow as pa
 import pyarrow.ipc as paipc
 import pytest
+import zstandard
 from connectrpc.code import Code
 from connectrpc.errors import ConnectError
-from finelog.client import FlushResult, LogClient, RemoteLogHandler, schema_from_dataclass
+from finelog.client import FlushResult, LogClient, RemoteLogHandler, StoragePolicy, schema_from_dataclass
 from finelog.client import log_client as log_client_mod
 from finelog.errors import (
     InvalidNamespaceError,
     QueryResultTooLargeError,
-    SchemaConflictError,
     SchemaValidationError,
 )
 from finelog.rpc import finelog_stats_pb2 as stats_pb2
 from finelog.rpc import logging_pb2
-from finelog.store.schema import Column, Schema, schema_to_proto
+from finelog.schema import (
+    MAP_STRING_STRING,
+    Column,
+    CoveringProjection,
+    GroupedExtrema,
+    Schema,
+    schema_from_proto,
+    schema_to_arrow,
+    schema_to_proto,
+)
 
 
 class FakeLogClient:
@@ -88,6 +95,7 @@ class _FakeStatsServiceClient:
     def __init__(self, address, **_kwargs):
         self.address = address
         self.registered: dict[str, stats_pb2.Schema] = {}
+        self.registered_policies: dict[str, stats_pb2.StoragePolicy] = {}
         self.writes: list[stats_pb2.WriteRowsRequest] = []
         self.drops: list[str] = []
         self.queries: list[str] = []
@@ -96,7 +104,11 @@ class _FakeStatsServiceClient:
 
     def register_table(self, request):
         self.registered[request.namespace] = request.schema
-        return stats_pb2.RegisterTableResponse(effective_schema=request.schema)
+        self.registered_policies[request.namespace] = request.storage_policy
+        return stats_pb2.RegisterTableResponse(
+            effective_schema=request.schema,
+            effective_policy=request.storage_policy,
+        )
 
     def write_rows(self, request):
         if self.errors:
@@ -122,6 +134,38 @@ class _FakeStatsServiceClient:
         return stats_pb2.QueryResponse(arrow_ipc=sink.getvalue(), row_count=table.num_rows)
 
     def close(self):
+        pass
+
+
+class _RecordingHttpClient:
+    def __init__(self) -> None:
+        self.writes: list[tuple[str, str]] = []
+
+    def post(self, *, url, headers, content, timeout):
+        del timeout
+        encoding = headers.get("content-encoding")
+        decoded = zstandard.ZstdDecompressor().decompress(content)
+        if url.endswith("/RegisterTable"):
+            request = stats_pb2.RegisterTableRequest()
+            request.ParseFromString(decoded)
+            response = stats_pb2.RegisterTableResponse(
+                effective_schema=request.schema,
+                effective_policy=request.storage_policy,
+            )
+        elif url.endswith("/WriteRows"):
+            request = stats_pb2.WriteRowsRequest()
+            request.ParseFromString(decoded)
+            self.writes.append((request.namespace, encoding))
+            response = stats_pb2.WriteRowsResponse(rows_written=_decode_ipc_row_count(request.arrow_ipc))
+        else:
+            raise AssertionError(f"unexpected request URL: {url}")
+        return SimpleNamespace(
+            status=200,
+            headers={"content-type": "application/proto"},
+            content=response.SerializeToString(),
+        )
+
+    def close(self) -> None:
         pass
 
 
@@ -190,6 +234,28 @@ def test_connect_returns_usable_client(tracked_clients):
         client.close()
 
 
+def test_all_log_client_table_writes_use_zstd(monkeypatch: pytest.MonkeyPatch) -> None:
+    http_client = _RecordingHttpClient()
+    stats_client_class = log_client_mod.StatsServiceClientSync
+
+    def factory(address, **kwargs):
+        return stats_client_class(address=address, http_client=http_client, **kwargs)
+
+    monkeypatch.setattr(log_client_mod, "StatsServiceClientSync", factory)
+    client = LogClient.connect("http://finelog")
+    try:
+        table = client.get_table("iris.worker", WorkerStat)
+        table.write([WorkerStat(worker_id="w-1", timestamp_ms=1, mem_bytes=128)])
+        assert table.flush(timeout=5.0) == FlushResult.SUCCEEDED
+
+        client.write_batch("key", [logging_pb2.LogEntry(source="stdout", data="hello")])
+        assert client.flush(timeout=5.0) == FlushResult.SUCCEEDED
+    finally:
+        client.close()
+
+    assert sorted(http_client.writes) == [("iris.worker", "zstd"), ("log", "zstd")]
+
+
 def test_close_is_idempotent(tracked_clients):
     client = LogClient.connect("http://h:1")
     client.close()
@@ -223,6 +289,46 @@ def test_resolver_runs_per_resolve(tracked_clients):
     finally:
         client.close()
     assert resolver_calls == ["/system/log-server"]
+
+
+def test_write_batch_not_blocked_by_in_progress_resolve(tracked_clients):
+    """A blocked resolver must not wedge concurrent log writes.
+
+    The background flush thread resolves the stats endpoint under the client
+    lock, and in iris that resolver issues a blocking controller RPC. A
+    foreground log emit (``write_batch`` -> ``_get_log_table``) must not wait on
+    that same lock, or a shutdown-path ``logger.warning`` deadlocks teardown
+    against a hung resolve (observed as an iris smoke teardown timeout).
+    """
+    resolving = threading.Event()
+    release = threading.Event()
+
+    def resolver(url: str) -> str:
+        resolving.set()
+        assert release.wait(timeout=10.0), "resolver was never released"
+        return url
+
+    wrote = threading.Event()
+
+    def do_second_write():
+        client.write_batch("k", [logging_pb2.LogEntry(source="t", data="second")])
+        wrote.set()
+
+    client = LogClient.connect("http://h:1", resolver=resolver)
+    second_write = threading.Thread(target=do_second_write)
+    try:
+        # First write spins up the log Table; its flush thread enters the
+        # resolver and (pre-fix) parks there holding the client lock.
+        client.write_batch("k", [logging_pb2.LogEntry(source="t", data="first")])
+        assert resolving.wait(timeout=5.0), "flush thread never reached the resolver"
+
+        # A second write must not block on the lock held during the resolve.
+        second_write.start()
+        assert wrote.wait(timeout=2.0), "write_batch blocked behind an in-progress resolve"
+    finally:
+        release.set()
+        second_write.join(timeout=5.0)
+        client.close()
 
 
 def test_invalidates_on_connection_refused(tracked_clients, monkeypatch):
@@ -317,6 +423,73 @@ def test_get_table_with_explicit_schema(tracked_clients):
         client.close()
 
 
+def test_get_table_with_map_column_round_trips(tracked_clients):
+    # A COLUMN_TYPE_MAP column encodes Python dicts as a native Map<Utf8,Utf8>
+    # Arrow column on the WriteRows IPC (a None row is a null map cell).
+    schema = Schema(
+        columns=(
+            Column(name="labels", type=stats_pb2.COLUMN_TYPE_MAP),
+            Column(name="timestamp_ms", type=stats_pb2.COLUMN_TYPE_INT64, nullable=False),
+        ),
+    )
+    client = LogClient.connect("http://h:1")
+    try:
+        table = client.get_table("iris.probes", schema)
+        table.write(
+            [
+                SimpleNamespace(labels={"scope": "fleet", "region": "us-east"}, timestamp_ms=1),
+                SimpleNamespace(labels=None, timestamp_ms=2),
+            ]
+        )
+        assert table.flush(timeout=5.0) == FlushResult.SUCCEEDED
+        write_req = tracked_clients[0].writes[0]
+        decoded = paipc.open_stream(pa.BufferReader(write_req.arrow_ipc)).read_all()
+        assert decoded.num_rows == 2
+        assert decoded.schema.field("labels").type == MAP_STRING_STRING
+        assert decoded.column("labels").to_pylist() == [
+            [("scope", "fleet"), ("region", "us-east")],
+            None,
+        ]
+    finally:
+        client.close()
+
+
+def test_get_table_forwards_storage_policy(tracked_clients):
+    """An explicit StoragePolicy on get_table is sent on the register_table request."""
+    client = LogClient.connect("http://h:1")
+    try:
+        table = client.get_table(
+            "iris.worker",
+            WorkerStat,
+            storage_policy=StoragePolicy(max_bytes=100, max_age_seconds=60),
+        )
+        # Registration is deferred to the flush thread; force it with a write+flush.
+        table.write([WorkerStat(worker_id="w-1", timestamp_ms=1, mem_bytes=1)])
+        assert table.flush(timeout=5.0) == FlushResult.SUCCEEDED
+        policy = tracked_clients[0].registered_policies["iris.worker"]
+        assert policy.max_bytes == 100
+        assert policy.max_age_seconds == 60
+        assert policy.max_segments == 0  # unset → proto3 zero
+    finally:
+        client.close()
+
+
+def test_get_table_default_policy_is_empty(tracked_clients):
+    """No policy argument sends an empty proto (all zeros = inherit defaults)."""
+    client = LogClient.connect("http://h:1")
+    try:
+        table = client.get_table("iris.worker", WorkerStat)
+        # Registration is deferred to the flush thread; force it with a write+flush.
+        table.write([WorkerStat(worker_id="w-1", timestamp_ms=1, mem_bytes=1)])
+        assert table.flush(timeout=5.0) == FlushResult.SUCCEEDED
+        policy = tracked_clients[0].registered_policies["iris.worker"]
+        assert policy.max_bytes == 0
+        assert policy.max_age_seconds == 0
+        assert policy.max_segments == 0
+    finally:
+        client.close()
+
+
 def test_get_table_rejects_log_namespace(tracked_clients):
     client = LogClient.connect("http://h:1")
     try:
@@ -349,29 +522,83 @@ def test_drop_table_unknown_is_no_op(tracked_clients, monkeypatch):
     client = LogClient.connect("http://h:1")
     try:
         client.get_table("iris.worker", WorkerStat)
-        original_drop = tracked_clients[0].drop_table
+        client.drop_table("iris.worker")  # first drop lazily constructs the stats client
 
         def fail_drop(request):
             raise ConnectError(Code.NOT_FOUND, "namespace not registered")
 
         tracked_clients[0].drop_table = fail_drop  # type: ignore[method-assign]
         client.drop_table("iris.unknown")  # must not raise
-        tracked_clients[0].drop_table = original_drop  # type: ignore[method-assign]
     finally:
         client.close()
 
 
-def test_get_table_propagates_schema_conflict(tracked_clients, monkeypatch):
+def test_get_table_registration_conflict_drops_batch(tracked_clients, monkeypatch):
+    """A non-retryable registration failure is handled as a flush failure.
+
+    Registration happens on the flush thread, so a schema conflict cannot
+    propagate to the caller of get_table. The offending batch is dropped (the
+    error is non-retryable) and the Table stays usable without crashing.
+    """
+
+    def conflict(self, request):
+        raise ConnectError(Code.FAILED_PRECONDITION, "type mismatch")
+
+    monkeypatch.setattr(_FakeStatsServiceClient, "register_table", conflict)
     client = LogClient.connect("http://h:1")
     try:
-        client.get_table("iris.metric", WorkerStat)
+        table = client.get_table("iris.worker", WorkerStat)
+        table.write([WorkerStat(worker_id="w-1", timestamp_ms=1, mem_bytes=1)])
+        # Non-retryable: the batch is dropped, the flush resolves, nothing raises.
+        assert table.flush(timeout=5.0) == FlushResult.SUCCEEDED
+        assert tracked_clients[0].writes == []
+    finally:
+        client.close()
 
-        def conflict(request):
-            raise ConnectError(Code.FAILED_PRECONDITION, "type mismatch")
 
-        tracked_clients[0].register_table = conflict  # type: ignore[method-assign]
-        with pytest.raises(SchemaConflictError):
-            client.get_table("iris.other", WorkerStat)
+def test_format_exc_summary_surfaces_connect_detail():
+    """A ConnectError's server detail must survive into the log summary.
+
+    A bare ``FAILED_PRECONDITION`` is undiagnosable; the schema-conflict detail
+    it carries (which column, which mismatch) is the actionable part.
+    """
+    summary = log_client_mod._format_exc_summary(
+        ConnectError(Code.FAILED_PRECONDITION, 'column "mem_bytes": type mismatch registered=int64 requested=float64')
+    )
+    assert "FAILED_PRECONDITION" in summary
+    assert 'column "mem_bytes": type mismatch registered=int64 requested=float64' in summary
+
+
+def test_get_table_retries_transient_registration_failure(tracked_clients, monkeypatch):
+    """A retryable registration failure is retried on the flush thread.
+
+    The first register attempt raises UNAVAILABLE; the flush thread backs off
+    and retries, then the write lands once registration succeeds. ``get_table``
+    itself never blocks or raises.
+    """
+    monkeypatch.setattr(log_client_mod, "_BACKOFF_INITIAL", 1e-9)
+    monkeypatch.setattr(log_client_mod, "_BACKOFF_MAX", 1e-9)
+
+    calls = {"n": 0}
+    real_register = _FakeStatsServiceClient.register_table
+
+    def flaky_register(self, request):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise ConnectError(Code.UNAVAILABLE, "down")
+        return real_register(self, request)
+
+    monkeypatch.setattr(_FakeStatsServiceClient, "register_table", flaky_register)
+    client = LogClient.connect("http://h:1")
+    try:
+        table = client.get_table("iris.worker", WorkerStat)
+        table.write([WorkerStat(worker_id="w-1", timestamp_ms=1, mem_bytes=128)])
+        assert table.flush(timeout=5.0) == FlushResult.SUCCEEDED
+        # First attempt failed and re-resolved the endpoint; the retry registered
+        # and wrote against the freshly constructed client.
+        assert calls["n"] >= 2
+        landed = any(w.namespace == "iris.worker" for c in tracked_clients for w in c.writes)
+        assert landed
     finally:
         client.close()
 
@@ -384,11 +611,12 @@ def test_table_query_round_trips(tracked_clients):
         def handler(_sql: str) -> pa.Table:
             return pa.table({"worker_id": ["w-1", "w-2"], "mem_bytes": [10, 20]})
 
+        table.query("SELECT 1")  # lazily construct the stats client
         tracked_clients[0].query_handler = handler
         result = table.query('SELECT worker_id, mem_bytes FROM "iris.worker"')
         assert result.column_names == ["worker_id", "mem_bytes"]
         assert result.column("worker_id").to_pylist() == ["w-1", "w-2"]
-        assert tracked_clients[0].queries == ['SELECT worker_id, mem_bytes FROM "iris.worker"']
+        assert tracked_clients[0].queries[-1] == 'SELECT worker_id, mem_bytes FROM "iris.worker"'
     finally:
         client.close()
 
@@ -397,9 +625,37 @@ def test_table_query_raises_on_too_large(tracked_clients):
     client = LogClient.connect("http://h:1")
     try:
         table = client.get_table("iris.worker", WorkerStat)
+        table.query("SELECT 1")  # lazily construct the stats client
         tracked_clients[0].query_handler = lambda _sql: pa.table({"worker_id": ["w"] * 5})
         with pytest.raises(QueryResultTooLargeError):
             table.query('SELECT * FROM "iris.worker"', max_rows=2)
+    finally:
+        client.close()
+
+
+def test_client_query_round_trips_without_table(tracked_clients):
+    """LogClient.query lets the CLI run SQL without registering a Table first."""
+    client = LogClient.connect("http://h:1")
+    try:
+        # First call lazily constructs the stats client; result is the fake's
+        # empty default. Subsequent calls hit the handler.
+        empty = client.query("SELECT 1 AS n")
+        assert empty.num_rows == 0
+        tracked_clients[0].query_handler = lambda _sql: pa.table({"n": [3]})
+        result = client.query('SELECT COUNT(*) AS n FROM "iris.worker"')
+        assert result.column("n").to_pylist() == [3]
+        assert tracked_clients[0].queries[-1] == 'SELECT COUNT(*) AS n FROM "iris.worker"'
+    finally:
+        client.close()
+
+
+def test_client_query_raises_on_too_large(tracked_clients):
+    client = LogClient.connect("http://h:1")
+    try:
+        client.query("SELECT 1")  # construct the stats client
+        tracked_clients[0].query_handler = lambda _sql: pa.table({"x": list(range(5))})
+        with pytest.raises(QueryResultTooLargeError):
+            client.query('SELECT * FROM "iris.worker"', max_rows=2)
     finally:
         client.close()
 
@@ -408,6 +664,7 @@ def test_table_query_translates_invalid_argument(tracked_clients):
     client = LogClient.connect("http://h:1")
     try:
         table = client.get_table("iris.worker", WorkerStat)
+        table.query("SELECT 1")  # lazily construct the stats client
         tracked_clients[0].errors.append(ConnectError(Code.INVALID_ARGUMENT, "syntax error"))
         with pytest.raises(SchemaValidationError):
             table.query("not valid sql")
@@ -467,7 +724,7 @@ def test_table_overflow_drops_oldest(tracked_clients, caplog):
         client.close()
 
 
-def test_schema_from_dataclass_basic():
+def test_schema_from_dataclass_all_columns_nullable():
     @dataclass
     class Stat:
         worker_id: str
@@ -479,8 +736,10 @@ def test_schema_from_dataclass_basic():
     assert s.key_column == ""
     names = [c.name for c in s.columns]
     assert names == ["worker_id", "timestamp_ms", "mem_bytes", "note"]
-    note_col = next(c for c in s.columns if c.name == "note")
-    assert note_col.nullable is True
+    # Every column is nullable regardless of whether the field is Optional:
+    # finelog adopts compacted segments as all-nullable, so a non-nullable
+    # registration would conflict with its own adopted schema and wedge writes.
+    assert all(c.nullable for c in s.columns)
 
 
 def test_schema_from_dataclass_classvar_key():
@@ -504,6 +763,26 @@ def test_schema_from_dataclass_rejects_unsupported_type():
 
     with pytest.raises(SchemaValidationError):
         schema_from_dataclass(Stat)
+
+
+def test_schema_from_dataclass_infers_dict_str_str_as_map():
+    @dataclass
+    class Probe:
+        labels: dict[str, str]
+        optional_labels: dict[str, str] | None
+        timestamp_ms: int
+
+    s = schema_from_dataclass(Probe)
+    types = {c.name: c.type for c in s.columns}
+    assert types["labels"] == stats_pb2.COLUMN_TYPE_MAP
+    assert types["optional_labels"] == stats_pb2.COLUMN_TYPE_MAP
+    assert types["timestamp_ms"] == stats_pb2.COLUMN_TYPE_INT64
+
+
+def test_schema_to_arrow_maps_map_column_to_native_map():
+    s = Schema(columns=(Column(name="labels", type=stats_pb2.COLUMN_TYPE_MAP),))
+    arrow = schema_to_arrow(s)
+    assert arrow.field("labels").type == MAP_STRING_STRING
 
 
 def test_remote_log_handler_writes_via_log_client(tracked_clients):
@@ -588,3 +867,84 @@ def test_schema_from_proto_consistency():
         assert proto_col.name == src_col.name
         assert proto_col.type == src_col.type
         assert proto_col.nullable == src_col.nullable
+        assert proto_col.index.trigram == src_col.trigram_index
+        assert tuple(proto_col.index.exact_values) == src_col.exact_values
+        assert proto_col.index.value_counts == src_col.value_counts
+
+
+def test_trigram_index_round_trips_through_proto():
+    s = Schema(
+        columns=(
+            Column(name="data", type=stats_pb2.COLUMN_TYPE_STRING, nullable=False, trigram_index=True),
+            Column(name="level", type=stats_pb2.COLUMN_TYPE_INT32, nullable=False),
+            Column(name="timestamp_ms", type=stats_pb2.COLUMN_TYPE_INT64, nullable=False),
+        ),
+    )
+    back = schema_from_proto(schema_to_proto(s))
+    assert {c.name: c.trigram_index for c in back.columns} == {
+        "data": True,
+        "level": False,
+        "timestamp_ms": False,
+    }
+
+
+def test_exact_indexes_round_trip_through_proto():
+    schema = Schema(
+        columns=(
+            Column(
+                name="name",
+                type=stats_pb2.COLUMN_TYPE_STRING,
+                nullable=False,
+                exact_values=("phase", "step"),
+            ),
+            Column(
+                name="service",
+                type=stats_pb2.COLUMN_TYPE_STRING,
+                nullable=False,
+                value_counts=True,
+            ),
+        )
+    )
+    back = schema_from_proto(schema_to_proto(schema))
+    assert back.columns[0].exact_values == ("phase", "step")
+    assert back.columns[1].value_counts
+
+
+def test_covering_projections_round_trip_through_proto():
+    schema = Schema(
+        columns=(
+            Column(name="name", type=stats_pb2.COLUMN_TYPE_STRING, nullable=False),
+            Column(name="value", type=stats_pb2.COLUMN_TYPE_FLOAT64),
+        ),
+        projections=(
+            CoveringProjection(
+                name="training-status",
+                predicate_column="name",
+                predicate_values=("phase", "step"),
+                columns=("name", "value"),
+            ),
+        ),
+    )
+
+    assert schema_from_proto(schema_to_proto(schema)) == schema
+
+
+def test_grouped_extrema_round_trip_through_proto():
+    schema = Schema(
+        columns=(
+            Column(name="timestamp", type=stats_pb2.COLUMN_TYPE_INT64, nullable=False),
+            Column(name="scope", type=stats_pb2.COLUMN_TYPE_STRING, nullable=False),
+            Column(name="labels", type=stats_pb2.COLUMN_TYPE_STRING, nullable=False),
+        ),
+        key_column="timestamp",
+        grouped_extrema=(
+            GroupedExtrema(
+                filter_column="scope",
+                group_json_column="labels",
+                group_json_key="identity",
+                extrema_column="timestamp",
+            ),
+        ),
+    )
+
+    assert schema_from_proto(schema_to_proto(schema)) == schema

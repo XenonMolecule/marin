@@ -5,8 +5,10 @@
 import hashlib
 
 import pyarrow as pa
+import pyarrow.parquet as pq
 import pytest
-from zephyr import Dataset
+from zephyr.dataset import Dataset
+from zephyr.writers import infer_arrow_schema
 
 
 @pytest.fixture
@@ -273,6 +275,87 @@ def test_group_by_generator_reducer(zephyr_ctx):
     assert results[3] == {"cat": "B", "val": 5, "from_group": True}
 
 
+def test_group_by_reducer_returns_generator_expression(zephyr_ctx):
+    """Reducer that *returns* an iterator (not a generator function) is flattened.
+
+    The ``group_by`` contract documents ``reducer: ... -> R | Iterator[R]``, so a
+    reducer that returns a generator expression / ``map`` / ``filter`` is valid.
+    Regression for the ``'generator' object has no attribute 'keys'`` crash where
+    such a reducer's return value was emitted whole into the writer instead of
+    being flattened.
+    """
+    data = [
+        {"cat": "A", "val": 1},
+        {"cat": "B", "val": 2},
+        {"cat": "A", "val": 3},
+        {"cat": "B", "val": 5},
+    ]
+
+    # NOTE: returns a generator expression — deliberately NOT a generator
+    # function (no ``yield`` in the body), so ``inspect.isgeneratorfunction``
+    # would not detect it.
+    def explode_via_genexpr(key, items):
+        return ({"cat": key, "val": item["val"], "from_group": True} for item in items)
+
+    ds = Dataset.from_list(data).group_by(key=lambda x: x["cat"], reducer=explode_via_genexpr)
+
+    results = sorted(zephyr_ctx.execute(ds).results, key=lambda x: (x["cat"], x["val"]))
+    assert results == [
+        {"cat": "A", "val": 1, "from_group": True},
+        {"cat": "A", "val": 3, "from_group": True},
+        {"cat": "B", "val": 2, "from_group": True},
+        {"cat": "B", "val": 5, "from_group": True},
+    ]
+
+
+def test_group_by_reducer_returns_map_object(zephyr_ctx):
+    """A reducer returning a ``map`` object (also an iterator, not a generator function)."""
+    data = [
+        {"cat": "A", "val": 1},
+        {"cat": "A", "val": 3},
+        {"cat": "B", "val": 2},
+    ]
+
+    def explode_via_map(key, items):
+        return map(lambda item: {"cat": key, "doubled": item["val"] * 2}, items)
+
+    ds = Dataset.from_list(data).group_by(key=lambda x: x["cat"], reducer=explode_via_map)
+
+    results = sorted(zephyr_ctx.execute(ds).results, key=lambda x: (x["cat"], x["doubled"]))
+    assert results == [
+        {"cat": "A", "doubled": 2},
+        {"cat": "A", "doubled": 6},
+        {"cat": "B", "doubled": 4},
+    ]
+
+
+def test_group_by_reducer_returns_generator_then_parquet(zephyr_ctx, tmp_path):
+    """Reduce fused with a parquet Write — the exact production failure path.
+
+    Mirrors the trace where ``Reduce-Write`` sent the reducer's (un-flattened)
+    generator into ``write_parquet_file``, which crashed in ``_build_table``.
+    """
+    data = [{"cat": "A", "val": 1}, {"cat": "A", "val": 3}, {"cat": "B", "val": 2}]
+    output_pattern = str(tmp_path / "out" / "data-{shard:05d}-of-{total:05d}.parquet")
+
+    def explode_via_genexpr(key, items):
+        return ({"cat": key, "val": item["val"]} for item in items)
+
+    ds = (
+        Dataset.from_list(data)
+        .group_by(key=lambda x: x["cat"], reducer=explode_via_genexpr)
+        .write_parquet(output_pattern)
+    )
+
+    output_files = zephyr_ctx.execute(ds).results
+    rows = [row for path in output_files for row in pq.read_table(path).to_pylist()]
+    assert sorted(rows, key=lambda r: (r["cat"], r["val"])) == [
+        {"cat": "A", "val": 1},
+        {"cat": "A", "val": 3},
+        {"cat": "B", "val": 2},
+    ]
+
+
 def test_group_by_secondary_sort(zephyr_ctx):
     """Test group_by with sort_by delivers items in sorted order within each group."""
     data = [
@@ -360,6 +443,22 @@ def test_group_by_with_none_and_filter(zephyr_ctx):
     assert sorted(results) == ["a", "foo"]
 
 
+def test_group_by_shard_starting_with_none_item(zephyr_ctx):
+    """A shard whose first item is ``None`` must still be scattered.
+
+    A peek that cannot distinguish a ``None`` item from an exhausted stream
+    reports the shard as empty and drops its contents without error.
+    """
+    ds = Dataset.from_list([None, None, 1]).group_by(
+        key=lambda item: item is None,
+        reducer=lambda key, items: {"key": key, "count": sum(1 for _ in items)},
+    )
+
+    results = sorted(zephyr_ctx.execute(ds).results, key=lambda r: r["key"])
+
+    assert results == [{"key": False, "count": 1}, {"key": True, "count": 2}]
+
+
 def test_group_by_non_vortex_serializable(zephyr_ctx):
     """Shuffle with items that Vortex/Arrow cannot serialize uses pickle-in-parquet.
 
@@ -367,8 +466,6 @@ def test_group_by_non_vortex_serializable(zephyr_ctx):
     exercised. Items are serialized via cloudpickle into a binary ``__pickle__``
     column inside Parquet, avoiding the N*M pickle file blowup.
     """
-
-    from zephyr.writers import infer_arrow_schema
 
     # NOTE: confirm frozenset is not arrow-serializable type to trigger the pickle envelope path
     with pytest.raises(pa.lib.ArrowInvalid, match="Could not convert frozenset"):
@@ -390,23 +487,6 @@ def test_group_by_non_vortex_serializable(zephyr_ctx):
     assert len(results) == 2
     assert results[0] == {"key": "a", "value": frozenset([1, 2, 3, 4])}
     assert results[1] == {"key": "b", "value": frozenset([2])}
-
-
-def test_scatter_file_iterator_pickle_roundtrip(tmp_path):
-    """ScatterFileIterator round-trips non-Arrow-serializable items (e.g. frozenset)."""
-    from zephyr.shuffle import ScatterFileIterator, _write_chunk_frame
-
-    items = [frozenset([1, 2]), frozenset([3, 4, 5])]
-    frame = _write_chunk_frame(items)
-
-    path = str(tmp_path / "test.shuffle")
-    with open(path, "wb") as f:
-        f.write(frame)
-
-    it = ScatterFileIterator(path=path, chunks=((0, len(frame)),))
-    chunks = [list(chunk_iter) for chunk_iter in it.get_chunk_iterators()]
-    assert len(chunks) == 1
-    assert chunks[0] == items
 
 
 def test_group_by_schema_evolution(zephyr_ctx):

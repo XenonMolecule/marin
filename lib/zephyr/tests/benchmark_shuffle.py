@@ -31,8 +31,6 @@ Examples:
 Output: prints a single JSON line ``RESULT: {...}`` for easy log scraping.
 """
 
-from __future__ import annotations
-
 import json
 import logging
 import os
@@ -42,12 +40,12 @@ import time
 from collections.abc import Iterator
 
 import click
-from fray import ResourceConfig
+from fray.types import ResourceConfig
+from rigging.filesystem import StoragePath
 from rigging.log_setup import configure_logging
-from zephyr import Dataset
-from zephyr.dataset import ShardInfo
+from zephyr.dataset import Dataset, ShardInfo
 from zephyr.execution import ZephyrContext
-from zephyr.plan import deterministic_hash
+from zephyr.shard_keys import deterministic_hash
 
 logger = logging.getLogger(__name__)
 
@@ -253,11 +251,7 @@ def main(
 
     status_path = os.environ.get("BENCH_STATUS_PATH")
     if status_path:
-        from rigging.filesystem import url_to_fs
-
-        fs, _ = url_to_fs(status_path)
-        with fs.open(status_path, "w") as f:
-            f.write(json.dumps(summary))
+        StoragePath(status_path).write_text(json.dumps(summary))
 
 
 if __name__ == "__main__":

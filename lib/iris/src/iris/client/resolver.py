@@ -6,9 +6,11 @@
 import os
 
 from iris.actor.resolver import ResolvedEndpoint, ResolveResult
+from iris.client.client import get_iris_ctx
 from iris.cluster.types import Namespace
 from iris.rpc import controller_pb2
-from iris.rpc.controller_connect import ControllerServiceClientSync
+from iris.rpc.compression import IRIS_RPC_COMPRESSIONS
+from iris.rpc.controller_connect import EndpointServiceClientSync
 
 
 def _rewrite_address_for_host(address: str) -> str:
@@ -51,16 +53,16 @@ class ClusterResolver:
         self._address = controller_address.rstrip("/")
         self._timeout = timeout
         self._explicit_namespace = namespace
-        self._client = ControllerServiceClientSync(
+        self._client = EndpointServiceClientSync(
             address=self._address,
             timeout_ms=int(timeout * 1000),
+            accept_compression=IRIS_RPC_COMPRESSIONS,
+            send_compression=None,
         )
 
     def _namespace_prefix(self) -> str:
         if self._explicit_namespace is not None:
             return str(self._explicit_namespace)
-        from iris.client.client import get_iris_ctx
-
         ctx = get_iris_ctx()
         if ctx is None:
             raise RuntimeError("No IrisContext - provide explicit namespace or call from within a job")

@@ -1,5 +1,5 @@
 name: Claude Canary Triage
-description: Run the canary-triage skill against a failed Iris job. Centralizes the claude-code-action SHA, prompt, and tool allowlist.
+description: Run the triage-canary skill against a failed Iris job. Centralizes the claude-code-action SHA, prompt, and tool allowlist.
 
 inputs:
   oauth-token:
@@ -47,13 +47,14 @@ runs:
   using: composite
   steps:
     - name: Run claude-code-action
-      uses: anthropics/claude-code-action@fefa07e9c665b7320f08c3b525980457f22f58aa  # v1
+      id: claude
+      uses: marin-community/marin-style/actions/consult-agent@main
       with:
         claude_code_oauth_token: ${{ inputs.oauth-token }}
         prompt: |
-          Read .agents/skills/canary-triage/SKILL.md and follow it.
+          Read .agents/skills/triage-canary/SKILL.md and follow it.
         claude_args: |
-          --model opus
+          --model claude-opus-4-8
           --max-turns ${{ inputs.max-turns }}
           --allowedTools "${{ inputs.allowed-tools }}"
       env:

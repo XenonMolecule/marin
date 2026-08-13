@@ -29,6 +29,7 @@ from levanter.models.modernbert import ModernBertConfig, PrunedModernBertConfig
 from levanter.optim import AdamConfig
 from levanter.tracker.wandb import WandbConfig
 from levanter.trainer import TrainerConfig
+from marin.execution.remote import remote
 from marin.training.training import TrainClassifierOnPodConfig, run_levanter_train_classifier
 from rigging.filesystem import region_from_prefix
 
@@ -452,7 +453,9 @@ def main():
             "HF_TOKEN": os.environ["HF_TOKEN"],
         },
     )
-    run_levanter_train_classifier(pod_config)
+    # run_levanter_train_* now runs the Levanter main in-process (upstream restructure);
+    # submit it to the TPU pod as its own Fray job, mirroring marin.experiment.train._train_job.
+    remote(run_levanter_train_classifier, name="train_classifier", resources=pod_config.resources)(pod_config)
 
 
 if __name__ == "__main__":

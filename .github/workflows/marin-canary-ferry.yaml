@@ -9,6 +9,10 @@ on:
         description: 'Override training token budget'
         type: number
         required: false
+      tpu_type:
+        description: 'Override TPU slice type(s), comma-separated, primary first (e.g. v5p-8,v4-8)'
+        type: string
+        required: false
 
 permissions:
   contents: read
@@ -18,21 +22,22 @@ permissions:
 jobs:
   canary-ferry:
     runs-on: ubuntu-latest
-    timeout-minutes: 240
+    timeout-minutes: 360
     concurrency:
       group: canary-ferry
       cancel-in-progress: true
     env:
       RUN_ID: canary-tpu-${{ github.run_id }}-${{ github.run_attempt }}
       CANARY_ACCELERATOR: tpu
-      CANARY_BATCH_SIZE: "512"
-      CANARY_TARGET_TOKENS: "1000000000"
-      CANARY_MIN_STEPS: "400"
+      CANARY_TPU_TYPE: "v5p-8,v4-8"
+      CANARY_BATCH_SIZE: "128"
+      CANARY_TARGET_TOKENS: "250000000"
+      CANARY_MIN_STEPS: "200"
       CANARY_MAX_LOSS: "8.0"
-      CANARY_MAX_WALL_CLOCK: "7200"
+      CANARY_CHILD_WAIT_TIMEOUT: "12600"
       WANDB_ENTITY: marin-community
       WANDB_PROJECT: marin
-      IRIS_CONFIG: lib/iris/examples/marin.yaml
+      IRIS_CONFIG: lib/iris/config/marin.yaml
       IRIS_CONTROLLER_SERVICE_ACCOUNT: iris-controller@hai-gcp-models.iam.gserviceaccount.com
 
     steps:
@@ -53,12 +58,12 @@ jobs:
         run: uv sync --all-packages --extra=cpu --no-default-groups
 
       - name: Authenticate to Google Cloud
-        uses: google-github-actions/auth@v2
+        uses: google-github-actions/auth@v3
         with:
           credentials_json: ${{ secrets.IRIS_CI_GCP_SA_KEY }}
 
       - name: Set up Google Cloud SDK
-        uses: google-github-actions/setup-gcloud@v2
+        uses: google-github-actions/setup-gcloud@v3
         with:
           project_id: ${{ secrets.GCP_PROJECT_ID }}
 
@@ -77,13 +82,14 @@ jobs:
         id: submit
         shell: bash -l {0}
         run: |
+          set -euo pipefail
           JOB_ID=$(.venv/bin/iris --config=${{ env.IRIS_CONFIG }} \
             job run --no-wait \
             --memory=2G --disk=4G --cpu=1 --extra=cpu \
             --priority production \
-            --reserve v5p-8 \
             -e RUN_ID "$RUN_ID" \
             -e CANARY_ACCELERATOR "$CANARY_ACCELERATOR" \
+            -e CANARY_TPU_TYPE "$CANARY_TPU_TYPE" \
             -e CANARY_BATCH_SIZE "$CANARY_BATCH_SIZE" \
             -e CANARY_TARGET_TOKENS "$CANARY_TARGET_TOKENS" \
             -e WANDB_ENTITY "$WANDB_ENTITY" \
@@ -91,39 +97,60 @@ jobs:
             -e WANDB_API_KEY "$WANDB_API_KEY" \
             -e HF_TOKEN "$HF_TOKEN" \
             -- python -m experiments.ferries.canary_ferry)
+          if [ -z "$JOB_ID" ]; then
+            echo "iris job run produced no job id" >&2
+            exit 1
+          fi
           echo "job_id=$JOB_ID" >> "$GITHUB_OUTPUT"
           echo "Submitted job: $JOB_ID"
         env:
           WANDB_API_KEY: ${{ secrets.WANDB_API_KEY }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           CANARY_TARGET_TOKENS: ${{ inputs.target_tokens || env.CANARY_TARGET_TOKENS }}
+          CANARY_TPU_TYPE: ${{ inputs.tpu_type || env.CANARY_TPU_TYPE }}
 
+      # Bound the wait below the job timeout (360) so a hung ferry fails this
+      # *step* rather than tripping the job timeout. A step timeout is failure(),
+      # which keeps the runner alive and lets Claude triage run with its full
+      # budget; a job timeout is cancelled(), which force-kills triage after
+      # GitHub's short cancellation grace (exit 143). --child-wait-timeout only
+      # bounds the queue wait — once a child is RUNNING the monitor relies on
+      # this wall clock. Healthy runs finish in ~2h, so 300 leaves 60m for
+      # diagnostics + triage.
       - name: Wait for canary ferry
+        id: wait
+        timeout-minutes: 300
         shell: bash -l {0}
         run: |
-          uv run python scripts/workflows/iris_monitor.py wait \
+          uv run python scripts/ci/iris_monitor.py wait \
             --job-id "${{ steps.submit.outputs.job_id }}" \
             --iris-config "${{ env.IRIS_CONFIG }}" \
             --poll-interval 30 \
-            --timeout 14100 \
+            --child-wait-timeout "${{ env.CANARY_CHILD_WAIT_TIMEOUT }}" \
+            --resource-exhaustion-policy shutdown \
             --github-output
 
       - name: Validate canary metrics
-        continue-on-error: ${{ inputs.target_tokens != '' }}
+        if: steps.wait.outputs.resource_exhausted != 'true'
+        # target_tokens / tpu_type overrides change the step's versioned config, so the
+        # output path this step recomputes (with no CANARY_* env) no longer matches the
+        # submitted run — tolerate the resulting read miss on a manual dispatch.
+        continue-on-error: ${{ inputs.target_tokens != '' || inputs.tpu_type != '' }}
         shell: bash -l {0}
         # MARIN_PREFIX is required so mirror:// knows which gs://marin-* bucket
         # counts as "local" — without it the runner falls back to /tmp/marin,
         # _mirror_remote_prefixes() returns [] (to avoid anonymous-caller 401s
         # from gcsfs off-GCP), and the read raises FileNotFoundError. The
         # google-github-actions/auth step above provides the credentials
-        # gcsfs needs to actually scan the remote buckets. Canary lands on v5p
-        # in us-central1 or us-east5; picking us-central1 keeps the hit rate
-        # high and lets mirror:// resolve either region.
+        # gcsfs needs to actually scan the remote buckets. The canary lands on
+        # v5p (us-central1/us-east5) or its v4 fallback (us-central2); mirror://
+        # scans all marin-* regions, and us-central1 keeps the hit rate high.
         env:
           MARIN_PREFIX: gs://marin-us-central1
-        run: .venv/bin/python scripts/canary/validate_canary_metrics.py
+        run: .venv/bin/python scripts/ci/validate_canary_metrics.py
 
       - name: Summarize TPU canary profile
+        if: steps.wait.outputs.resource_exhausted != 'true'
         continue-on-error: true
         shell: bash -l {0}
         run: |
@@ -143,7 +170,7 @@ jobs:
           DIAG_DIR: ${{ github.workspace }}/canary-diagnostics
         run: |
           mkdir -p "$DIAG_DIR"
-          uv run python scripts/workflows/iris_monitor.py collect \
+          uv run python scripts/ci/iris_monitor.py collect \
             --job-id "$JOB_ID" \
             --iris-config "${{ env.IRIS_CONFIG }}" \
             --provider gcp \
@@ -155,7 +182,7 @@ jobs:
 
       - name: Upload diagnostics
         if: failure() || cancelled()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: canary-diagnostics
           path: canary-diagnostics/
@@ -185,7 +212,7 @@ jobs:
       # https://github.com/marin-community/marin/actions/runs/24498461666.
       - name: Upload Slack message
         if: failure() || cancelled()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: slack-message
           path: slack_message.md
@@ -203,7 +230,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v5
       - name: Notify Slack
-        uses: ./.github/actions/notify-slack
+        uses: marin-community/marin-style/actions/notify-slack@main
         with:
           webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}
           fallback-text: ":red_circle: *TPU Canary failed*\nRun: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"

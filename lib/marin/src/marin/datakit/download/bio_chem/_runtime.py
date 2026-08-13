@@ -8,8 +8,6 @@ parquet file with ``{id, text, source}`` rows where ``text`` is one packed
 document containing one or more original records preserved verbatim.
 """
 
-from __future__ import annotations
-
 import enum
 import hashlib
 import logging
@@ -19,9 +17,9 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from rigging.filesystem import open_url
-from zephyr import Dataset, ZephyrContext
+from zephyr.dataset import Dataset
+from zephyr.execution import ZephyrContext
 
-from marin.execution.executor import THIS_OUTPUT_PATH
 from marin.execution.step_spec import StepSpec
 from marin.transform.bio_chem.splitters import (
     SamplingCap,
@@ -107,7 +105,7 @@ class NotationSliceSpec:
 class BioChemSliceConfig:
     """Top-level runtime config for one materialization step."""
 
-    output_path: str = THIS_OUTPUT_PATH
+    output_path: str = ""
     slices: tuple[NotationSliceSpec, ...] = ()
 
 

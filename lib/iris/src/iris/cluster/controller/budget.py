@@ -3,9 +3,6 @@
 
 """Budget tracking: resource value function and per-user spend."""
 
-from __future__ import annotations
-
-import json
 import logging
 from collections import defaultdict
 from collections.abc import Iterable
@@ -14,55 +11,22 @@ from typing import Generic, TypeVar
 
 from rigging.timing import Timestamp
 
-from iris.cluster.controller.db import ACTIVE_TASK_STATES, ControllerDB, QuerySnapshot
-from iris.cluster.types import JobName
-from iris.rpc import config_pb2, job_pb2
+from iris.cluster.config import UserBudgetTier
+from iris.cluster.controller import reads, writes
+from iris.cluster.controller.codec import device_counts_from_json
+from iris.cluster.controller.db import ControllerDB, Tx
+from iris.cluster.types import UserBudgetDefaults
+from iris.rpc import job_pb2
 
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
 
 
-def _accel_from_device_json(device_json: str | None) -> int:
-    """Count GPU + TPU accelerators from a device JSON column."""
-    if not device_json:
-        return 0
-    data = json.loads(device_json)
-    if "gpu" in data:
-        return data["gpu"].get("count", 0)
-    if "tpu" in data:
-        return data["tpu"].get("count", 0)
-    return 0
-
-
 @dataclass(frozen=True)
 class UserTask(Generic[T]):
     user_id: str
     task: T
-
-
-# Task states that count as "active" for budget spend (re-exported from db for local use)
-_ACTIVE_TASK_STATES = tuple(ACTIVE_TASK_STATES)
-
-
-@dataclass
-class UserBudgetDefaults:
-    """Budget settings for users without an explicit user_budgets row.
-
-    An absent row means "defaults apply" — we no longer stamp a row into the
-    table at first-submit time, so the scheduler and launch-job guard both
-    fall back to these values when the lookup misses.
-    """
-
-    budget_limit: int = 1000
-    """Max budget value applied to users without an override row.
-
-    A value of 0 means unlimited; any positive value caps accumulated spend
-    before :func:`compute_effective_band` downgrades INTERACTIVE work to BATCH.
-    """
-
-    max_band: int = job_pb2.PRIORITY_BAND_INTERACTIVE
-    """Default max priority band (proto int) for users without an override row."""
 
 
 def resource_value(cpu_millicores: int, memory_bytes: int, accelerator_count: int) -> int:
@@ -76,31 +40,24 @@ def resource_value(cpu_millicores: int, memory_bytes: int, accelerator_count: in
     return 1000 * accelerator_count + ram_gb + 5 * cpu_cores
 
 
-def compute_user_spend(snapshot: QuerySnapshot) -> dict[str, int]:
+def compute_user_spend(tx: Tx) -> dict[str, int]:
     """Compute per-user budget spend from active tasks.
 
-    Joins tasks (in ASSIGNED/BUILDING/RUNNING states) with job_config to get
-    resource columns.  Groups by job, then sums resource_value * task_count per user.
+    Sums ``resource_value * task_count`` per user over the active, non-BATCH
+    task rows returned by :func:`reads.user_spend_rows`.
 
     Returns ``{user_id: total_resource_value}`` for users with active tasks.
     """
-    placeholders = ",".join("?" for _ in _ACTIVE_TASK_STATES)
-    rows = snapshot.raw(
-        f"SELECT jc.job_id, jc.res_cpu_millicores, jc.res_memory_bytes, jc.res_device_json, "
-        f"COUNT(*) as task_count "
-        f"FROM tasks t JOIN job_config jc ON t.job_id = jc.job_id "
-        f"WHERE t.state IN ({placeholders}) "
-        f"GROUP BY jc.job_id",
-        tuple(_ACTIVE_TASK_STATES),
-        decoders={"job_id": JobName.from_wire},
-    )
+    rows = reads.user_spend_rows(tx)
 
     spend: dict[str, int] = defaultdict(int)
     for row in rows:
+        # job_id is decoded by JobNameType to JobName
         user_id = row.job_id.user
         cpu = row.res_cpu_millicores
         mem = row.res_memory_bytes
-        accel = _accel_from_device_json(row.res_device_json)
+        counts = device_counts_from_json(row.res_device_json)
+        accel = counts.gpu + counts.tpu
         value = resource_value(cpu, mem, accel)
         spend[user_id] += value * int(row.task_count)
     return dict(spend)
@@ -117,6 +74,9 @@ def compute_effective_band(
 
     PRODUCTION tasks are never downgraded. Users without a ``user_budgets``
     row fall back to ``defaults.budget_limit``; a limit of 0 means unlimited.
+
+    ``task_band`` is a real band: ``LaunchJob`` resolves INHERIT once at ingestion (see
+    :func:`iris.cluster.controller.ops.job.resolve_priority_band`).
     """
     if task_band == job_pb2.PRIORITY_BAND_PRODUCTION:
         return task_band
@@ -174,7 +134,7 @@ _VALID_TIER_BANDS = frozenset(
 
 def reconcile_user_budget_tiers(
     db: ControllerDB,
-    tiers: Iterable[config_pb2.UserBudgetTier],
+    tiers: Iterable[UserBudgetTier],
     now: Timestamp,
 ) -> int:
     """Upsert per-user budgets from cluster config into the user_budgets table.
@@ -193,23 +153,20 @@ def reconcile_user_budget_tiers(
     across tiers are counted per-apply since the later tier overwrites.
     """
     count = 0
-    for tier in tiers:
-        if tier.max_band not in _VALID_TIER_BANDS:
-            raise ValueError(
-                f"UserBudgetTier.max_band must be one of PRODUCTION/INTERACTIVE/BATCH; "
-                f"got {tier.max_band} for users {list(tier.user_ids)}"
-            )
-        for user_id in tier.user_ids:
-            if not user_id:
-                raise ValueError("UserBudgetTier.user_ids contains an empty entry")
-            db.ensure_user(user_id, now)
-            db.set_user_budget(
-                user_id=user_id,
-                budget_limit=tier.budget_limit,
-                max_band=tier.max_band,
-                now=now,
-            )
-            count += 1
+    # Startup-only: apply every tier under one transaction so a bad tier rolls the
+    # whole reconcile back rather than leaving a half-applied budget state.
+    with db.transaction() as _tx:
+        for tier in tiers:
+            if tier.max_band not in _VALID_TIER_BANDS:
+                raise ValueError(
+                    f"UserBudgetTier.max_band must be one of PRODUCTION/INTERACTIVE/BATCH; "
+                    f"got {tier.max_band} for users {list(tier.user_ids)}"
+                )
+            for user_id in tier.user_ids:
+                if not user_id:
+                    raise ValueError("UserBudgetTier.user_ids contains an empty entry")
+                writes.set_user_budget(_tx, user_id, tier.budget_limit, tier.max_band, now)
+                count += 1
     if count:
         logger.info("Reconciled %d user budget assignment(s) from cluster config", count)
     return count

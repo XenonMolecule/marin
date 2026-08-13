@@ -29,7 +29,6 @@ def test_dedupe_consolidate_integration(fox_corpus):
     result = dedup_exact_paragraph(
         input_paths=fox_corpus["test_dir"],
         output_path=dedupe_output_dir,
-        max_parallelism=4,
     )
     assert result["success"]
     assert result["mode"] == DedupMode.EXACT_PARAGRAPH
@@ -42,6 +41,7 @@ def test_dedupe_consolidate_integration(fox_corpus):
     consolidate(
         input_path=fox_corpus["test_dir"],
         output_path=consolidated_dir,
+        filetype="parquet",
         filters=[
             FilterConfig(
                 type=FilterType.REMOVE_SPANS,

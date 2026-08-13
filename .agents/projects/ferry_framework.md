@@ -36,8 +36,8 @@ Out of scope for this phase:
 
 ## Deliverables
 
-1. Skill doc in `.agents/skills/ferries/`:
-- `.agents/skills/ferries/SKILL.md`
+1. Skill doc in `.agents/skills/run-ferries/`:
+- `.agents/skills/run-ferries/SKILL.md`
   - end-to-end human+agent ferry procedure
   - required inputs, safety gates, commands, and escalation paths
 
@@ -134,7 +134,7 @@ Maintain and regularly validate known-good envelopes for each ferry lane.
 
 | Lane | Script | Primary Intent | Baseline Envelope | First Fallback |
 |---|---|---|---|---|
-| canary (TPU) | `experiments/ferries/canary_ferry.py` | Grug MoE health signal via Iris | Grug MoE trial, bs=512, ~476 steps on v5p-8 | reduce per-step pressure (batch/seq) before broader infra changes |
+| canary (TPU) | `experiments/ferries/canary_ferry.py` | Grug MoE health signal via Iris | Grug MoE trial, bs=128, seq 8192, ~238 steps on v5p-8 | reduce per-step pressure (batch/seq) before broader infra changes |
 | canary (GPU) | `experiments/ferries/canary_ferry.py` (`CANARY_ACCELERATOR=gpu`) | MoE compilation smoke test via Iris | Grug MoE trial, bs=32, 50 steps on 8×H100 (CW) | reduce batch size first |
 | daily | `experiments/ferries/daily.py` | higher-scale integration test | Nemo mix, seq 4096, batch 512, ~1e19 FLOPs on `us-central1` | reduce batch size first, then revisit kernel/block-size tuning |
 
@@ -311,7 +311,7 @@ Phase-2:
 ## Implementation Phases
 
 1. **Recipe + Template**
-- add `.agents/skills/ferries/SKILL.md`
+- add `.agents/skills/run-ferries/SKILL.md`
 - establish `experiments/ferries/daily.py`
 
 2. **Proposal Workflow**
@@ -342,7 +342,7 @@ Phase-2:
 ## Resolved Decisions
 
 1. Ferry run closure uses a log-only PR (`docs/experiments/daily-ferry-log.md`); proposal/debug details live in issues.
-2. Default cluster for now is `marin` (Iris `--cluster` key, resolves to `lib/iris/examples/marin.yaml`).
+2. Default cluster for now is `marin` (Iris `--cluster` key, resolves to `lib/iris/config/marin.yaml`).
 3. "Experiment-relevant issues" filter starts with label `experiment` only.
 4. "Max 2 knobs changed" remains policy guidance, not script-enforced.
 5. Discord automation is deferred to Phase 2.

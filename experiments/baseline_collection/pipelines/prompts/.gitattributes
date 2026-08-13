@@ -1,0 +1,3 @@
+
+# Frozen-cert prompt artifacts: byte-exact by SHA256SUMS; formatters must never touch them
+experiments/baseline_collection/pipelines/prompts/** binary

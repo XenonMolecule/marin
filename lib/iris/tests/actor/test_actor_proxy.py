@@ -1,21 +1,24 @@
 # Copyright The Marin Authors
 # SPDX-License-Identifier: Apache-2.0
 
-"""Integration tests for the actor proxy.
+"""Integration tests for actor RPC through the native endpoint proxy.
 
-Tests the full round-trip: external client → proxy → actor server.
+Tests the full round-trip: ActorClient → ProxyResolver → native listener →
+actor server → response. There is no special actor-routing header; the encoded
+actor name lives in the URL path.
 """
 
-import httpx
-import uvicorn
-from iris.actor import ActorClient, ActorServer
-from iris.actor.resolver import ACTOR_ENDPOINT_HEADER, ProxyResolver
-from iris.cluster.controller.actor_proxy import PROXY_ROUTE
-from iris.cluster.dashboard_common import on_shutdown
+import json
+from dataclasses import asdict
+
+import pytest
+from connectrpc.errors import ConnectError
+from iris.actor.client import ActorClient
+from iris.actor.resolver import ProxyResolver
+from iris.actor.server import ActorServer
+from iris.cluster.controller.endpoint_service import ProxyEndpointMapping, ProxyRegistrySnapshot
+from iris.cluster.controller.native_proxy import NativeProxy
 from iris.managed_thread import ThreadContainer
-from rigging.timing import Duration, ExponentialBackoff
-from starlette.applications import Starlette
-from starlette.routing import Route
 
 
 class StatusActor:
@@ -32,99 +35,56 @@ class StatusActor:
         return f"echo: {message}"
 
 
-class StandaloneActorProxy:
-    """A standalone proxy for testing without a full controller.
-
-    Mirrors ActorProxy's forwarding logic but uses a simple dict-based
-    endpoint registry instead of ControllerDB.
-    """
-
-    def __init__(self):
-        self._endpoints: dict[str, str] = {}
-        self._client = httpx.AsyncClient(timeout=60.0)
-
-    def register(self, name: str, address: str) -> None:
-        self._endpoints[name] = address
-
-    async def close(self) -> None:
-        await self._client.aclose()
-
-    async def handle(self, request):
-        from starlette.responses import JSONResponse, Response
-
-        method = request.path_params["method"]
-        endpoint_name = request.headers.get(ACTOR_ENDPOINT_HEADER)
-        if not endpoint_name:
-            return JSONResponse(
-                {"error": f"Missing {ACTOR_ENDPOINT_HEADER} header"},
-                status_code=400,
-            )
-
-        address = self._endpoints.get(endpoint_name)
-        if address is None:
-            return JSONResponse(
-                {"error": f"No endpoint found for '{endpoint_name}'"},
-                status_code=404,
-            )
-
-        base = address if "://" in address else f"http://{address}"
-        upstream_url = f"{base}/iris.actor.ActorService/{method}"
-        body = await request.body()
-        # Forward all headers except hop-by-hop and routing headers.
-        skip = frozenset({"host", "transfer-encoding", "connection", "keep-alive", ACTOR_ENDPOINT_HEADER})
-        forward_headers = {k: v for k, v in request.headers.items() if k.lower() not in skip}
-
-        upstream_resp = await self._client.post(
-            upstream_url,
-            content=body,
-            headers=forward_headers,
-        )
-
-        return Response(
-            content=upstream_resp.content,
-            status_code=upstream_resp.status_code,
-            media_type=upstream_resp.headers.get("content-type"),
-        )
-
-
-def _start_proxy_server(proxy: StandaloneActorProxy, threads: ThreadContainer) -> int:
-    """Start a standalone proxy Starlette app and return the port."""
-    import socket
-
-    with socket.socket() as s:
-        s.bind(("", 0))
-        port = s.getsockname()[1]
-
-    app = Starlette(
-        routes=[Route(PROXY_ROUTE, proxy.handle, methods=["POST"])],
-        lifespan=on_shutdown(proxy.close),
+def _start_proxy(
+    auth_config_json: str,
+    *,
+    endpoints: dict[str, str] | None = None,
+) -> tuple[str, NativeProxy]:
+    endpoints = endpoints if endpoints is not None else {}
+    proxy = NativeProxy(
+        "127.0.0.1",
+        0,
+        "http://127.0.0.1:9",
+        "actor-native-proxy-test",
+        auth_config_json,
     )
-    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error", log_config=None)
-    server = uvicorn.Server(config)
-    threads.spawn_server(server, name=f"proxy-server-{port}")
-    ExponentialBackoff(initial=0.05, maximum=0.5).wait_until(
-        lambda: server.started,
-        timeout=Duration.from_seconds(5.0),
+    snapshot = ProxyRegistrySnapshot(
+        generation=1,
+        endpoints=tuple(
+            ProxyEndpointMapping(
+                endpoint_id=f"actor-{index}",
+                name=name,
+                address=address,
+                link_access=False,
+                peer_id=None,
+                task_id=None,
+                timeout_seconds=None,
+                lease_deadline_epoch_ms=None,
+            )
+            for index, (name, address) in enumerate(endpoints.items())
+        ),
     )
-    return port
+    proxy.replace_registry(json.dumps(asdict(snapshot)))
+    return proxy.address, proxy
 
 
-def test_proxy_round_trip():
-    """Full round-trip: client → proxy → actor server → response."""
+def test_proxy_round_trip(permissive_native_proxy_auth_json: str):
+    """Full round-trip: ActorClient → ProxyResolver → native proxy → actor server."""
     threads = ThreadContainer()
 
-    full_name = "test-ns/status"
+    actor_name = "test-ns/status"
     actor_server = ActorServer(host="127.0.0.1", threads=threads)
-    actor_server.register(full_name, StatusActor())
+    actor_server.register(actor_name, StatusActor())
     actor_port = actor_server.serve_background()
 
-    proxy = StandaloneActorProxy()
-    proxy.register(full_name, f"127.0.0.1:{actor_port}")
-    proxy_port = _start_proxy_server(proxy, threads)
-
     try:
-        resolver = ProxyResolver(f"http://127.0.0.1:{proxy_port}")
-        client = ActorClient(resolver, full_name)
+        proxy_url, proxy = _start_proxy(
+            permissive_native_proxy_auth_json,
+            endpoints={actor_name: f"127.0.0.1:{actor_port}"},
+        )
+
+        resolver = ProxyResolver(proxy_url)
+        client = ActorClient(resolver, actor_name, max_call_attempts=1)
 
         result = client.get_status()
         assert result["documents_processed"] == 1
@@ -133,76 +93,59 @@ def test_proxy_round_trip():
         result = client.echo("hello")
         assert result == "echo: hello"
 
-        # Second call increments the counter
+        # Second call increments the counter.
         result = client.get_status()
         assert result["documents_processed"] == 2
     finally:
+        proxy.stop()
         threads.stop()
 
 
-def test_proxy_namespaced_actor():
-    """Proxy forwards to an actor registered under a full namespaced path.
+def test_proxy_namespaced_actor(permissive_native_proxy_auth_json: str):
+    """ProxyResolver encodes slash-prefixed namespaced names with dot substitution.
 
-    This mirrors real iris backend behavior where actors are registered as
-    /user/job/coordinator/actor-0 and the address includes the http:// scheme.
+    Mirrors real Iris backend behavior where actors are registered under paths
+    like /user/job/coordinator/actor-0 and the address includes the http:// scheme.
     """
     threads = ThreadContainer()
 
-    full_name = "/user/my-job/coordinator/status-0"
+    actor_name = "/user/my-job/coordinator/status-0"
     actor_server = ActorServer(host="127.0.0.1", threads=threads)
-    actor_server.register(full_name, StatusActor())
+    actor_server.register(actor_name, StatusActor())
     actor_port = actor_server.serve_background()
 
-    proxy = StandaloneActorProxy()
-    proxy.register(full_name, f"http://127.0.0.1:{actor_port}")
-    proxy_port = _start_proxy_server(proxy, threads)
-
     try:
-        resolver = ProxyResolver(f"http://127.0.0.1:{proxy_port}")
-        client = ActorClient(resolver, full_name)
+        proxy_url, proxy = _start_proxy(
+            permissive_native_proxy_auth_json,
+            endpoints={actor_name: f"http://127.0.0.1:{actor_port}"},
+        )
+
+        resolver = ProxyResolver(proxy_url)
+        client = ActorClient(resolver, actor_name, max_call_attempts=1)
 
         result = client.get_status()
         assert result["documents_processed"] == 1
     finally:
+        proxy.stop()
         threads.stop()
 
 
-def test_proxy_missing_endpoint_header():
-    """Proxy returns 400 when the endpoint header is missing."""
+def test_proxy_unknown_endpoint(permissive_native_proxy_auth_json: str):
+    """The native proxy returns an error when the actor endpoint is not registered.
+
+    The proxy returns 404; ConnectClientSync translates this to a ConnectError
+    that propagates to the caller.
+    """
     threads = ThreadContainer()
-    proxy = StandaloneActorProxy()
-    proxy_port = _start_proxy_server(proxy, threads)
 
     try:
-        # Call the proxy directly without the header
-        with httpx.Client() as client:
-            resp = client.post(
-                f"http://127.0.0.1:{proxy_port}/iris.actor.ActorService/Call",
-                content=b"",
-                headers={"content-type": "application/proto"},
-            )
-            assert resp.status_code == 400
-            assert ACTOR_ENDPOINT_HEADER in resp.json()["error"]
+        proxy_url, proxy = _start_proxy(permissive_native_proxy_auth_json, endpoints={})
+
+        resolver = ProxyResolver(proxy_url)
+        client = ActorClient(resolver, "no-such-ns/no-such-actor", max_call_attempts=1)
+
+        with pytest.raises(ConnectError):
+            client.get_status()
     finally:
-        threads.stop()
-
-
-def test_proxy_unknown_endpoint():
-    """Proxy returns 404 when the endpoint name is not registered."""
-    threads = ThreadContainer()
-    proxy = StandaloneActorProxy()
-    proxy_port = _start_proxy_server(proxy, threads)
-
-    try:
-        with httpx.Client() as client:
-            resp = client.post(
-                f"http://127.0.0.1:{proxy_port}/iris.actor.ActorService/Call",
-                content=b"",
-                headers={
-                    "content-type": "application/proto",
-                    ACTOR_ENDPOINT_HEADER: "no-such-ns/no-such-actor",
-                },
-            )
-            assert resp.status_code == 404
-    finally:
+        proxy.stop()
         threads.stop()

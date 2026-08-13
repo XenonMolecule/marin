@@ -8,6 +8,7 @@ import typing
 from typing import Any, List, Optional
 
 import draccus
+import jax
 
 
 logger = logging.getLogger(__name__)
@@ -28,6 +29,25 @@ class Tracker(abc.ABC):
     """
 
     name: str
+
+    def _prepare_log(self, metrics: typing.Mapping[str, Any]) -> Any:
+        """Convert a ``log`` payload to host data, on the caller thread.
+
+        Both ``log`` and :class:`~levanter.tracker.background.BackgroundTracker`
+        call this. The default pulls ``jax.Array`` leaves to host with
+        ``jax.device_get``; subclasses override to also fold in backend-specific
+        conversion. Must be idempotent — the background worker re-invokes ``log``
+        on the result.
+        """
+        return jax.device_get(metrics)
+
+    def _prepare_summary(self, metrics: typing.Mapping[str, Any]) -> Any:
+        """Producer-thread counterpart to :meth:`_prepare_log` for ``log_summary``."""
+        return jax.device_get(metrics)
+
+    def _prepare_hyperparameters(self, hparams: typing.Mapping[str, Any]) -> Any:
+        """Producer-thread counterpart to :meth:`_prepare_log` for ``log_hyperparameters``."""
+        return jax.device_get(hparams)
 
     @abc.abstractmethod
     def log_hyperparameters(self, hparams: dict[str, Any]):
@@ -53,6 +73,13 @@ class Tracker(abc.ABC):
     def log_artifact(self, artifact_path, *, name: Optional[str] = None, type: Optional[str] = None):
         pass
 
+    def log_html(self, key: str, html_path, *, step: Optional[int], commit: Optional[bool] = None):
+        pass
+
+    def capture_stall_diagnostics(self) -> None:
+        """Capture tracker-specific diagnostics before watchdog termination."""
+        pass
+
     @abc.abstractmethod
     def finish(self):
         """
@@ -62,7 +89,10 @@ class Tracker(abc.ABC):
         pass
 
     def __enter__(self):
-        import levanter.tracker.tracker_fns as tracker_fns
+        # Deferred: tracker_fns eagerly imports the wandb/trackio backends, which import
+        # `background`, which imports this module -> a genuine cycle. __enter__ only needs
+        # the global-tracker accessor at call time, so import it lazily here.
+        import levanter.tracker.tracker_fns as tracker_fns  # noqa: PLC0415
 
         if hasattr(self, "_tracker_cm"):
             raise RuntimeError("This tracker is already set as the global tracker")
@@ -110,6 +140,12 @@ class CompositeTracker(Tracker):
 
     def log_artifact(self, artifact_path, *, name: Optional[str] = None, type: Optional[str] = None):
         self._for_each("log_artifact", artifact_path, name=name, type=type)
+
+    def log_html(self, key: str, html_path, *, step: Optional[int], commit: Optional[bool] = None):
+        self._for_each("log_html", key, html_path, step=step, commit=commit)
+
+    def capture_stall_diagnostics(self) -> None:
+        self._for_each("capture_stall_diagnostics")
 
     def finish(self):
         # finish() exceptions are logged and swallowed too; a tracker failing to

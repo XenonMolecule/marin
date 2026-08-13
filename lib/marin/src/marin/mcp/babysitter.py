@@ -5,26 +5,27 @@
 
 import argparse
 import base64
+import os
 import re
 from collections.abc import Iterable
-from dataclasses import asdict, dataclass
-from pathlib import Path
+from dataclasses import dataclass
 from typing import Any
 
 from finelog.rpc import logging_pb2
 from finelog.rpc.logging_connect import LogServiceClientSync
 from google.protobuf import json_format
-from iris.cli.bug_report import gather_bug_report
 from iris.cli.job import build_job_summary
-from iris.cli.token_store import cluster_name_from_url, load_any_token, load_token
-from iris.cluster.log_store_helpers import build_log_source
+from iris.cluster.log_keys import build_log_source
 from iris.cluster.runtime.profile import SYSTEM_PROCESS_TARGET
 from iris.cluster.types import JobName
 from iris.rpc import controller_pb2, job_pb2
-from iris.rpc.auth import AuthTokenInjector, StaticTokenProvider, TokenProvider
+from iris.rpc.compression import IRIS_RPC_COMPRESSIONS
 from iris.rpc.controller_connect import ControllerServiceClientSync
-from iris.rpc.proto_utils import job_state_friendly, task_state_friendly
+from iris.rpc.proto_display import job_state_friendly, task_state_friendly
 from mcp.server.fastmcp import FastMCP
+from rigging.auth import BearerTokenInjector, StaticTokenProvider, TokenProvider
+from rigging.credential_store import cluster_name_from_url
+from rigging.credentials import MARIN_CLUSTER_TOKEN_ENV
 from rigging.timing import Timestamp
 
 DEFAULT_LOG_LINES = 200
@@ -162,7 +163,12 @@ def task_status_to_json(task: job_pb2.TaskStatus) -> dict[str, Any]:
 
 
 def job_status_to_json(job: job_pb2.JobStatus, tasks: Iterable[job_pb2.TaskStatus] = ()) -> dict[str, Any]:
-    """Serialize Iris job status into stable JSON."""
+    """Serialize Iris job status into stable JSON.
+
+    Callers that need per-job ``resources`` / ``ports`` / ``tasks`` /
+    ``status_message`` should hit ``GetJobStatus`` and use
+    :func:`_job_summary_payload`.
+    """
     task_payloads = [task_status_to_json(task) for task in tasks]
     return {
         "job_id": job.job_id,
@@ -174,7 +180,6 @@ def job_status_to_json(job: job_pb2.JobStatus, tasks: Iterable[job_pb2.TaskStatu
         "started_at_ms": _timestamp_ms(job.started_at),
         "finished_at_ms": _timestamp_ms(job.finished_at),
         "duration_ms": _duration_ms(job.started_at, job.finished_at),
-        "status_message": job.status_message,
         "pending_reason": job.pending_reason,
         "failure_count": int(job.failure_count),
         "preemption_count": int(job.preemption_count),
@@ -182,8 +187,6 @@ def job_status_to_json(job: job_pb2.JobStatus, tasks: Iterable[job_pb2.TaskStatu
         "completed_count": int(job.completed_count),
         "task_state_counts": dict(job.task_state_counts),
         "has_children": bool(job.has_children),
-        "resource_requests": _resource_spec_to_json(job.resources),
-        "ports": dict(job.ports),
         "tasks": task_payloads,
     }
 
@@ -399,12 +402,14 @@ class IrisBabysitter:
 
     def __init__(self, config: IrisConnectionConfig):
         self.config = config
-        self.token_provider = _token_provider(config.cluster)
-        interceptors = [AuthTokenInjector(self.token_provider)] if self.token_provider else []
+        self.token_provider = _token_provider()
+        interceptors = [BearerTokenInjector(self.token_provider, "authorization")] if self.token_provider else []
         self.controller = ControllerServiceClientSync(
             config.controller_url,
             timeout_ms=config.timeout_ms,
             interceptors=interceptors,
+            accept_compression=IRIS_RPC_COMPRESSIONS,
+            send_compression=IRIS_RPC_COMPRESSIONS[0],
         )
         self.logs = LogServiceClientSync(
             config.controller_url,
@@ -431,11 +436,11 @@ class IrisBabysitter:
         jobs: list[dict[str, Any]] = []
         offset = 0
         capped_limit = max(1, limit)
-        prefix_job = JobName.from_wire(prefix) if prefix else None
         while len(jobs) < capped_limit:
             query = controller_pb2.Controller.JobQuery(
                 state_filter=state_filter,
                 name_filter=name_filter,
+                job_id_prefix=prefix,
                 sort_field=controller_pb2.Controller.JOB_SORT_FIELD_DATE,
                 sort_direction=controller_pb2.Controller.SORT_DIRECTION_DESC,
                 offset=offset,
@@ -443,8 +448,6 @@ class IrisBabysitter:
             )
             response = self.controller.list_jobs(controller_pb2.Controller.ListJobsRequest(query=query))
             for job in response.jobs:
-                if prefix_job is not None and not _job_matches_prefix(job.job_id, prefix_job):
-                    continue
                 jobs.append(job_status_to_json(job))
                 if len(jobs) >= capped_limit:
                     break
@@ -493,10 +496,11 @@ class IrisBabysitter:
         attempt_id: int = -1,
         tail: bool = True,
     ) -> dict[str, Any]:
-        source = _log_source(target, attempt_id)
+        source, match_scope = _log_source(target, attempt_id)
         response = self.logs.fetch_logs(
             logging_pb2.FetchLogsRequest(
                 source=source,
+                match_scope=match_scope,
                 since_ms=since_ms,
                 cursor=cursor,
                 max_lines=max_lines,
@@ -560,7 +564,7 @@ class IrisBabysitter:
                     "cpu_millicores": int(info.cpu_millicores),
                     "thread_count": int(info.thread_count),
                     "open_fd_count": int(info.open_fd_count),
-                    "git_hash": info.git_hash,
+                    "git_hash": info.provenance.tree_hash,
                 },
                 "logs": [log_entry_to_json(entry) for entry in response.log_entries],
             }
@@ -591,15 +595,6 @@ class IrisBabysitter:
                 "profile_type": profile_type,
             }
         return self.envelope(data)
-
-    def bug_report(self, *, job_id: str, tail: int = 50) -> dict[str, Any]:
-        report = gather_bug_report(
-            self.config.controller_url,
-            JobName.from_wire(job_id),
-            tail=tail,
-            token_provider=self.token_provider,
-        )
-        return self.envelope(asdict(report))
 
     def zephyr_stage_progress(self, *, coord_job_id: str, max_lines: int = DEFAULT_ZEPHYR_LOG_LINES) -> dict[str, Any]:
         log_payload = self.tail_logs(target=coord_job_id, max_lines=max_lines, tail=True)["data"]
@@ -648,16 +643,16 @@ class IrisBabysitter:
     def _jobs_with_prefix(self, prefix: str) -> list[job_pb2.JobStatus]:
         jobs: list[job_pb2.JobStatus] = []
         offset = 0
-        root = JobName.from_wire(prefix)
         while True:
             query = controller_pb2.Controller.JobQuery(
+                job_id_prefix=prefix,
                 sort_field=controller_pb2.Controller.JOB_SORT_FIELD_DATE,
                 sort_direction=controller_pb2.Controller.SORT_DIRECTION_DESC,
                 offset=offset,
                 limit=MAX_LIST_JOBS_PAGE_SIZE,
             )
             response = self.controller.list_jobs(controller_pb2.Controller.ListJobsRequest(query=query))
-            jobs.extend(job for job in response.jobs if _job_matches_prefix(job.job_id, root))
+            jobs.extend(response.jobs)
             if not response.has_more:
                 return jobs
             offset += len(response.jobs)
@@ -681,17 +676,16 @@ def _job_summary_payload(job: job_pb2.JobStatus, tasks: list[job_pb2.TaskStatus]
     return summary
 
 
-def _job_matches_prefix(job_id: str, prefix: JobName) -> bool:
-    return prefix.is_ancestor_of(JobName.from_wire(job_id), include_self=True)
+def _token_provider() -> TokenProvider | None:
+    """Explicit Authorization bearer for CI / headless runs, else None.
 
-
-def _token_provider(cluster: str, *, store_path: Path | None = None) -> TokenProvider | None:
-    credential = load_token(cluster, store_path=store_path)
-    if credential is None:
-        credential = load_any_token(store_path=store_path)
-    if credential is None:
-        return None
-    return StaticTokenProvider(credential.token)
+    The controller mints no user token, so nothing is cached to attach; a caller
+    may inject one (e.g. a worker JWT) via ``$MARIN_CLUSTER_TOKEN``. Otherwise the
+    babysitter relies on transport trust (SSH tunnel / loopback), like any other
+    tokenless client.
+    """
+    override = os.environ.get(MARIN_CLUSTER_TOKEN_ENV)
+    return StaticTokenProvider(override) if override else None
 
 
 def _normalize_state_filter(state: str) -> str:
@@ -701,9 +695,9 @@ def _normalize_state_filter(state: str) -> str:
     return normalized
 
 
-def _log_source(target: str, attempt_id: int) -> str:
+def _log_source(target: str, attempt_id: int) -> tuple[str, "logging_pb2.MatchScope"]:
     if target.startswith("/system/"):
-        return target
+        return target, logging_pb2.MATCH_SCOPE_EXACT
     return build_log_source(JobName.from_wire(target), attempt_id)
 
 
@@ -800,10 +794,6 @@ def build_server(service: IrisBabysitter, *, host: str = "127.0.0.1", port: int 
             duration_seconds=duration_seconds,
             include_locals=include_locals,
         )
-
-    @server.tool()
-    def iris_bug_report(job_id: str, tail: int = 50) -> dict[str, Any]:
-        return service.bug_report(job_id=job_id, tail=tail)
 
     @server.tool()
     def zephyr_stage_progress(coord_job_id: str, max_lines: int = DEFAULT_ZEPHYR_LOG_LINES) -> dict[str, Any]:

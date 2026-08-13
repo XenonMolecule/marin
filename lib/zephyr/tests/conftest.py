@@ -11,26 +11,38 @@ import time
 import traceback
 import warnings
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
-from fray import ResourceConfig
+from fray.actor import ActorContext, _reset_current_actor, _set_current_actor
 from fray.iris_backend import FrayIrisClient
 from fray.local_backend import LocalClient
+from fray.types import ResourceConfig
+from iris.client.client import IrisClient, IrisContext, iris_ctx_scope
+from iris.cluster.config import load_config, make_local_config
+from iris.cluster.lifecycle import connect_cluster
+from iris.cluster.types import Entrypoint, ResourceSpec
 from rigging.timing import ExponentialBackoff
-from zephyr import load_file
+from zephyr.coordinator import ZephyrCoordinator, _PipelineExecution
 from zephyr.execution import ZephyrContext
+from zephyr.readers import load_file
+from zephyr.stage_io import ShardTask, ZephyrTaskResources
 
 # Path to zephyr root (from tests/conftest.py -> tests -> lib/zephyr)
 ZEPHYR_ROOT = Path(__file__).resolve().parents[1]
 
 # Use Iris demo config as base
-IRIS_CONFIG = Path(__file__).resolve().parents[2] / "iris" / "examples" / "test.yaml"
+IRIS_CONFIG = Path(__file__).resolve().parents[2] / "iris" / "config" / "ci-test.yaml"
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="module")
 def iris_cluster():
-    """Start local Iris cluster for testing - reused across all tests."""
-    from iris.cluster.config import connect_cluster, load_config, make_local_config
+    """Start local Iris cluster for testing - reused across tests in a module.
+
+    Module-scoped (rather than session-scoped) so that a stuck or polluted
+    cluster from one test module does not bleed into another. Tests within a
+    single module still amortize the cluster startup cost.
+    """
 
     config = load_config(IRIS_CONFIG)
     config = make_local_config(config)
@@ -68,52 +80,57 @@ def zephyr_ctx(local_client, tmp_path_factory):
 
 def _parent_holder_entrypoint():
     """Long-running no-op that keeps the integration-test parent job alive."""
-    import time
 
     time.sleep(3600)
 
 
-@pytest.fixture(params=["local", "iris"], scope="session")
+@pytest.fixture(params=["local", "iris"], scope="module")
 def integration_client(request):
     """Parametrized fixture providing Local and Iris clients.
 
-    Session-scoped to reuse clusters across all test modules.
+    Module-scoped so a stuck cluster or leaked actor from one module does not
+    bleed into another. The Iris path depends on `iris_cluster` (also
+    module-scoped); pytest enforces that a fixture cannot depend on a
+    narrower-scoped fixture, so these scopes must match.
     """
     if request.param == "local":
         client = LocalClient()
         yield client
         client.shutdown(wait=True)
     elif request.param == "iris":
-        from iris.client.client import IrisClient, IrisContext, iris_ctx_scope
-        from iris.cluster.types import Entrypoint, ResourceSpec
-
-        iris_cluster = request.getfixturevalue("iris_cluster")
-        iris_client = IrisClient.remote(iris_cluster, workspace=ZEPHYR_ROOT)
-        client = FrayIrisClient.from_iris_client(iris_client)
-
-        # Submit a long-running parent job so child submissions have a live
-        # parent row in the controller DB. Absent parents are rejected with
-        # FAILED_PRECONDITION, so simulating a parent context without a real
-        # parent no longer works.
-        parent_job = iris_client.submit(
-            entrypoint=Entrypoint.from_callable(_parent_holder_entrypoint),
-            name="test",
-            resources=ResourceSpec(cpu=1, memory="512m"),
-        )
-        try:
-            ctx = IrisContext(job_id=parent_job.job_id, client=iris_client)
-            with iris_ctx_scope(ctx):
-                yield client
-        finally:
-            iris_client.terminate(parent_job.job_id)
-            client.shutdown(wait=True)
+        yield request.getfixturevalue("iris_integration_client")
     else:
         raise ValueError(f"Unknown backend: {request.param}")
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="module")
+def iris_integration_client(iris_cluster):
+    """Fray client scoped under a live local-Iris parent job."""
+    iris_client = IrisClient.remote(iris_cluster, workspace=ZEPHYR_ROOT)
+    client = FrayIrisClient.from_iris_client(iris_client)
+
+    # Child submissions require a live parent row in the controller DB.
+    parent_job = iris_client.submit(
+        entrypoint=Entrypoint.from_callable(_parent_holder_entrypoint),
+        name="test",
+        resources=ResourceSpec(cpu=1, memory="512m"),
+    )
+    try:
+        ctx = IrisContext(job_id=parent_job.job_id, client=iris_client)
+        with iris_ctx_scope(ctx):
+            yield client
+    finally:
+        iris_client.terminate(parent_job.job_id)
+        client.shutdown(wait=True)
+
+
+@pytest.fixture(scope="module")
 def integration_ctx(integration_client, tmp_path_factory):
-    """ZephyrContext on all backends for integration tests."""
+    """ZephyrContext on all backends for integration tests.
+
+    Module-scoped to match `integration_client` (a fixture cannot depend on a
+    narrower-scoped fixture).
+    """
     tmp_path = tmp_path_factory.mktemp("zephyr-integration")
     ctx = ZephyrContext(
         client=integration_client,
@@ -126,12 +143,47 @@ def integration_ctx(integration_client, tmp_path_factory):
     ctx.shutdown()
 
 
+_TEST_WORKER_RAM = 1 << 30
+_TEST_TASK_COST = ZephyrTaskResources(cpu=1.0, memory=_TEST_WORKER_RAM)
+_TEST_WORKER_AVAILABLE = ZephyrTaskResources(cpu=1.0, memory=_TEST_WORKER_RAM)
+_TEST_EXECUTION_ID = "test-exec"
+
+
+def _make_test_coordinator(tmp_path, **kwargs) -> ZephyrCoordinator:
+    prefix = str(tmp_path / "chunks")
+    return ZephyrCoordinator(prefix, _TEST_WORKER_AVAILABLE, **kwargs)
+
+
+def start_test_stage(
+    coordinator: ZephyrCoordinator,
+    tasks: list[ShardTask],
+    *,
+    stage_name: str = "test",
+    is_last_stage: bool = False,
+    execution_id: str = _TEST_EXECUTION_ID,
+) -> _PipelineExecution:
+    """Register an execution on the coordinator and load one stage of tasks.
+
+    Coordinator protocol tests drive pull_task and report methods directly.
+    This mirrors the run_pipeline registration step
+    and returns the execution state for assertions.
+    """
+    run = _PipelineExecution(execution_id=execution_id, map_cost=_TEST_TASK_COST, reduce_cost=_TEST_TASK_COST)
+    coordinator._executions[execution_id] = run
+    coordinator._start_stage(run, stage_name, 0, tasks, is_last_stage=is_last_stage)
+    return run
+
+
+@pytest.fixture
+def coordinator(actor_context, tmp_path):
+    coord = _make_test_coordinator(tmp_path)
+    yield coord
+    coord.shutdown()
+
+
 @pytest.fixture
 def actor_context():
     """Provide a fake actor context so ZephyrCoordinator can call current_actor()."""
-    from unittest.mock import MagicMock
-
-    from fray.actor import ActorContext, _reset_current_actor, _set_current_actor
 
     token = _set_current_actor(ActorContext(handle=MagicMock(), index=0, group_name="test-coord"))
     yield
@@ -180,8 +232,9 @@ def _configure_marin_prefix():
         del os.environ["MARIN_PREFIX"]
 
 
-# Thread name prefixes for infrastructure threads managed by session-scoped
-# clusters (iris, fray). These persist across tests and are not leaks.
+# Thread name prefixes for infrastructure threads managed by long-lived
+# fixtures (iris, fray). These persist across tests within a module/session
+# and are not leaks.
 _INFRA_THREAD_PREFIXES = (
     "worker-server",
     "worker-lifecycle",
@@ -190,6 +243,15 @@ _INFRA_THREAD_PREFIXES = (
     "asyncio_",
     "grpc_",
     "monitoring",
+    # Iris worker task/log threads, spawned the first time a test touches the
+    # cluster fixture and torn down with the cluster.
+    "task-/",
+    "logs-/",
+    # Iris worker profiling thread and controller RPC thread pool — created
+    # lazily when the cluster handles its first job but torn down with the
+    # module-scoped iris_cluster fixture, not with individual tests.
+    "profile-loop",
+    "rpc-handler",
 )
 
 
@@ -201,8 +263,8 @@ def _thread_cleanup():
     non-daemon threads remain after teardown. Waits briefly for threads
     that are in the process of shutting down.
 
-    Infrastructure threads from session-scoped clusters (iris) are
-    excluded — they persist for the session and are not leaks.
+    Infrastructure threads from long-lived fixtures (iris cluster, fray) are
+    excluded — they persist for the lifetime of the fixture and are not leaks.
     """
     before = {t.ident for t in threading.enumerate()}
     yield

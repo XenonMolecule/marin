@@ -1,1 +1,3 @@
 experiments/infinigram/vendor/*.so.* binary
+# Built artifact of lib/marin/src/marin/inference/dashboard (npm run build).
+lib/marin/src/marin/inference/quick_serve_dashboard.html linguist-generated=true

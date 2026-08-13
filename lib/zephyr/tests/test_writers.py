@@ -3,68 +3,28 @@
 
 """Tests for writers module."""
 
-import os
 import tempfile
+import uuid
 from pathlib import Path
 
+import fsspec
+import fsspec.config
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 import vortex
+from pyarrow import fs as pa_fs
 from zephyr.writers import (
-    atomic_rename,
+    _pyarrow_filesystem,
+    _s3_filesystem_kwargs,
     infer_arrow_schema,
-    unique_temp_path,
-    write_levanter_cache,
+    write_jsonl_file,
     write_parquet_file,
     write_vortex_file,
 )
 
-
-def test_unique_temp_path_produces_distinct_paths():
-    """Each call to unique_temp_path returns a different path."""
-    paths = {unique_temp_path("/some/output.txt") for _ in range(10)}
-    assert len(paths) == 10
-    for p in paths:
-        assert p.startswith("/some/output.txt.tmp.")
-
-
-def test_atomic_rename_uses_unique_temp_paths(tmp_path):
-    """Concurrent atomic_rename calls use distinct temp paths (UUID collision avoidance)."""
-    output = str(tmp_path / "out.txt")
-    observed_temps = []
-
-    for _ in range(5):
-        with atomic_rename(output) as temp_path:
-            observed_temps.append(temp_path)
-            Path(temp_path).write_text("data")
-
-    assert len(set(observed_temps)) == 5, "Each call should produce a unique temp path"
-    for tp in observed_temps:
-        assert ".tmp." in tp
-
-
-def test_atomic_rename_cleans_up_on_error(tmp_path):
-    """Temp file is removed when the context raises an exception."""
-    output = str(tmp_path / "out.txt")
-
-    with pytest.raises(RuntimeError, match="boom"):
-        with atomic_rename(output) as temp_path:
-            Path(temp_path).write_text("bad")
-            raise RuntimeError("boom")
-
-    assert not Path(temp_path).exists()
-    assert not Path(output).exists()
-
-
-def _make_levanter_records(n: int) -> list[dict[str, list[int]]]:
-    return [{"input_ids": [i, i + 100], "attention_mask": [1, 1]} for i in range(n)]
-
-
-def _require_levanter():
-    cache_mod = pytest.importorskip("levanter.store.cache")
-    tree_store_mod = pytest.importorskip("levanter.store.tree_store")
-    return cache_mod.CacheMetadata, cache_mod.SerialCacheWriter, tree_store_mod.TreeStore
+# zstandard frame magic number: the first four bytes of any zstd-compressed stream.
+_ZSTD_MAGIC = b"\x28\xb5\x2f\xfd"
 
 
 def test_write_vortex_file_basic():
@@ -129,6 +89,23 @@ def test_write_vortex_file_single_record():
         assert table.column("name").to_pylist() == ["Alice"]
 
 
+@pytest.mark.parametrize("ext", [".jsonl.zst", ".jsonl.zstd"])
+def test_write_jsonl_file_zstd_compresses(tmp_path, ext):
+    """Both ``.zst`` and ``.zstd`` must produce a genuinely zstd-compressed file.
+
+    Asserting the on-disk magic bytes (rather than only a round-trip) catches the
+    silent case where the extension is unrecognized and records are written raw.
+    """
+    output_path = str(Path(tmp_path) / f"data{ext}")
+    records = [{"id": i, "name": f"row{i}"} for i in range(5)]
+
+    result = write_jsonl_file(records, output_path)
+
+    assert result["count"] == 5
+    with open(output_path, "rb") as f:
+        assert f.read(4) == _ZSTD_MAGIC
+
+
 def test_write_parquet_file_basic():
     """Test basic parquet file writing."""
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -147,6 +124,56 @@ def test_write_parquet_file_basic():
         # Verify we can read it back
         table = pq.read_table(output_path)
         assert len(table) == 2
+
+
+def test_write_parquet_file_accepts_record_batches(tmp_path):
+    schema = pa.schema([pa.field("id", pa.int64()), pa.field("name", pa.string())])
+    batches = [
+        pa.RecordBatch.from_pylist([{"id": 1, "name": "Alice"}, {"id": 2, "name": "Bob"}], schema=schema),
+        pa.RecordBatch.from_pylist([{"id": 3, "name": "Charlie"}], schema=schema),
+    ]
+    output_path = str(tmp_path / "batches.parquet")
+
+    result = write_parquet_file(batches, output_path, target_buffer_bytes=1)
+
+    assert result == {"path": output_path, "count": 3}
+    assert pq.read_table(output_path).equals(pa.Table.from_batches(batches))
+
+
+def test_write_parquet_file_preserves_typed_empty_record_batch(tmp_path):
+    schema = pa.schema([pa.field("id", pa.int64()), pa.field("name", pa.string())])
+    empty_batch = pa.RecordBatch.from_arrays(
+        [pa.array([], type=pa.int64()), pa.array([], type=pa.string())],
+        schema=schema,
+    )
+    output_path = str(tmp_path / "empty-batch.parquet")
+
+    result = write_parquet_file([empty_batch], output_path)
+
+    table = pq.read_table(output_path)
+    assert result == {"path": output_path, "count": 0}
+    assert table.schema.equals(schema, check_metadata=True)
+    assert len(table) == 0
+
+
+def test_write_parquet_file_rejects_record_batch_schema_drift(tmp_path):
+    integer_batch = pa.RecordBatch.from_pylist([{"value": 1}])
+    string_batch = pa.RecordBatch.from_pylist([{"value": "one"}])
+
+    with pytest.raises(pa.ArrowInvalid, match="RecordBatch schema mismatch"):
+        write_parquet_file([integer_batch, string_batch], str(tmp_path / "schema-drift.parquet"))
+
+
+@pytest.mark.parametrize(
+    "records",
+    [
+        [pa.RecordBatch.from_pylist([{"value": 1}]), {"value": 2}],
+        [{"value": 1}, pa.RecordBatch.from_pylist([{"value": 2}])],
+    ],
+)
+def test_write_parquet_file_rejects_mixed_rows_and_record_batches(tmp_path, records):
+    with pytest.raises(TypeError, match="cannot mix"):
+        write_parquet_file(records, str(tmp_path / "mixed.parquet"))
 
 
 def test_write_parquet_file_widens_null_to_concrete_type():
@@ -213,69 +240,61 @@ def test_write_parquet_file_empty():
         assert len(table) == 0
 
 
-def test_write_levanter_cache_end_to_end():
-    """Write records and verify they can be read back."""
-    _, _, TreeStore = _require_levanter()
+def test_write_parquet_file_unaddressable_protocol_falls_back_to_fsspec():
+    """Protocols pyarrow cannot address still round-trip via the fsspec handle."""
+    bucket = f"zephyr-writers-{uuid.uuid4().hex}"
+    output_path = f"memory://{bucket}/out.parquet"
+    records = [{"id": 1, "name": "Alice"}, {"id": 2, "name": "Bob"}]
 
-    with tempfile.TemporaryDirectory() as tmpdir:
-        output_path = str(Path(tmpdir) / "cache")
-        records = _make_levanter_records(8)
+    result = write_parquet_file(iter(records), output_path)
 
-        result = write_levanter_cache(iter(records), output_path, metadata={})
-
-        assert result["path"] == output_path
-        assert result["count"] == len(records)
-        assert Path(output_path, ".success").exists()
-
-        store = TreeStore.open(records[0], output_path, mode="r", cache_metadata=False)
-        assert len(store) == len(records)
-        assert store[0]["input_ids"].tolist() == records[0]["input_ids"]
-        assert store[len(records) - 1]["input_ids"].tolist() == records[len(records) - 1]["input_ids"]
+    assert result["count"] == 2
+    with fsspec.filesystem("memory").open(f"/{bucket}/out.parquet", "rb") as f:
+        table = pq.read_table(f)
+    assert table.to_pylist() == records
 
 
-def test_atomic_rename_s3_directory_preserves_layout(tmp_path):
-    """S3 atomic_rename must not add extra nesting for directory outputs.
+def test_pyarrow_filesystem_selection():
+    """Local paths get a native LocalFileSystem; unknown protocols return None."""
+    fs, path = _pyarrow_filesystem("/tmp/out.parquet")
+    assert isinstance(fs, pa_fs.LocalFileSystem)
+    assert path == "/tmp/out.parquet"
 
-    When the yielded path is used as a directory (e.g. by write_levanter_cache),
-    fs.put must place contents directly at the destination — not under an extra
-    ``output/`` subdirectory.  fsspec nests when the source has no trailing
-    slash and the destination already exists, so atomic_rename must account for
-    that.
+    fs, path = _pyarrow_filesystem("file:///tmp/out.parquet")
+    assert isinstance(fs, pa_fs.LocalFileSystem)
+    assert path == "/tmp/out.parquet"
+
+    assert _pyarrow_filesystem("memory://bucket/out.parquet") is None
+
+
+def test_s3_filesystem_kwargs_from_fsspec_conf(monkeypatch):
+    """The iris-exported FSSPEC_S3 block maps onto native S3FileSystem kwargs.
+
+    CoreWeave object storage rejects path-style requests with HTTP 400, so
+    the virtual addressing style configured for s3fs must translate to
+    ``force_virtual_addressing`` on the native filesystem.
     """
-    from unittest.mock import patch
+    monkeypatch.setitem(
+        fsspec.config.conf,
+        "s3",
+        {
+            "endpoint_url": "https://object.example.coreweave.com",
+            "client_kwargs": {"region_name": "auto"},
+            "config_kwargs": {"s3": {"addressing_style": "virtual"}},
+        },
+    )
+    kwargs = _s3_filesystem_kwargs()
+    assert kwargs["endpoint_override"] == "https://object.example.coreweave.com"
+    assert kwargs["region"] == "auto"
+    assert kwargs["force_virtual_addressing"] is True
+    assert kwargs["connect_timeout"] > 0
+    assert kwargs["request_timeout"] > 0
 
-    from fsspec.implementations.local import LocalFileSystem
-
-    dest = tmp_path / "dest"
-    dest.mkdir()  # pre-create so fsspec considers it "existing"
-    local_fs = LocalFileSystem()
-
-    with patch("zephyr.writers.url_to_fs", return_value=(local_fs, str(dest))):
-        with atomic_rename("s3://bucket/dest") as local_path:
-            os.makedirs(local_path)
-            (Path(local_path) / "shard_0.bin").write_bytes(b"data0")
-            (Path(local_path) / "shard_1.bin").write_bytes(b"data1")
-
-    assert (dest / "shard_0.bin").exists(), "shard_0.bin should be directly under dest"
-    assert (dest / "shard_1.bin").exists(), "shard_1.bin should be directly under dest"
-    assert not (dest / "output").exists(), "should not have extra 'output' nesting"
-
-
-def test_atomic_rename_s3_single_file(tmp_path):
-    """S3 atomic_rename works correctly for single-file outputs."""
-    from unittest.mock import patch
-
-    from fsspec.implementations.local import LocalFileSystem
-
-    dest = tmp_path / "output.jsonl"
-    local_fs = LocalFileSystem()
-
-    with patch("zephyr.writers.url_to_fs", return_value=(local_fs, str(dest))):
-        with atomic_rename("s3://bucket/output.jsonl") as local_path:
-            Path(local_path).write_text("line1\nline2\n")
-
-    assert dest.exists()
-    assert dest.read_text() == "line1\nline2\n"
+    monkeypatch.setitem(fsspec.config.conf, "s3", {})
+    monkeypatch.delenv("AWS_ENDPOINT_URL", raising=False)
+    monkeypatch.delenv("AWS_REGION", raising=False)
+    assert "endpoint_override" not in _s3_filesystem_kwargs()
+    assert "force_virtual_addressing" not in _s3_filesystem_kwargs()
 
 
 def test_infer_arrow_schema_basic():

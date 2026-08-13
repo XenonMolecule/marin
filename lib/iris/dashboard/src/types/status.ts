@@ -4,6 +4,7 @@
  * Proto enums serialize as strings like "JOB_STATE_RUNNING" or "TASK_STATE_PENDING".
  * The dashboard normalizes these to lowercase names ("running", "pending") via stateToName().
  */
+import type { SliceStatus } from '@/utils/slices'
 
 // -- Normalized state values (lowercase, prefix-stripped) --
 
@@ -30,6 +31,7 @@ export type TaskState =
   | 'unschedulable'
   | 'assigned'
   | 'preempted'
+  | 'cosched_failed'
 
 // The DB stores state as an integer column. This maps integer values to
 // normalized state names so the dashboard works with both proto enum strings
@@ -46,6 +48,7 @@ const STATE_INT_MAP: Record<number, string> = {
   8: 'unschedulable',
   9: 'assigned',
   10: 'preempted',
+  11: 'cosched_failed',
 }
 
 /**
@@ -65,6 +68,16 @@ export function stateDisplayName(state: string): string {
   return STATE_DISPLAY_NAMES[state] ?? state
 }
 
+/** Use Waiting when a building task has a current wait reason. */
+export function taskStateDisplayName(
+  protoState: string | number | null | undefined,
+  statusMessage: string | null | undefined,
+): string {
+  const state = stateToName(protoState)
+  if (state === 'building' && statusMessage?.trim()) return 'Waiting'
+  return stateDisplayName(state)
+}
+
 const STATE_DISPLAY_NAMES: Record<string, string> = {
   unspecified: 'Unspecified',
   pending: 'Pending',
@@ -77,6 +90,7 @@ const STATE_DISPLAY_NAMES: Record<string, string> = {
   unschedulable: 'Unschedulable',
   assigned: 'Assigned',
   preempted: 'Preempted',
+  cosched_failed: 'Cosched Failed',
   unknown: 'Unknown',
 }
 
@@ -150,6 +164,12 @@ const STATUS_COLORS: Record<string, StatusColorClasses> = {
     border: 'border-surface-border',
     dot: 'bg-text-muted',
   },
+  cosched_failed: {
+    text: 'text-status-danger',
+    bg: 'bg-status-danger-bg',
+    border: 'border-status-danger-border',
+    dot: 'bg-status-danger',
+  },
 }
 
 const DEFAULT_COLORS: StatusColorClasses = {
@@ -170,6 +190,7 @@ export const STATUS_COLOR_ORDER: readonly string[] = [
   'succeeded',
   'failed',
   'worker_failed',
+  'cosched_failed',
   'preempted',
   'pending',
   'unschedulable',
@@ -178,80 +199,115 @@ export const STATUS_COLOR_ORDER: readonly string[] = [
   'killed',
 ] as const
 
-// -- Slice lifecycle badge styling (Autoscaler tab) --
+// -- Slice status styling (Autoscaler tab) --
 
 /**
- * Visual style for a single-letter slice badge rendered in the Autoscaler tab.
- *
- * Letters:
- *   - R = ready and available (fully provisioned, no tasks assigned)
- *   - U = in-use (ready with at least one VM running a task)
- *   - Q = requesting (scale-up in flight)
- *   - B = booting (VMs coming up)
- *   - I = initializing (runtime setup)
- *   - F = failed
+ * Visual style for a slice-status badge (dot + pill colors + label), keyed by the
+ * resolved SliceStatus. Shared by the per-group summary, the slice list, and the
+ * legend so they stay in sync. Counts over these are always slice-granular.
  */
-export interface SliceBadgeStyle {
-  letter: string
+export interface SliceStatusStyle {
+  /** Short label rendered in the badge, e.g. "in use", "free". */
   label: string
+  /** One-line explanation for tooltips and the legend. */
+  description: string
+  /** Tailwind background class for the solid status dot. */
+  dot: string
   bg: string
   text: string
   border: string
 }
 
-export const SLICE_STATE_STYLES: Record<string, SliceBadgeStyle> = {
-  ready: {
-    letter: 'R',
-    label: 'Ready and available (no tasks assigned)',
+export const SLICE_STATUS_STYLES: Record<SliceStatus, SliceStatusStyle> = {
+  available: {
+    label: 'free',
+    description: 'Ready and healthy with no tasks — free to place work on now',
+    dot: 'bg-status-success',
     bg: 'bg-status-success-bg',
     text: 'text-status-success',
     border: 'border-status-success-border',
   },
   in_use: {
-    letter: 'U',
-    label: 'In use (ready with tasks actively running)',
+    label: 'in use',
+    description: 'Ready and healthy with tasks actively running',
+    dot: 'bg-accent',
+    bg: 'bg-accent-subtle',
+    text: 'text-accent',
+    border: 'border-accent-border',
+  },
+  idle: {
+    label: 'idle',
+    description: 'Ready and healthy, no tasks, idle past the threshold — a scale-down candidate',
+    dot: 'bg-status-warning',
+    bg: 'bg-status-warning-bg',
+    text: 'text-status-warning',
+    border: 'border-status-warning-border',
+  },
+  degraded: {
+    label: 'degraded',
+    description: 'Missing or unhealthy hosts — cannot be scheduled until workers recover',
+    dot: 'bg-status-orange',
     bg: 'bg-status-orange-bg',
     text: 'text-status-orange',
     border: 'border-status-orange-border',
   },
   requesting: {
-    letter: 'Q',
-    label: 'Requesting (scale-up in flight)',
-    bg: 'bg-accent-subtle',
-    text: 'text-accent',
-    border: 'border-accent-border',
+    label: 'requesting',
+    description: 'Scale-up request in flight to the provider',
+    dot: 'bg-status-purple',
+    bg: 'bg-status-purple-bg',
+    text: 'text-status-purple',
+    border: 'border-status-purple-border',
   },
   booting: {
-    letter: 'B',
-    label: 'Booting (VMs starting)',
+    label: 'booting',
+    description: 'VMs starting up',
+    dot: 'bg-status-purple',
     bg: 'bg-status-purple-bg',
     text: 'text-status-purple',
     border: 'border-status-purple-border',
   },
   initializing: {
-    letter: 'I',
-    label: 'Initializing (runtime setup)',
-    bg: 'bg-status-warning-bg',
-    text: 'text-status-warning',
-    border: 'border-status-warning-border',
+    label: 'initializing',
+    description: 'Runtime setup in progress',
+    dot: 'bg-status-purple',
+    bg: 'bg-status-purple-bg',
+    text: 'text-status-purple',
+    border: 'border-status-purple-border',
   },
   failed: {
-    letter: 'F',
-    label: 'Failed',
+    label: 'failed',
+    description: 'Slice failed to provision or was lost',
+    dot: 'bg-status-danger',
     bg: 'bg-status-danger-bg',
     text: 'text-status-danger',
     border: 'border-status-danger-border',
   },
+  // 'ready' is always resolved to a capacity status before display; kept for
+  // type completeness with a neutral healthy style.
+  ready: {
+    label: 'ready',
+    description: 'Ready',
+    dot: 'bg-status-success',
+    bg: 'bg-status-success-bg',
+    text: 'text-status-success',
+    border: 'border-status-success-border',
+  },
 }
 
-/** Order in which slice badges should be rendered in the Autoscaler tab. */
-export const SLICE_BADGE_ORDER: readonly string[] = [
-  'ready',
+/**
+ * Order for the per-group slice-status summary and the legend: working and free
+ * capacity first, then problems, then provisioning.
+ */
+export const SLICE_STATUS_SUMMARY_ORDER: readonly SliceStatus[] = [
   'in_use',
+  'available',
+  'idle',
+  'degraded',
+  'failed',
   'requesting',
   'booting',
   'initializing',
-  'failed',
 ] as const
 
 // -- Progress bar segment colors (Jobs tab) --
@@ -269,6 +325,7 @@ export const SEGMENT_COLORS: Record<string, string> = {
   assigned: 'bg-status-orange',
   failed: 'bg-status-danger',
   worker_failed: 'bg-status-danger',
+  cosched_failed: 'bg-status-danger',
   preempted: 'bg-status-warning',
   killed: 'bg-text-muted',
   pending: 'bg-surface-border',
@@ -282,6 +339,7 @@ export const SEGMENT_ORDER: readonly string[] = [
   'assigned',
   'failed',
   'worker_failed',
+  'cosched_failed',
   'preempted',
   'killed',
   'pending',

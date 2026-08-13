@@ -11,13 +11,23 @@ The finelog Docker image is assumed to be public on GHCR; no Artifact Registry
 or `docker login` wiring is performed here.
 """
 
-from __future__ import annotations
-
 import re
 
 # Container/host conventions baked into the bootstrap.
 CONTAINER_NAME = "finelog"
 CACHE_DIR = "/var/cache/finelog"
+
+# `/health` answers 200 whenever the process is listening; the body says whether
+# its namespaces accept rows (`rust/src/server/ingest_health.rs`). A namespace
+# whose registration is `pending` is still starting up; `failed` is terminal for
+# the running binary, so a deploy gate stops waiting on it.
+HEALTH_OK = "ok"
+REGISTRATION_FAILED = "registration failed"
+
+
+def health_probe_command(port: int) -> str:
+    """The shell command a deploy gate runs to read `/health` from the server's own host."""
+    return f"curl -sf -m 5 http://localhost:{port}/health"
 
 
 def render_template(template: str, **variables: str | int) -> str:
@@ -60,46 +70,51 @@ sudo systemctl start docker || true
 
 # Cache directory on the boot disk. Finelog copies parquet segments to GCS
 # via FINELOG_REMOTE_DIR, so the boot disk only needs working space.
-# Owned by UID/GID 1000 to match the in-container `finelog` user (the
-# Dockerfile's chown is shadowed by this bind mount).
 sudo mkdir -p {{ cache_dir }}
-# 1000 matches the finelog user **inside** the container
-sudo chown -R 1000:1000 {{ cache_dir }}
 
 echo "[finelog-init] Pulling image: {{ docker_image }}"
 sudo docker pull {{ docker_image }}
 
 # Gracefully stop any existing container so the server can flush RAM
-# buffers to L0 on disk, then remove it.
+# buffers to L0 on disk, then remove it. This MUST precede the chown below:
+# a running server constantly creates and renames transient files
+# (seg_L*.parquet.tmp, _finelog_catalog.sqlite-journal). One vanishing between
+# readdir and the chown syscall makes `chown -R` exit non-zero, and `set -e`
+# would then abort the whole bootstrap before the new image is ever started.
 sudo docker stop --timeout 5 {{ container_name }} 2>/dev/null || true
 sudo docker rm -f {{ container_name }} 2>/dev/null || true
 
-# Reserve 0.5 vCPU and 512 MiB for the host VM (sshd, docker daemon, ops
-# agents). Without these caps a runaway finelog can starve the host and lock
-# us out of the box. Floors guard tiny machines: container gets at least
-# 0.5 CPU and 256 MiB even if the math would otherwise go non-positive.
-# CPU is computed in milli-units so the 0.5 reservation is exact.
+# Own the cache dir as UID/GID 1000 to match the in-container `finelog` user
+# (the Dockerfile's chown is shadowed by this bind mount). Safe to recurse now
+# that the writer is stopped.
+sudo chown -R 1000:1000 {{ cache_dir }}
+
 host_cpus=$(nproc)
-container_milli_cpus=$(( host_cpus * 1000 - 500 ))
-if [ "$container_milli_cpus" -lt 500 ]; then container_milli_cpus=500; fi
-container_cpus=$(awk -v m="$container_milli_cpus" 'BEGIN{printf "%.3f", m/1000}')
 host_mem_mib=$(awk '/^MemTotal:/ {printf "%d", $2/1024}' /proc/meminfo)
-container_mem_mib=$(( host_mem_mib - 512 ))
+host_reserved_mem_mib=1700
+container_mem_mib=$(( host_mem_mib - host_reserved_mem_mib ))
 if [ "$container_mem_mib" -lt 256 ]; then container_mem_mib=256; fi
 echo "[finelog-init] host=${host_cpus}cpu/${host_mem_mib}MiB" \\
-    "container=${container_cpus}cpu/${container_mem_mib}MiB"
+    "container_mem=${container_mem_mib}MiB" \\
+    "host_reserved_mem=${host_reserved_mem_mib}MiB"
 
+# No --cpus cap: with Docker's --cpus the cgroup gets a CFS bandwidth quota
+# (e.g. quota=350000us per 100000us period for --cpus=3.5). When the
+# container's combined threads exhaust the quota mid-period the kernel
+# parks every thread in the cgroup until the next 100ms window, which
+# shows up as multi-hundred-ms spikes on otherwise-fast operations like
+# parquet encode. The VM is dedicated to finelog, so let it use all
+# host CPUs without bandwidth throttling.
 sudo docker run -d --name {{ container_name }} \\
     --network=host \\
     --restart=unless-stopped \\
     --ulimit core=0:0 \\
     --ulimit nofile=1048576:1048576 \\
     --cap-add SYS_PTRACE \\
-    --cpus="${container_cpus}" \\
     --memory="${container_mem_mib}m" \\
     -e FINELOG_PORT={{ port }} \\
     -e FINELOG_REMOTE_DIR={{ remote_log_dir }} \\
-    -v {{ cache_dir }}:{{ cache_dir }} \\
+    {{ auth_env }}{{ query_env }}-v {{ cache_dir }}:{{ cache_dir }} \\
     {{ docker_image }}
 
 echo "[finelog-init] Container started; waiting for /health on port {{ port }}..."
@@ -111,7 +126,9 @@ for i in $(seq 1 60); do
         sudo docker logs {{ container_name }} --tail 200 || true
         exit 1
     fi
-    if curl -sf http://localhost:{{ port }}/health > /dev/null 2>&1; then
+    # Gate on the body: /health answers 200 while the server is only listening.
+    health=$({{ health_probe }} 2>/dev/null || true)
+    if [ "$health" = "{{ health_ok }}" ]; then
         echo "[finelog-init] finelog is healthy"
         echo "[finelog-init] Bootstrap complete"
         exit 0
@@ -119,24 +136,52 @@ for i in $(seq 1 60); do
     sleep 2
 done
 
-echo "[finelog-init] ERROR: finelog failed to become healthy after 120s"
+echo "[finelog-init] ERROR: finelog failed to become healthy after 120s (last /health: ${health:-unreachable})"
 sudo docker ps -a -f name={{ container_name }}
 sudo docker logs {{ container_name }} --tail 200 || true
 exit 1
 """
 
 
-def render_bootstrap(image: str, port: int, remote_log_dir: str) -> str:
-    """Render the finelog bootstrap script."""
+def render_bootstrap(
+    image: str,
+    port: int,
+    remote_log_dir: str,
+    auth_policy: str,
+    query_metadata_cache_mb: int | None,
+    query_index_cache_mb: int | None,
+) -> str:
+    """Render the finelog bootstrap script.
+
+    ``auth_policy`` is the ``FINELOG_AUTH_POLICY`` JSON (see
+    ``deploy.config.auth_policy_json``); empty leaves the server on its private
+    allow-localhost default, which on a remote VM admits nothing but an SSH
+    tunnel. It is passed single-quoted, so it must not contain a single quote
+    (the JSON never does — CIDR prefixes, cluster names, PEM public keys).
+    ``query_metadata_cache_mb`` leaves DataFusion's default in place when unset,
+    and ``query_index_cache_mb`` the server's decoded index-cache default.
+    """
     if not image:
         raise ValueError("image is required")
     if port <= 0:
         raise ValueError("port must be > 0")
+    if "'" in auth_policy:
+        raise ValueError("auth_policy must not contain a single quote")
+    auth_env = f"-e FINELOG_AUTH_POLICY='{auth_policy}' " if auth_policy else ""
+    query_env = (
+        f"-e FINELOG_QUERY_METADATA_CACHE_MB={query_metadata_cache_mb} " if query_metadata_cache_mb is not None else ""
+    )
+    if query_index_cache_mb is not None:
+        query_env += f"-e FINELOG_INDEX_CACHE_MB={query_index_cache_mb} "
     return render_template(
         BOOTSTRAP_SCRIPT,
         docker_image=image,
         port=port,
         remote_log_dir=remote_log_dir,
+        auth_env=auth_env,
+        query_env=query_env,
         cache_dir=CACHE_DIR,
         container_name=CONTAINER_NAME,
+        health_probe=health_probe_command(port),
+        health_ok=HEALTH_OK,
     )

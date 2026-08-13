@@ -22,8 +22,6 @@ Supported archive formats: ``tar``, ``tar.gz`` (``.tgz``), ``tar.bz2``, ``tar.xz
 the issue discussion and not supported by this module.
 """
 
-from __future__ import annotations
-
 import fnmatch
 import gzip
 import io
@@ -34,25 +32,21 @@ import tarfile
 import zipfile
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
-import requests
 import zstandard
-from requests.adapters import HTTPAdapter
-from rigging.filesystem import open_url
-from urllib3.util import Retry
-from zephyr import Dataset, ZephyrContext
-from zephyr.writers import atomic_rename
+from rigging.filesystem import StoragePath, atomic_rename, open_url
+from zephyr.dataset import Dataset
+from zephyr.execution import ZephyrContext
 
+from marin.datakit.download.http_session import build_retrying_session
 from marin.datakit.ingestion_manifest import (
     IngestionSourceManifest,
     JsonValue,
     MaterializedOutputMetadata,
     write_ingestion_metadata_json,
 )
-from marin.execution.executor import THIS_OUTPUT_PATH
 from marin.execution.step_spec import StepSpec
-from marin.utils import fsspec_mkdirs
 
 logger = logging.getLogger(__name__)
 
@@ -138,7 +132,7 @@ class DownloadArchiveSliceConfig:
     """Runtime config for :func:`download_archive_slice`."""
 
     source: ArchiveSourceConfig
-    output_path: str = THIS_OUTPUT_PATH
+    output_path: str = ""
     output_filename: str = DEFAULT_OUTPUT_FILENAME
     http_timeout_seconds: int = DEFAULT_HTTP_TIMEOUT_SECONDS
 
@@ -185,7 +179,7 @@ def _required_metadata_str_tuple(manifest: IngestionSourceManifest, key: str) ->
         raise ValueError(f"staging.metadata[{key!r}] must be a non-empty string list")
     if not all(isinstance(item, str) and item for item in value):
         raise ValueError(f"staging.metadata[{key!r}] must contain only non-empty strings")
-    return tuple(value)
+    return cast(tuple[str, ...], tuple(value))
 
 
 def _optional_metadata_str_tuple(manifest: IngestionSourceManifest, key: str) -> tuple[str, ...]:
@@ -194,7 +188,7 @@ def _optional_metadata_str_tuple(manifest: IngestionSourceManifest, key: str) ->
         raise ValueError(f"staging.metadata[{key!r}] must be a string list")
     if not all(isinstance(item, str) and item for item in value):
         raise ValueError(f"staging.metadata[{key!r}] must contain only non-empty strings")
-    return tuple(value)
+    return cast(tuple[str, ...], tuple(value))
 
 
 def _optional_metadata_str(manifest: IngestionSourceManifest, key: str, *, default: str | None = None) -> str | None:
@@ -314,27 +308,17 @@ def _emit_records(source: ArchiveSourceConfig, filtered: Iterable[_SourceFile]) 
                 yield f"{sf.filename}#{idx}:{value_idx}", text
 
 
-def _http_session(timeout_seconds: int) -> requests.Session:
-    session = requests.Session()
-    retries = Retry(total=5, backoff_factor=1.5, status_forcelist=[500, 502, 503, 504], allowed_methods=["GET"])
-    adapter = HTTPAdapter(max_retries=retries)
-    session.mount("http://", adapter)
-    session.mount("https://", adapter)
-    return session
-
-
 def _fetch_archive_bytes(url: str, timeout_seconds: int) -> bytes:
     """Fetch the archive into memory. For `file://` URLs and any fsspec path we fall back
     to ``open_url`` so tests and local fixtures work without a network round-trip."""
     if url.startswith("http://") or url.startswith("https://"):
         logger.info("fetching archive from %s", url)
-        with _http_session(timeout_seconds) as session:
+        with build_retrying_session(backoff_factor=1.5, status_forcelist=(500, 502, 503, 504)) as session:
             response = session.get(url, timeout=timeout_seconds, stream=True)
             response.raise_for_status()
             return response.content
     logger.info("reading archive via fsspec from %s", url)
-    with open_url(url, "rb") as fh:
-        return fh.read()
+    return StoragePath(url).read_bytes()
 
 
 def _write_source_metadata(
@@ -447,7 +431,7 @@ def download_archive_slice(cfg: DownloadArchiveSliceConfig) -> dict[str, Any]:
     """
     cfg.source.validate()
     output_path = str(cfg.output_path)
-    fsspec_mkdirs(output_path, exist_ok=True)
+    StoragePath(output_path).mkdirs(exist_ok=True)
     output_file = posixpath.join(output_path, cfg.output_filename)
     pipeline = Dataset.from_list([_ArchiveSliceTask(cfg.source, cfg.http_timeout_seconds)]).flat_map(
         _iter_archive_slice_records

@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import json
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -13,24 +14,25 @@ import pytest
 
 import haliax as hax
 
-from levanter.data.text import (
-    BatchTokenizer,
-    ChatLmDatasetFormat,
+from levanter.data.text._batch_tokenizer import BatchTokenizer
+from levanter.data.text.cache import build_lm_dataset_cache
+from levanter.data.text.datasets import (
     ChatDataset,
     DatasetComponent,
-    GrugLmExample,
     LmDataConfig,
-    LmDatasetFormatBase,
-    PreferenceChatLmDatasetFormat,
-    PreferenceChatProcessor,
-    PrebuiltLmDatasetFormat,
     UrlDatasetSourceConfig,
-    build_lm_dataset_cache,
+    count_corpus_sizes,
     dataset_for_component,
-    grug_lm_example_from_named,
-    named_lm_example_from_grug,
+)
+from levanter.data.text.examples import GrugLmExample, grug_lm_example_from_named, named_lm_example_from_grug
+from levanter.data.text.formats import (
+    ChatLmDatasetFormat,
+    LmDatasetFormatBase,
+    PrebuiltLmDatasetFormat,
+    TextLmDatasetFormat,
     preprocessor_for_format,
 )
+from levanter.data.text.preference import PreferenceChatLmDatasetFormat, PreferenceChatProcessor
 from levanter.tokenizers import load_tokenizer
 from levanter.models.lm_model import LmExample
 from levanter.models.loss import maybe_fused_next_token_loss
@@ -52,6 +54,40 @@ def test_dont_blow_up_without_validation_set():
         Pos = hax.Axis("position", 10)
         # mostly just making sure this doesn't blow up
         assert config.validation_sets(Pos) == {}
+
+
+def test_count_corpus_sizes_handles_empty_train_cache(monkeypatch):
+    class EmptyCache:
+        def flat_field_length(self, _field):
+            return 0
+
+        async def async_flat_field_length(self, _field):
+            return 0
+
+        def flat_field_num_rows(self, _field):
+            return 0
+
+    config = LmDataConfig(
+        components={"empty": DatasetComponent()},
+        tokenizer="passthrough",
+        vocab_size=64,
+    )
+
+    def build_caches(_self, split):
+        if split == "train":
+            return {"empty": EmptyCache()}
+        return {}
+
+    monkeypatch.setattr(LmDataConfig, "build_caches", build_caches)
+
+    stats = count_corpus_sizes(config)
+
+    prefix = "data/stats/train/empty/"
+    assert stats[f"{prefix}total_tokens"] == 0
+    assert stats[f"{prefix}total_docs"] == 0
+    assert stats[f"{prefix}total_seqs"] == 0
+    assert f"{prefix}padding_fraction" not in stats
+    assert f"{prefix}truncation_fraction" not in stats
 
 
 def test_lm_example_handles_ignore_id():
@@ -126,6 +162,44 @@ def test_merge_split_encodings(local_gpt2_marin_tokenizer):
     reg_out = batch_tokenizer(batch)
 
     assert short_out == reg_out
+
+
+def test_long_string_workaround_matches_whole_encoding_across_many_chunks(local_gpt2_marin_tokenizer):
+    """Cursor-based long-string splitting must match whole-string encoding over many chunks.
+
+    ``_encode_long_string`` walks a cursor over the original text instead of
+    re-slicing the unconsumed tail. This exercises hundreds of cursor advances
+    (~650 chunks at ``_workaround_len=500``) and asserts the ids are byte-for-byte
+    identical to the single-shot path, guarding the O(N) rewrite against drift.
+    """
+    tokenizer = local_gpt2_marin_tokenizer
+    text = "lorem ipsum dolor sit amet " * 12_000  # ~324k chars
+
+    split_tok = BatchTokenizer(tokenizer, _workaround_len=500, long_string_workaround=True)
+    # _workaround_len above any realistic length => never splits => reference path.
+    whole_tok = BatchTokenizer(tokenizer, _workaround_len=10**9, long_string_workaround=True)
+    batch = [{"text": text}]
+
+    assert split_tok(batch) == whole_tok(batch)
+
+
+def test_batch_tokenizer_mixed_lengths_matches_individual_encoding(local_gpt2_marin_tokenizer):
+    tokenizer = local_gpt2_marin_tokenizer
+    texts = [f"ordinary document {index} with a few words" for index in range(70)]
+    texts.insert(17, "long document with safe boundaries " * 200)
+    texts.insert(53, "")
+    batch_tokenizer = BatchTokenizer(
+        tokenizer,
+        enforce_bos=False,
+        enforce_eos=False,
+        _workaround_len=500,
+        long_string_workaround=True,
+    )
+
+    actual = batch_tokenizer([{"text": text} for text in texts])
+    expected = [{"input_ids": tokenizer.encode(text, add_special_tokens=False)} for text in texts]
+
+    assert actual == expected
 
 
 # ---------------------------------------------------------------------------
@@ -306,6 +380,37 @@ def test_prebuilt_cache_with_loss_weights(tmp_path):
     np.testing.assert_array_equal(np.asarray(example.tokens), np.array(records[0]["input_ids"], dtype=np.int32))
     expected_loss_weight = np.array([2.0, 1.0, 0.0, 0.0], dtype=np.asarray(example.loss_weight).dtype)
     np.testing.assert_array_equal(np.asarray(example.loss_weight), expected_loss_weight)
+
+
+def test_build_caches_surfaces_component_failure(tmp_path):
+    """A component that cannot be classified must raise out of build_caches, not
+    be swallowed by the classification thread pool.
+
+    #6954: a worker failure that fails to surface strands the process and, in a
+    multi-host gang, silently desyncs the survivors into a multi-minute collective
+    hang. build_caches classifies components concurrently, so this guards that a
+    worker exception still propagates to the caller.
+    """
+    data_path = tmp_path / "docs.jsonl"
+    with data_path.open("w") as f:
+        f.write(json.dumps({"input_ids": [1, 2, 3, 4]}) + "\n")
+
+    def component(cache_subdir: str) -> DatasetComponent:
+        return DatasetComponent(
+            source=UrlDatasetSourceConfig(train_urls=[str(data_path)], validation_urls=[]),
+            format=PrebuiltLmDatasetFormat(),
+            cache_dir=str(tmp_path / cache_subdir),
+        )
+
+    config = LmDataConfig(
+        components={"a": component("a"), "b": component("b"), "c": component("c")},
+        tokenizer="passthrough",
+        vocab_size=16,
+        auto_build_caches=False,  # a missing cache must raise, not build on the fly
+    )
+
+    with pytest.raises(FileNotFoundError):
+        config.build_caches("train")
 
 
 def test_prebuilt_cache_without_loss_weights(tmp_path):
@@ -630,3 +735,166 @@ def test_chat_dataset_build_and_pack(dummy_chat_data):
 
             # loss_weight should coincide with assistant tokens only
             assert_loss_weight_matches_all_assistants(ex, tokenizer)
+
+
+# --- one example per document ----------------------------------------------
+#
+# A falsy pack (for chat/trace) and pack=1 select one document per example, padded to
+# Pos. These tests drive the config-level dispatch (dataset_for_component /
+# dataset_for_trace_chat_format) rather than the dataset classes directly, since the
+# crash and bool/int coercion defects lived in that dispatch.
+
+
+def _build_train_cache(component, tokenizer):
+    source = component.source.get_shard_source("train")
+    return build_lm_dataset_cache(component.cache_dir, source, component.format, tokenizer)
+
+
+def assert_padding_never_contributes_loss(example):
+    """The pad value must not leak into the objective.
+
+    GreedyPrepackedDataset marks padding positions with segment id -1. Both a padding
+    position and any position whose successor is padding (i.e. that would predict a pad
+    token) must carry zero loss weight.
+    """
+    segment_ids = np.asarray(example.attn_mask.segment_ids[0])
+    loss_weight = np.asarray(example.loss_weight)
+    is_padding = segment_ids == -1
+    assert is_padding.any(), "expected the document to be shorter than Pos, leaving padding"
+    predicts_padding = np.roll(segment_ids, -1) == -1
+    leaking = loss_weight[is_padding | predicts_padding]
+    np.testing.assert_array_equal(leaking, np.zeros_like(leaking))
+
+
+@pytest.mark.parametrize("pack", [False, 1])
+def test_dataset_for_component_chat_unpacked_yields_one_padded_example_per_conversation(
+    dummy_chat_data, tmp_path, pack
+):
+    tokenizer = load_tokenizer("marin-community/marin-tokenizer")
+    component = DatasetComponent(
+        source=UrlDatasetSourceConfig(train_urls=[dummy_chat_data]),
+        format=ChatLmDatasetFormat(messages_field="messages"),
+        cache_dir=str(tmp_path),
+        pack=pack,
+    )
+    cache = _build_train_cache(component, tokenizer)
+    Pos = hax.Axis("position", 128)
+    ds = dataset_for_component(
+        component, Pos, cache, eos_id=None, block_cross_document_attention=True
+    ).as_sync_dataset()
+
+    # dummy_chat_data holds two conversations; unpacked mode never merges them
+    assert len(ds) == 2
+    for ex in ds:
+        assert ex.tokens.shape == (Pos.size,)
+        assert ex.loss_weight.shape == (Pos.size,)
+        assert_padding_never_contributes_loss(ex)
+        # assistant spans survive intact
+        assert_loss_weight_matches_all_assistants(ex, tokenizer)
+
+
+def test_dataset_for_component_text_unpacked_masks_padding(tmp_path):
+    """Regression: one-document-per-example raw text must not train on padding.
+
+    PackedTokenDataset supplies loss_weight=1 everywhere for raw text, so without the
+    padding-aware masking the pad positions (and the final real token that would predict
+    a pad token) would leak into the loss.
+    """
+    records = [{"text": "Hello world"}, {"text": "Short"}]
+    data_path = tmp_path / "text_pad.jsonl"
+    with data_path.open("w") as f:
+        for record in records:
+            f.write(json.dumps(record) + "\n")
+
+    component = DatasetComponent(
+        source=UrlDatasetSourceConfig(train_urls=[str(data_path)]),
+        format=TextLmDatasetFormat(text_key="text"),
+        cache_dir=str(tmp_path),
+        pack=1,
+    )
+    tokenizer = load_tokenizer("marin-community/marin-tokenizer")
+    cache = _build_train_cache(component, tokenizer)
+    Pos = hax.Axis("position", 16)
+    ds = dataset_for_component(
+        component, Pos, cache, eos_id=None, block_cross_document_attention=True
+    ).as_sync_dataset()
+
+    assert len(ds) == 2
+    for ex in ds:
+        assert ex.tokens.shape == (Pos.size,)
+        assert_padding_never_contributes_loss(ex)
+
+
+# --- LmDataConfig.build_caches ---------------------------------------------
+
+
+def _write_prebuilt_jsonl(path: Path, records: list[dict]) -> None:
+    with path.open("w") as f:
+        for record in records:
+            f.write(json.dumps(record) + "\n")
+
+
+def _prebuilt_train_component(jsonl_path: Path) -> DatasetComponent:
+    return DatasetComponent(
+        source=UrlDatasetSourceConfig(train_urls=[str(jsonl_path)], validation_urls=[]),
+        format=PrebuiltLmDatasetFormat(),
+    )
+
+
+def test_build_caches_propagates_exception_from_one_component(tmp_path):
+    p_good = tmp_path / "good.jsonl"
+    _write_prebuilt_jsonl(p_good, [{"input_ids": [1, 2, 3, 4]}])
+    good = _prebuilt_train_component(p_good)
+    bad = DatasetComponent(
+        source=None,
+        cache_dir=str(tmp_path / "bad_missing"),
+        format=PrebuiltLmDatasetFormat(),
+    )
+    config = LmDataConfig(
+        components={"good": good, "bad": bad},
+        cache_dir=str(tmp_path / "caches"),
+        tokenizer="passthrough",
+        vocab_size=16,
+    )
+    with pytest.raises(ValueError, match="No source and no cache"):
+        config.build_caches("train")
+
+
+def test_build_caches_rebuilds_on_unloadable_cache(tmp_path):
+    """A cache dir that exists but won't load (no shard_ledger.json — the
+    leftover of a cache build killed before it finished) must not crash-loop:
+    with auto_build_caches on, build_caches catches the FileNotFoundError and
+    falls through to rebuild rather than propagating it.
+    """
+    records = [{"input_ids": [1, 2, 3, 4]}, {"input_ids": [5, 6, 7, 8]}]
+    data_path = tmp_path / "data.jsonl"
+    with data_path.open("w") as f:
+        for record in records:
+            f.write(json.dumps(record) + "\n")
+
+    component = DatasetComponent(
+        source=UrlDatasetSourceConfig(train_urls=[str(data_path)], validation_urls=[]),
+        format=PrebuiltLmDatasetFormat(),
+        cache_dir=str(tmp_path),
+    )
+    config = LmDataConfig(components={"c": component}, tokenizer="passthrough", vocab_size=16)
+    assert config.auto_build_caches  # precondition: rebuild path is enabled
+
+    config.build_caches("train")  # first build → complete cache
+
+    # Reduce the cache dir to "exists but unloadable": keep the directory so
+    # fsspec exists() is True, but empty it so load_lm_dataset_cache raises
+    # FileNotFoundError (no ledger). This is the partial state a killed build
+    # leaves behind.
+    cache_path = next(tmp_path.glob("**/shard_ledger.json")).parent
+    for child in cache_path.iterdir():
+        shutil.rmtree(child) if child.is_dir() else child.unlink()
+    assert cache_path.exists() and not any(cache_path.iterdir())
+
+    rebuilt = config.build_caches("train")["c"]
+    assert (cache_path / "shard_ledger.json").exists(), "rebuild should restore the ledger"
+    Pos = hax.Axis("position", 4)
+    ds = dataset_for_component(
+        component, Pos, rebuilt, eos_id=None, block_cross_document_attention=config.block_cross_document_attention
+    ).as_sync_dataset()
+    np.testing.assert_array_equal(np.asarray(ds[0].tokens), np.array(records[0]["input_ids"], dtype=np.int32))

@@ -1,6 +1,12 @@
 # Copyright The Levanter Authors
 # SPDX-License-Identifier: Apache-2.0
 
+import importlib.util
+import os
+import subprocess
+import sys
+import textwrap
+
 import numpy as np
 import pytest
 
@@ -8,9 +14,16 @@ import jax
 import jax.numpy as jnp
 from jax._src import config as jax_config
 from jax.sharding import AbstractMesh, AxisType, Mesh, NamedSharding, PartitionSpec as P, use_abstract_mesh
+from haliax.nn.ragged_dot import ragged_dot
 
 import levanter.grug.grug_moe as grug_moe
+from levanter.grug._moe.common import _prepare_moe_dispatch, _prepare_moe_dispatch_indices_with_assignment_ids
+from levanter.grug._moe.ep_deepep import _pack_deepep_local_assignments
+from levanter.grug._moe.ep_fixed_all_to_all import _moe_mlp_ep_fixed_a2a_local
+from levanter.grug._moe.sonic import sonic_gather_sum
 from levanter.grug.grug_moe import (
+    MoEExpertMlp,
+    MoEExpertMlpPspecs,
     MoeImplementation,
     _compact_by_keep_mask,
     _expand_from_keep_mask,
@@ -81,6 +94,34 @@ def _make_inputs(
     return x, selected_experts, combine_weights, w_up_gate, w_down
 
 
+def _make_unique_topk_experts(*, tokens: int, topk: int, num_experts: int) -> jax.Array:
+    if topk > num_experts:
+        raise ValueError(f"topk must be <= num_experts, got topk={topk}, num_experts={num_experts}")
+    token_ids = jnp.arange(tokens, dtype=jnp.int32)[:, None]
+    expert_offsets = jnp.arange(topk, dtype=jnp.int32)[None, :]
+    return (token_ids + expert_offsets) % num_experts
+
+
+def _gather_sum_reference(
+    dispatch_output: jax.Array,
+    dispatch_positions: jax.Array,
+    combine_weights: jax.Array,
+) -> jax.Array:
+    out = jnp.zeros((dispatch_positions.shape[0], dispatch_output.shape[1]), dtype=dispatch_output.dtype)
+    weights = combine_weights.astype(dispatch_output.dtype)
+    for topk_index in range(dispatch_positions.shape[1]):
+        out = out + dispatch_output[dispatch_positions[:, topk_index]] * weights[:, topk_index, None]
+    return out
+
+
+def _skip_without_sonic_gpu_runtime() -> None:
+    optional_modules = ("jax_triton", "triton")
+    if not all(importlib.util.find_spec(module) is not None for module in optional_modules):
+        pytest.skip("raw Sonic optional dependencies are not installed")
+    if not any(device.platform == "gpu" for device in jax.devices()):
+        pytest.skip("raw Sonic triton_call tests require a GPU")
+
+
 def test_moe_mlp_runs_without_ep_axis():
     mesh = _make_dense_mesh()
     tokens = max(8, len(jax.devices()) * 8)
@@ -136,7 +177,272 @@ def test_moe_mlp_default_matches_explicit_ring_without_ep_axis():
     np.testing.assert_allclose(np.asarray(y_default), np.asarray(y_ring), rtol=1e-5, atol=1e-5)
 
 
-@pytest.mark.parametrize("implementation", ["ring", "ragged_all_to_all"])
+def test_deepep_local_assignment_packing_uses_local_expert_ids():
+    recv_x = jnp.array(
+        [
+            [1.0, 2.0],
+            [3.0, 4.0],
+            [5.0, 6.0],
+        ],
+        dtype=jnp.float32,
+    )
+    recv_topk_idx = jnp.array(
+        [
+            [0, 1],
+            [1, -1],
+            [0, 0],
+        ],
+        dtype=jnp.int32,
+    )
+    recv_topk_weights = jnp.array(
+        [
+            [0.1, 0.2],
+            [0.3, 0.0],
+            [0.4, 0.5],
+        ],
+        dtype=jnp.float32,
+    )
+
+    local_assignments = _pack_deepep_local_assignments(
+        recv_x,
+        recv_topk_idx,
+        recv_topk_weights,
+        local_experts=2,
+        num_recv_tokens=jnp.array(2, dtype=jnp.int32),
+    )
+
+    np.testing.assert_array_equal(np.asarray(local_assignments.local_group_sizes), np.array([1, 2], dtype=np.int32))
+    np.testing.assert_array_equal(
+        np.asarray(local_assignments.recv_token_indices[:3]),
+        np.array([0, 0, 1], dtype=np.int32),
+    )
+    np.testing.assert_allclose(
+        np.asarray(local_assignments.x_dispatch[:3]),
+        np.array([[1.0, 2.0], [1.0, 2.0], [3.0, 4.0]], dtype=np.float32),
+        rtol=0,
+        atol=0,
+    )
+    np.testing.assert_allclose(
+        np.asarray(local_assignments.assignment_weights[:3]),
+        np.array([0.1, 0.2, 0.3], dtype=np.float32),
+        rtol=1e-6,
+        atol=1e-6,
+    )
+    np.testing.assert_allclose(np.asarray(local_assignments.x_dispatch[3:]), 0, rtol=0, atol=0)
+    np.testing.assert_allclose(np.asarray(local_assignments.assignment_weights[3:]), 0, rtol=0, atol=0)
+
+
+def test_prepare_moe_dispatch_indices_match_materialized_dispatch():
+    x, selected_experts, combine_weights, _w_up_gate, _w_down = _make_inputs(
+        key=jax.random.key(28),
+        tokens=20,
+        hidden_dim=16,
+        intermediate_dim=24,
+        num_experts=5,
+        topk=2,
+    )
+
+    x_sort, w_sort, token_ids_sort, group_sizes = _prepare_moe_dispatch(
+        x,
+        selected_experts,
+        combine_weights,
+        num_experts=5,
+    )
+    token_ids_from_indices, dispatch_positions, index_group_sizes, sorted_assignment_ids = (
+        _prepare_moe_dispatch_indices_with_assignment_ids(
+            selected_experts,
+            num_experts=5,
+        )
+    )
+
+    np.testing.assert_array_equal(np.asarray(token_ids_from_indices), np.asarray(token_ids_sort))
+    np.testing.assert_array_equal(np.asarray(index_group_sizes), np.asarray(group_sizes))
+    np.testing.assert_allclose(np.asarray(x[token_ids_from_indices]), np.asarray(x_sort), rtol=0, atol=0)
+
+    dispatch_weights = combine_weights.reshape(-1)
+    np.testing.assert_allclose(
+        np.asarray(dispatch_weights[sorted_assignment_ids].astype(x.dtype)),
+        np.asarray(w_sort),
+        rtol=0,
+        atol=0,
+    )
+
+    expected_sorted_positions = np.arange(selected_experts.size, dtype=np.int32)
+    flat_dispatch_positions = np.asarray(dispatch_positions).reshape(-1)
+    np.testing.assert_array_equal(
+        flat_dispatch_positions[np.asarray(sorted_assignment_ids)], expected_sorted_positions
+    )
+
+
+def test_moe_expert_mlp_init_matches_across_backends():
+    k_mlp = jax.random.key(26)
+    hidden_dim = 16
+    intermediate_dim = 24
+    num_experts = 4
+
+    scatter_mlp = MoEExpertMlp.init(
+        num_experts=num_experts,
+        hidden_dim=hidden_dim,
+        intermediate_dim=intermediate_dim,
+        initializer_std=0.02,
+        key=k_mlp,
+        implementation="scatter",
+    )
+    sonic_mlp = MoEExpertMlp.init(
+        num_experts=num_experts,
+        hidden_dim=hidden_dim,
+        intermediate_dim=intermediate_dim,
+        initializer_std=0.02,
+        key=k_mlp,
+        implementation="sonic",
+    )
+
+    np.testing.assert_allclose(
+        np.asarray(sonic_mlp.w_gate),
+        np.asarray(scatter_mlp.w_gate),
+        rtol=1e-5,
+        atol=1e-5,
+    )
+    np.testing.assert_allclose(
+        np.asarray(sonic_mlp.w_up),
+        np.asarray(scatter_mlp.w_up),
+        rtol=1e-5,
+        atol=1e-5,
+    )
+    np.testing.assert_allclose(np.asarray(sonic_mlp.w_down), np.asarray(scatter_mlp.w_down), rtol=1e-5, atol=1e-5)
+
+
+def test_moe_mlp_sonic_backend_reports_missing_optional_dependencies():
+    optional_modules = ("jax_triton", "triton")
+    if all(importlib.util.find_spec(module) is not None for module in optional_modules):
+        pytest.skip("raw Sonic optional dependencies are installed in this environment")
+
+    x, selected_experts, combine_weights, w_up_gate, w_down = _make_inputs(
+        key=jax.random.key(20),
+        tokens=8,
+        hidden_dim=8,
+        intermediate_dim=12,
+        num_experts=4,
+        topk=2,
+    )
+
+    with pytest.raises(ImportError, match="implementation='sonic' requires jax-triton and triton"):
+        moe_mlp(
+            x,
+            selected_experts,
+            combine_weights,
+            w_up_gate,
+            w_down,
+            mesh=None,
+            implementation="sonic",
+        )
+
+
+def test_sonic_gather_sum_matches_jax_reference_on_gpu():
+    _skip_without_sonic_gpu_runtime()
+    tokens = 32
+    topk = 2
+    hidden_dim = 64
+    num_experts = 8
+    selected_experts = _make_unique_topk_experts(tokens=tokens, topk=topk, num_experts=num_experts)
+    combine_weights = jax.nn.softmax(
+        jax.random.normal(jax.random.key(29), (tokens, topk), dtype=jnp.float32),
+        axis=-1,
+    )
+    dispatch_output = jax.random.normal(jax.random.key(30), (tokens * topk, hidden_dim), dtype=jnp.float32)
+    _token_ids, dispatch_positions, _group_sizes, _assignment_ids = _prepare_moe_dispatch_indices_with_assignment_ids(
+        selected_experts,
+        num_experts=num_experts,
+    )
+
+    @jax.jit
+    def gather_sum(dispatch_output, dispatch_positions, combine_weights):
+        return (
+            sonic_gather_sum(dispatch_output, dispatch_positions, combine_weights),
+            _gather_sum_reference(dispatch_output, dispatch_positions, combine_weights),
+        )
+
+    sonic_out, reference_out = gather_sum(dispatch_output, dispatch_positions, combine_weights)
+    sonic_out.block_until_ready()
+    reference_out.block_until_ready()
+    np.testing.assert_allclose(np.asarray(sonic_out), np.asarray(reference_out), rtol=1e-5, atol=1e-5)
+
+
+def test_moe_mlp_sonic_matches_jax_gather_reference_on_gpu():
+    _skip_without_sonic_gpu_runtime()
+    tokens = 512
+    hidden_dim = 128
+    intermediate_dim = 256
+    num_experts = 8
+    topk = 2
+    k_x, k_logits, k_w13, k_w2 = jax.random.split(jax.random.key(31), 4)
+    dtype = jnp.bfloat16
+    x = jax.random.normal(k_x, (tokens, hidden_dim), dtype=dtype)
+    selected_experts = _make_unique_topk_experts(tokens=tokens, topk=topk, num_experts=num_experts)
+    combine_weights = jax.nn.softmax(
+        jax.random.normal(k_logits, (tokens, topk), dtype=jnp.float32),
+        axis=-1,
+    )
+    w_up_gate = jax.random.normal(k_w13, (num_experts, hidden_dim, 2 * intermediate_dim), dtype=dtype)
+    w_down = jax.random.normal(k_w2, (num_experts, intermediate_dim, hidden_dim), dtype=dtype)
+
+    @jax.jit
+    def run_moe_with_reference(x, selected_experts, combine_weights, w_up_gate, w_down):
+        token_ids, dispatch_positions, group_sizes, _assignment_ids = (
+            _prepare_moe_dispatch_indices_with_assignment_ids(
+                selected_experts,
+                num_experts=num_experts,
+            )
+        )
+        x_dispatch = x[token_ids]
+        w13_dispatch = ragged_dot(x_dispatch, w_up_gate, group_sizes)
+        gate_dispatch, up_dispatch = grug_moe.split_moe_w13_output(
+            w13_dispatch,
+            intermediate_dim=intermediate_dim,
+            interleaved=False,
+        )
+        dispatch_out = ragged_dot(jax.nn.silu(gate_dispatch) * up_dispatch, w_down, group_sizes)
+        reference_out = _gather_sum_reference(dispatch_out, dispatch_positions, combine_weights)
+        sonic_out = moe_mlp(
+            x,
+            selected_experts,
+            combine_weights,
+            w_up_gate,
+            w_down,
+            activation=ActivationFunctionEnum.silu,
+            implementation="sonic",
+            mesh=None,
+        )
+        return sonic_out, reference_out
+
+    sonic_out, reference_out = run_moe_with_reference(x, selected_experts, combine_weights, w_up_gate, w_down)
+    sonic_out.block_until_ready()
+    reference_out.block_until_ready()
+    max_abs = jnp.max(jnp.abs(sonic_out.astype(jnp.float32) - reference_out.astype(jnp.float32)))
+    assert float(max_abs) <= 64.0
+
+
+def test_moe_expert_mlp_init_uses_logical_weight_pspecs():
+    mesh = _make_dense_mesh()
+    pspecs = MoEExpertMlpPspecs(expert=None, hidden="data", intermediate="model")
+
+    with jax.set_mesh(mesh):
+        mlp = MoEExpertMlp.init(
+            num_experts=4,
+            hidden_dim=16,
+            intermediate_dim=24,
+            initializer_std=0.02,
+            key=jax.random.key(27),
+            implementation="sonic",
+            pspecs=pspecs,
+        )
+
+    assert mlp.w_gate.sharding.spec == P(None, "data", "model")
+    assert mlp.w_up.sharding.spec == P(None, "data", "model")
+    assert mlp.w_down.sharding.spec == P(None, "model", "data")
+
+
+@pytest.mark.parametrize("implementation", ["ring", "ragged_all_to_all", "fixed_all_to_all"])
 def test_moe_ep_path_lowers_on_abstract_mesh(implementation: MoeImplementation):
     mesh = _make_abstract_moe_mesh(data=2, expert=2, model=1)
 
@@ -192,6 +498,182 @@ def test_moe_ep_path_lowers_on_abstract_mesh(implementation: MoeImplementation):
             .lower(lowering_platforms=(platform,))
         )
         assert lowered is not None
+
+
+def test_fixed_all_to_all_drops_assignments_over_capacity():
+    mesh = Mesh(
+        np.asarray([jax.devices()[0]]),
+        axis_names=("expert",),
+        axis_types=(AxisType.Explicit,),
+    )
+    tokens = 4
+    hidden_dim = 4
+    intermediate_dim = 6
+    num_experts = 2
+    topk = 2
+    x, _, combine_weights, w_up_gate, w_down = _make_inputs(
+        key=jax.random.key(41),
+        tokens=tokens,
+        hidden_dim=hidden_dim,
+        intermediate_dim=intermediate_dim,
+        num_experts=num_experts,
+        topk=topk,
+    )
+    selected_experts = jnp.tile(jnp.arange(topk, dtype=jnp.int32), (tokens, 1))
+
+    def fixed_a2a(x, selected_experts, combine_weights, w_up_gate, w_down):
+        return _moe_mlp_ep_fixed_a2a_local(
+            x,
+            selected_experts,
+            combine_weights,
+            w_up_gate,
+            w_down,
+            activation_fn=jax.nn.silu,
+            num_experts=num_experts,
+            capacity_factor=0.5,
+        )
+
+    sharded_fixed_a2a = jax.shard_map(
+        fixed_a2a,
+        mesh=mesh,
+        in_specs=(P(), P(), P(), P(), P()),
+        out_specs=(P(), P()),
+        check_vma=False,
+    )
+    with jax.set_mesh(mesh):
+        actual, dropped = sharded_fixed_a2a(x, selected_experts, combine_weights, w_up_gate, w_down)
+
+    keep = jnp.asarray([[True, True], [True, True], [False, False], [False, False]])
+
+    def dense_output(x, w_up_gate, w_down):
+        selected_w13 = w_up_gate[selected_experts]
+        hidden = jnp.einsum("th,tkhi->tki", x, selected_w13)
+        gate, up = jnp.split(hidden, [intermediate_dim], axis=-1)
+        expert_output = jnp.einsum(
+            "tki,tkih->tkh",
+            jax.nn.silu(gate) * up,
+            w_down[selected_experts],
+        )
+        return jnp.einsum("tkh,tk->th", expert_output, combine_weights * keep)
+
+    cotangent = jax.random.normal(jax.random.key(42), x.shape)
+    with jax.set_mesh(mesh):
+        actual_gradients = jax.grad(
+            lambda x, w_up_gate, w_down: jnp.sum(
+                sharded_fixed_a2a(x, selected_experts, combine_weights, w_up_gate, w_down)[0] * cotangent
+            ),
+            argnums=(0, 1, 2),
+        )(x, w_up_gate, w_down)
+
+    expected = dense_output(x, w_up_gate, w_down)
+    expected_gradients = jax.grad(
+        lambda x, w_up_gate, w_down: jnp.sum(dense_output(x, w_up_gate, w_down) * cotangent),
+        argnums=(0, 1, 2),
+    )(x, w_up_gate, w_down)
+
+    np.testing.assert_allclose(np.asarray(actual), np.asarray(expected), rtol=1e-5, atol=1e-5)
+    for actual_gradient, expected_gradient in zip(actual_gradients, expected_gradients, strict=True):
+        np.testing.assert_allclose(
+            np.asarray(actual_gradient),
+            np.asarray(expected_gradient),
+            rtol=1e-5,
+            atol=1e-5,
+        )
+    assert int(dropped) == 4
+
+
+def test_fixed_all_to_all_matches_dense_cross_shard_value_and_gradients():
+    env = os.environ.copy()
+    env["JAX_PLATFORMS"] = "cpu"
+    env["XLA_FLAGS"] = "--xla_force_host_platform_device_count=4"
+    script = """
+        import jax
+        import jax.numpy as jnp
+        import numpy as np
+        from jax.sharding import AxisType, Mesh, NamedSharding, PartitionSpec as P
+
+        from levanter.grug.grug_moe import moe_mlp
+
+        assert jax.device_count() == 4
+        mesh = Mesh(
+            np.asarray(jax.devices()),
+            axis_names=("expert",),
+            axis_types=(AxisType.Explicit,),
+        )
+        x = jax.random.normal(jax.random.key(0), (4, 4))
+        selected_experts = jnp.asarray(
+            [[2, 3], [4, 5], [6, 7], [0, 1]],
+            dtype=jnp.int32,
+        )
+        combine_weights = jax.nn.softmax(jax.random.normal(jax.random.key(1), (4, 2)), axis=-1)
+        w_up_gate = jax.random.normal(jax.random.key(2), (8, 4, 6))
+        w_down = jax.random.normal(jax.random.key(3), (8, 3, 4))
+        cotangent = jax.random.normal(jax.random.key(4), (4, 4))
+
+        def dense_output(x, w_up_gate, w_down):
+            selected_w13 = w_up_gate[selected_experts]
+            hidden = jnp.einsum("th,tkhi->tki", x, selected_w13)
+            gate, up = jnp.split(hidden, [3], axis=-1)
+            expert_output = jnp.einsum(
+                "tki,tkih->tkh",
+                jax.nn.silu(gate) * up,
+                w_down[selected_experts],
+            )
+            return jnp.einsum("tkh,tk->th", expert_output, combine_weights)
+
+        expected = dense_output(x, w_up_gate, w_down)
+        expected_gradients = jax.grad(
+            lambda x, w_up_gate, w_down: jnp.sum(dense_output(x, w_up_gate, w_down) * cotangent),
+            argnums=(0, 1, 2),
+        )(x, w_up_gate, w_down)
+
+        batch_sharding = NamedSharding(mesh, P("expert", None))
+        expert_sharding = NamedSharding(mesh, P("expert", None, None))
+        x = jax.device_put(x, batch_sharding)
+        selected_experts = jax.device_put(selected_experts, batch_sharding)
+        combine_weights = jax.device_put(combine_weights, batch_sharding)
+        w_up_gate = jax.device_put(w_up_gate, expert_sharding)
+        w_down = jax.device_put(w_down, expert_sharding)
+        cotangent = jax.device_put(cotangent, batch_sharding)
+
+        def fixed_output(x, w_up_gate, w_down):
+            return moe_mlp(
+                x,
+                selected_experts,
+                combine_weights,
+                w_up_gate,
+                w_down,
+                activation=jax.nn.silu,
+                implementation="fixed_all_to_all",
+                mesh=mesh,
+                capacity_factor=4.0,
+            )
+
+        with jax.set_mesh(mesh):
+            actual = fixed_output(x, w_up_gate, w_down)
+            actual_gradients = jax.grad(
+                lambda x, w_up_gate, w_down: jnp.sum(fixed_output(x, w_up_gate, w_down) * cotangent),
+                argnums=(0, 1, 2),
+            )(x, w_up_gate, w_down)
+
+        np.testing.assert_allclose(np.asarray(actual), np.asarray(expected), rtol=1e-5, atol=1e-5)
+        for actual_gradient, expected_gradient in zip(actual_gradients, expected_gradients, strict=True):
+            np.testing.assert_allclose(
+                np.asarray(actual_gradient),
+                np.asarray(expected_gradient),
+                rtol=1e-5,
+                atol=1e-5,
+            )
+    """
+    result = subprocess.run(
+        [sys.executable, "-c", textwrap.dedent(script)],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
 def test_shard_a2a_params_uses_sender_side_output_offsets():

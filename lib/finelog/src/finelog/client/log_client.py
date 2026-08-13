@@ -1,8 +1,6 @@
 # Copyright The Marin Authors
 # SPDX-License-Identifier: Apache-2.0
 
-from __future__ import annotations
-
 import dataclasses
 import io
 import logging
@@ -16,7 +14,7 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
-from typing import Any
+from typing import Any, TypeVar
 
 import pyarrow as pa
 import pyarrow.ipc as paipc
@@ -36,13 +34,14 @@ from finelog.errors import (
     SchemaValidationError,
     StatsError,
 )
+from finelog.policy import StoragePolicy
 from finelog.rpc import finelog_stats_pb2 as stats_pb2
 from finelog.rpc import logging_pb2
 from finelog.rpc.finelog_stats_connect import StatsServiceClientSync
 from finelog.rpc.logging_connect import LogServiceClientSync
-from finelog.store.log_namespace import LOG_REGISTERED_SCHEMA
-from finelog.store.schema import (
+from finelog.schema import (
     IMPLICIT_SEQ_COLUMN,
+    LOG_REGISTERED_SCHEMA,
     Column,
     ColumnTypeValue,
     Schema,
@@ -80,18 +79,9 @@ DEFAULT_BATCH_ROWS = 10_000
 # Per-Table queue cap in bytes. Matches WriteRows max body size.
 DEFAULT_MAX_BUFFER_BYTES = 16 * 1024 * 1024
 
-# Compression policy: prefer zstd, but never demand it.
-#
-# Connect has no per-request negotiation for the *send* direction — whatever
-# we set as ``send_compression`` is what every request body carries. To stay
-# safe across a phased rollout where clients and servers update in either
-# order, we send gzip (which every connectrpc server has accepted forever)
-# and only express the zstd preference on the response side via
-# ``accept_compression`` (zstd first). Servers that support zstd reply in
-# zstd; older servers fall back to gzip. Once we have confidence every
-# deployed server accepts zstd, flip ``_SEND_COMPRESSION`` to ``ZstdCompression``.
-_SEND_COMPRESSION = GzipCompression()
-_ACCEPT_COMPRESSIONS = (ZstdCompression(), GzipCompression())
+_FINELOG_ZSTD_LEVEL = 1
+_SEND_COMPRESSION = ZstdCompression(level=_FINELOG_ZSTD_LEVEL)
+_ACCEPT_COMPRESSIONS = (_SEND_COMPRESSION, GzipCompression())
 
 _BACKOFF_INITIAL = 0.5
 _BACKOFF_MAX = 30.0
@@ -105,6 +95,13 @@ class FlushResult(StrEnum):
 
 def _format_exc_summary(exc: BaseException) -> str:
     if isinstance(exc, ConnectError):
+        # The server detail (e.g. "column \"ts\": nullable mismatch
+        # registered=true requested=false") is the whole point of the log —
+        # without it a FAILED_PRECONDITION is undiagnosable. Keep the code too
+        # so the retryable classification stays legible.
+        detail = exc.message.strip()
+        if detail:
+            return f"{type(exc).__name__}({exc.code.name}: {detail})"
         return f"{type(exc).__name__}({exc.code.name})"
     return f"{type(exc).__name__}: {exc}"
 
@@ -117,6 +114,25 @@ _PRIMITIVE_TYPE_MAP: dict[Any, ColumnTypeValue] = {
     bytes: stats_pb2.COLUMN_TYPE_BYTES,
     datetime: stats_pb2.COLUMN_TYPE_TIMESTAMP_MS,
 }
+
+# Human-readable list of the dataclass field types finelog can infer a column
+# from, for the unsupported-type error message.
+_SUPPORTED_FIELD_TYPES = "str, int, float, bool, bytes, datetime, dict[str, str]"
+
+
+def _column_type_for_annotation(inner: Any) -> ColumnTypeValue | None:
+    """Resolve a non-``Optional`` field annotation to a ``ColumnType``.
+
+    Returns ``None`` for an unsupported annotation. ``dict[str, str]`` infers to
+    ``COLUMN_TYPE_MAP`` (a native ``Map<Utf8,Utf8>`` column); every other
+    supported field is a bare primitive class in ``_PRIMITIVE_TYPE_MAP``.
+    """
+    primitive = _PRIMITIVE_TYPE_MAP.get(inner)
+    if primitive is not None:
+        return primitive
+    if typing.get_origin(inner) is dict and typing.get_args(inner) == (str, str):
+        return stats_pb2.COLUMN_TYPE_MAP
+    return None
 
 
 def _strip_optional(annotation: Any) -> tuple[Any, bool]:
@@ -157,14 +173,20 @@ def schema_from_dataclass(cls: type) -> Schema:
                 f"dataclass {cls.__name__}: field {field.name!r} is reserved " f"(server-assigned implicit column)"
             )
         annotation = type_hints.get(field.name, field.type)
-        inner, nullable = _strip_optional(annotation)
-        col_type = _PRIMITIVE_TYPE_MAP.get(inner)
+        # Every column is registered nullable regardless of whether the field is
+        # declared Optional. Finelog adopts compacted segments as all-nullable
+        # (DuckDB's COPY drops Arrow non-nullability), so a column registered
+        # non-nullable would conflict with its own adopted schema after a catalog
+        # rebuild and wedge all writes. _strip_optional still runs to unwrap the
+        # inner type of ``T | None`` fields and to reject unsupported unions.
+        inner, _nullable = _strip_optional(annotation)
+        col_type = _column_type_for_annotation(inner)
         if col_type is None:
             raise SchemaValidationError(
                 f"dataclass {cls.__name__}: field {field.name!r} has unsupported "
-                f"type {annotation!r} (supported: str, int, float, bool, bytes, datetime)"
+                f"type {annotation!r} (supported: {_SUPPORTED_FIELD_TYPES})"
             )
-        columns.append(Column(name=field.name, type=col_type, nullable=nullable))
+        columns.append(Column(name=field.name, type=col_type, nullable=True))
     key_column = getattr(cls, "key_column", "")
     if not isinstance(key_column, str):
         raise SchemaValidationError(
@@ -187,6 +209,12 @@ class Table:
     flush thread, and retry/backoff with resolver invalidation on transient
     server failures. Created via :meth:`LogClient.get_table`; closing the
     LogClient drains every Table.
+
+    Registration is deferred to the flush thread: if a ``registrar`` is given,
+    it is invoked once before the first send to register the namespace and
+    return its effective schema. A failing registration is treated like any
+    other flush failure (retried with backoff, or the batch dropped on a
+    non-retryable error) and never blocks the caller that created the Table.
     """
 
     def __init__(
@@ -196,6 +224,7 @@ class Table:
         schema: Schema,
         flusher: Callable[[str, pa.RecordBatch], None],
         querier: Callable[[str], pa.Table] | None = None,
+        registrar: Callable[[], Schema] | None = None,
         flush_interval: float = DEFAULT_FLUSH_INTERVAL,
         batch_rows: int = DEFAULT_BATCH_ROWS,
         max_buffer_bytes: int = DEFAULT_MAX_BUFFER_BYTES,
@@ -207,6 +236,12 @@ class Table:
         self._arrow_schema = schema_to_arrow(schema)
         self._flusher = flusher
         self._querier = querier
+        # When set, the flush thread calls this once before its first send to
+        # register the namespace; the returned effective schema replaces the
+        # locally-requested one for Arrow encoding. ``None`` means the
+        # namespace is already registered server-side (e.g. ``log``).
+        self._registrar = registrar
+        self._registered = registrar is None
         self._flush_interval = flush_interval
         self._batch_rows = batch_rows
         self._max_buffer_bytes = max_buffer_bytes
@@ -308,6 +343,12 @@ class Table:
             self._cond.notify_all()
         self._thread.join(timeout=max(self._flush_interval * 2, 10.0))
         with self._cond:
+            if self._processed_seq < self._pushed_seq:
+                logger.warning(
+                    "Table(%s) close() timed out before draining %d pending row(s); they were not sent",
+                    self._namespace,
+                    self._pushed_seq - self._processed_seq,
+                )
             self._closed = True
             self._cond.notify_all()
 
@@ -395,6 +436,7 @@ class Table:
             return 0, []
         rows = [item.payload for item in items]
         try:
+            self._ensure_registered()
             batch = _rows_to_record_batch(rows, self._arrow_schema, self._schema)
             self._flusher(self._namespace, batch)
         except Exception as exc:
@@ -413,6 +455,25 @@ class Table:
                 return items[-1].seq, []
             return 0, items
         return items[-1].seq, []
+
+    def _ensure_registered(self) -> None:
+        """Register the namespace on first send, adopting its effective schema.
+
+        Runs on the flush thread only, so the (re)assignment of ``_schema`` /
+        ``_arrow_schema`` does not race the Arrow encode that follows. A raised
+        exception propagates to :meth:`_send`, which treats it as a flush
+        failure.
+        """
+        if self._registered:
+            return
+        assert self._registrar is not None
+        effective = self._registrar()
+        self._schema = effective
+        self._arrow_schema = schema_to_arrow(effective)
+        self._registered = True
+
+
+_ClientT = TypeVar("_ClientT")
 
 
 class LogClient:
@@ -452,7 +513,7 @@ class LogClient:
         resolver: Callable[[str], str] | None = None,
         timeout_ms: int = 10_000,
         interceptors: Iterable[Interceptor] = (),
-    ) -> LogClient:
+    ) -> "LogClient":
         """Construct a LogClient against ``endpoint``.
 
         ``endpoint`` is either an HTTP URL string or a ``(host, port)``
@@ -521,6 +582,22 @@ class LogClient:
             self._invalidate(_format_exc_summary(exc))
             raise
 
+    def query(self, sql: str, *, max_rows: int = 100_000) -> pa.Table:
+        """Run Postgres-flavored SQL against any registered namespace.
+
+        Unlike :meth:`Table.query`, this does not require a local Table
+        handle; the server resolves namespaces from the FROM clause. Raises
+        :class:`QueryResultTooLargeError` if the row count exceeds
+        ``max_rows``.
+        """
+        result = self._stats_query(sql)
+        if result.num_rows > max_rows:
+            raise QueryResultTooLargeError(
+                f"query returned {result.num_rows} rows, exceeds max_rows={max_rows} "
+                f"(add a LIMIT or pass a higher max_rows)"
+            )
+        return result
+
     def flush(self, timeout: float | None = None) -> FlushResult:
         """Flush the ``log`` namespace's Table, if any."""
         table = self._tables.get(LOG_NAMESPACE)
@@ -528,8 +605,28 @@ class LogClient:
             return FlushResult.SUCCEEDED
         return table.flush(timeout=timeout)
 
-    def get_table(self, namespace: str, schema: type | Schema) -> Table:
-        """Idempotently register ``namespace`` and return a Table handle."""
+    def get_table(
+        self,
+        namespace: str,
+        schema: type | Schema,
+        *,
+        storage_policy: StoragePolicy = StoragePolicy(),
+    ) -> Table:
+        """Return a Table handle for ``namespace``, registering it lazily.
+
+        The handle is returned immediately without contacting the server: the
+        ``register_table`` RPC is deferred to the Table's flush thread, which
+        runs it once before the first send. A connectivity or schema failure
+        there is handled as a normal flush failure (retried with backoff, or
+        the batch dropped) and never propagates to this caller, so a caller
+        that only needs to enqueue rows is never blocked by an unavailable
+        finelog server.
+
+        ``storage_policy`` is a per-namespace retention override; an
+        empty policy inherits the server defaults. A non-empty policy
+        on a re-register replaces the namespace's current policy
+        (last-write-wins).
+        """
         if namespace == LOG_NAMESPACE:
             raise InvalidNamespaceError("use write_batch/query for the privileged 'log' namespace")
         if isinstance(schema, Schema):
@@ -539,37 +636,46 @@ class LogClient:
         else:
             raise SchemaValidationError(f"schema must be a Schema or a dataclass class, got {type(schema).__name__}")
 
-        existing = self._tables.get(namespace)
-        if existing is not None:
-            return existing
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("LogClient is closed")
+            existing = self._tables.get(namespace)
+            if existing is not None:
+                return existing
+            table = Table(
+                namespace=namespace,
+                schema=requested,
+                flusher=self._stats_flush,
+                querier=self._stats_query,
+                registrar=lambda: self._register_table(namespace, requested, storage_policy),
+            )
+            self._tables[namespace] = table
+            return table
 
+    def _register_table(self, namespace: str, requested: Schema, storage_policy: StoragePolicy) -> Schema:
+        """Run the ``register_table`` RPC and return the effective schema.
+
+        Called from a Table's flush thread. Raises the underlying transport
+        error (not a translated domain error) so the caller's retryability
+        check sees the original ConnectError code.
+        """
         client = self._get_stats_client()
         try:
             response = client.register_table(
                 stats_pb2.RegisterTableRequest(
                     namespace=namespace,
                     schema=schema_to_proto(requested),
+                    storage_policy=storage_policy.to_proto(),
                 )
             )
         except ConnectError as exc:
-            raise _translate_connect_error(exc) from exc
-        effective = schema_from_proto(response.effective_schema)
-        table = Table(
-            namespace=namespace,
-            schema=effective,
-            flusher=self._stats_flush,
-            querier=self._stats_query,
-        )
-        with self._lock:
-            if self._closed:
-                table.close()
-                raise RuntimeError("LogClient is closed")
-            existing = self._tables.get(namespace)
-            if existing is not None:
-                table.close()
-                return existing
-            self._tables[namespace] = table
-        return table
+            if is_retryable_error(exc):
+                self._invalidate(_format_exc_summary(exc))
+            raise
+        except (ConnectionError, OSError, TimeoutError) as exc:
+            self._invalidate(_format_exc_summary(exc))
+            raise
+        return schema_from_proto(response.effective_schema)
 
     def drop_table(self, namespace: str) -> None:
         """Remove ``namespace`` from the registry and delete its local data."""
@@ -607,13 +713,40 @@ class LogClient:
             self._tables[LOG_NAMESPACE] = tbl
             return tbl
 
-    def _get_stats_client(self) -> StatsServiceClientSync:
+    def _get_or_resolve_client(
+        self,
+        cached: Callable[[], _ClientT | None],
+        create: Callable[[str], _ClientT],
+        label: str,
+    ) -> _ClientT:
+        """Return the cached RPC client, resolving and building it once if absent.
+
+        ``create`` builds the client and installs it in its cache slot; it runs
+        under the lock so the install is atomic with the ``cached`` re-check.
+        """
         with self._lock:
             if self._closed:
                 raise RuntimeError("LogClient is closed")
-            if self._stats_client is not None:
-                return self._stats_client
-            address = self._resolve()
+            if (client := cached()) is not None:
+                return client
+        # Resolve outside the lock: the resolver may block on a network RPC (iris
+        # resolves the endpoint via the controller), and holding _lock across it
+        # stalls every other caller — notably a shutdown-path log emit parked on
+        # the same lock in _get_log_table, which deadlocks teardown. Re-check
+        # under the lock afterward so a caller that loses the resolve race reuses
+        # the winner's client instead of building a second one.
+        address = self._resolve()
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("LogClient is closed")
+            if (client := cached()) is not None:
+                return client
+            client = create(address)
+            logger.info("LogClient resolved %s -> %s (%s)", self._server_url, address, label)
+            return client
+
+    def _get_stats_client(self) -> StatsServiceClientSync:
+        def create(address: str) -> StatsServiceClientSync:
             self._stats_client = StatsServiceClientSync(
                 address=address,
                 timeout_ms=self._timeout_ms,
@@ -621,16 +754,12 @@ class LogClient:
                 send_compression=_SEND_COMPRESSION,
                 accept_compression=_ACCEPT_COMPRESSIONS,
             )
-            logger.info("LogClient resolved %s -> %s (stats)", self._server_url, address)
             return self._stats_client
 
+        return self._get_or_resolve_client(lambda: self._stats_client, create, "stats")
+
     def _get_log_service_client(self) -> LogServiceClientSync:
-        with self._lock:
-            if self._closed:
-                raise RuntimeError("LogClient is closed")
-            if self._log_service_client is not None:
-                return self._log_service_client
-            address = self._resolve()
+        def create(address: str) -> LogServiceClientSync:
             self._log_service_client = LogServiceClientSync(
                 address=address,
                 timeout_ms=self._timeout_ms,
@@ -638,8 +767,9 @@ class LogClient:
                 send_compression=_SEND_COMPRESSION,
                 accept_compression=_ACCEPT_COMPRESSIONS,
             )
-            logger.info("LogClient resolved %s -> %s (log)", self._server_url, address)
             return self._log_service_client
+
+        return self._get_or_resolve_client(lambda: self._log_service_client, create, "log")
 
     def _resolve(self) -> str:
         address = self._resolver(self._server_url)

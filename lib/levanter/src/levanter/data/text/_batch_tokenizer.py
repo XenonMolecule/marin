@@ -5,7 +5,7 @@ from typing import Sequence, Any
 
 import regex
 
-from levanter.data import BatchProcessor
+from levanter.data._preprocessor import BatchProcessor
 from levanter.tokenizers import MarinTokenizer
 from levanter.utils.py_utils import logical_cpu_core_count
 
@@ -17,6 +17,12 @@ ws = regex.compile(r"\s")
 # of input strings + their tokenized output, instead of holding all pieces
 # from all records simultaneously.
 _LONG_STRING_BATCH_SIZE = 256
+
+# Keep ordinary documents together so the Rust tokenizer can spread a batch
+# across Rayon threads. Both limits bound the input and output retained by one
+# encode_batch call; over-long records are handled alone by the streaming path.
+_ENCODE_BATCH_MAX_DOCUMENTS = 64
+_ENCODE_BATCH_MAX_CHARS = 400_000
 
 
 class BatchTokenizer(BatchProcessor[dict, dict]):
@@ -58,26 +64,50 @@ class BatchTokenizer(BatchProcessor[dict, dict]):
         if self._append_eos:
             assert eos_str is not None
 
-        # Encode per-record so an outlier's pieces never coexist with the
-        # rest of the batch's encodings in memory. Short records take the
-        # one-shot path; long records stream through ``_encode_long_string``,
-        # which sub-batches splits and accumulates ids in-place.
+        # Accumulate ordinary records into bounded encode_batch calls so the
+        # Rust tokenizer can use Rayon across documents. An outlier flushes the
+        # current batch, then streams through _encode_long_string alone so its
+        # pieces never coexist with the rest of the batch's encodings.
         encoded: list[list[int]] = []
+        pending_texts: list[str] = []
+        pending_chars = 0
+
+        def flush_pending() -> None:
+            nonlocal pending_chars
+            if not pending_texts:
+                return
+            pending_ids = self.tokenizer.encode_batch(pending_texts, add_special_tokens=False)
+            if bos_id is not None:
+                for ids in pending_ids:
+                    ids.insert(0, bos_id)
+            encoded.extend(pending_ids)
+            pending_texts.clear()
+            pending_chars = 0
+
         for example in batch:
             text = example[self.text_field]
             if eos_str is not None:
                 text = text + " " + eos_str
 
             if self._long_string_workaround and len(text) > self._workaround_len:
+                flush_pending()
                 ids = self._encode_long_string(text)
-            else:
-                ids = self.tokenizer.encode(text, add_special_tokens=False)
+                if bos_id is not None:
+                    # In-place prepend: O(n) shift but no extra full-list
+                    # allocation, unlike [bos_id, *ids].
+                    ids.insert(0, bos_id)
+                encoded.append(ids)
+                continue
 
-            if bos_id is not None:
-                # In-place prepend: O(n) shift but no extra full-list allocation,
-                # unlike ``[bos_id, *ids]`` which doubles peak for huge ids.
-                ids.insert(0, bos_id)
-            encoded.append(ids)
+            if pending_texts and (
+                len(pending_texts) >= _ENCODE_BATCH_MAX_DOCUMENTS
+                or pending_chars + len(text) > _ENCODE_BATCH_MAX_CHARS
+            ):
+                flush_pending()
+            pending_texts.append(text)
+            pending_chars += len(text)
+
+        flush_pending()
 
         encoding: dict[str, list] = {"input_ids": encoded}
 
@@ -96,32 +126,33 @@ class BatchTokenizer(BatchProcessor[dict, dict]):
         """Encode one over-long text by splitting at safe whitespace boundaries
         and concatenating ids in-place.
 
-        Splits are buffered in groups of ``_LONG_STRING_BATCH_SIZE`` pieces;
-        each group is passed through ``encode_batch`` and the resulting ids
-        are extended into the running ``ids`` list before the next group is
+        A cursor walks the original string, slicing only the emitted piece
+        (bounded by ``_workaround_len``) so total work stays O(N) in the text
+        length. Splits are buffered in groups of ``_LONG_STRING_BATCH_SIZE``
+        pieces; each group is passed through ``encode_batch`` and the resulting
+        ids are extended into the running ``ids`` list before the next group is
         produced. Peak in-flight memory is one sub-batch's input strings +
         tokens, regardless of how long the original text is.
         """
         ids: list[int] = []
         pieces: list[str] = []
-        remaining = text
-        while True:
-            if len(remaining) > self._workaround_len:
-                match = ws.search(remaining, self._workaround_len)
-                split = match.start() if match is not None else len(remaining)
-                pieces.append(remaining[:split])
-                remaining = remaining[split:]
+        pos = 0
+        n = len(text)
+        while pos < n:
+            if n - pos > self._workaround_len:
+                # ``search`` scans from ``pos`` without copying; only the emitted
+                # piece is materialized below.
+                match = ws.search(text, pos + self._workaround_len)
+                split = match.start() if match is not None else n
             else:
-                pieces.append(remaining)
-                remaining = ""
+                split = n
+            pieces.append(text[pos:split])
+            pos = split
 
-            if len(pieces) >= _LONG_STRING_BATCH_SIZE or not remaining:
+            if len(pieces) >= _LONG_STRING_BATCH_SIZE or pos >= n:
                 for encoded_piece in self.tokenizer.encode_batch(pieces, add_special_tokens=False):
                     ids.extend(encoded_piece)
                 pieces.clear()
-
-            if not remaining:
-                break
 
         return ids
 

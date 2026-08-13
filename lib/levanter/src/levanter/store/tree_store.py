@@ -12,7 +12,7 @@ import numpy as np
 from haliax.jax_utils import is_jax_array_like
 from jaxtyping import PyTree
 
-from .jagged_array import JaggedArrayStore
+from .jagged_array import JaggedArrayStore, charge_store_read_budget
 
 T = TypeVar("T", bound=PyTree)
 
@@ -55,7 +55,19 @@ class TreeStore(Generic[T]):
         """
         Open a TreeStoreBuilder from a file.
         """
+        if mode == "r":
+            charge_store_read_budget(path)
         tree = _construct_builder_tree(exemplar, path, mode, cache_metadata)
+        return TreeStore(tree, path, mode)
+
+    @staticmethod
+    async def open_async(exemplar: T, path: str, *, mode="a", cache_metadata: bool = False) -> "TreeStore":
+        """
+        Open a TreeStoreBuilder from a file asynchronously.
+        """
+        if mode == "r":
+            charge_store_read_budget(path)
+        tree = await _construct_builder_tree_async(exemplar, path, mode, cache_metadata)
         return TreeStore(tree, path, mode)
 
     def append(self, ex: T):
@@ -85,22 +97,6 @@ class TreeStore(Generic[T]):
             batch,
             is_leaf=heuristic_is_leaf_batched,
         )
-
-    async def extend_with_batch_async(self, batch: T):
-        """
-        Append a batch of data (as a pytree with batched leaves) to the store.
-
-        This method works only when the "leaves" are lists of numpy arrays or scalars.
-        For instance, HF's BatchEncoding is a dict of lists of numpy arrays.
-        """
-        futures = jtu.tree_map(
-            lambda writer, xs: writer.extend_async(xs),
-            self.tree,
-            batch,
-            is_leaf=heuristic_is_leaf_batched,
-        )
-
-        await asyncio.gather(*jax.tree.leaves(futures))
 
     def trim_to_size(self, size: int):
         """
@@ -187,15 +183,32 @@ def _construct_builder_tree(exemplar, path, mode, cache_metadata):
     return jtu.tree_map_with_path(open_builder, exemplar, is_leaf=heuristic_is_leaf)
 
 
+async def _construct_builder_tree_async(exemplar, path, mode, cache_metadata):
+    def open_builder(tree_path, item):
+        item = np.asarray(item)
+        rank = item.ndim
+        render_tree_path = "/".join(_render_path_elem(x) for x in tree_path)
+        return JaggedArrayStore.open_async(
+            os.path.join(path, render_tree_path),
+            mode=mode,
+            item_rank=rank,
+            dtype=item.dtype,
+            cache_metadata=cache_metadata,
+        )
+
+    tree_futures = jtu.tree_map_with_path(open_builder, exemplar, is_leaf=heuristic_is_leaf)
+    leaves, treedef = jtu.tree_flatten(tree_futures)
+    opened_leaves = await asyncio.gather(*leaves)
+    return jtu.tree_unflatten(treedef, opened_leaves)
+
+
 def _render_path_elem(x):
-    match x:
-        case jtu.DictKey(key):
-            return f"{key}"
-        case jtu.GetAttrKey(key):
-            return f"{key}"
-        case jtu.SequenceKey(i):
-            return f"{i}"
-        case jtu.FlattenedIndexKey(i):
-            return f"{i}"
-        case _:
-            return str(x)
+    if isinstance(x, jtu.DictKey):
+        return f"{x.key}"
+    if isinstance(x, jtu.GetAttrKey):
+        return f"{x.name}"
+    if isinstance(x, jtu.SequenceKey):
+        return f"{x.idx}"
+    if isinstance(x, jtu.FlattenedIndexKey):
+        return f"{x.key}"
+    return str(x)

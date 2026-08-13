@@ -9,19 +9,79 @@ import haliax as hax
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pytest
 from haliax import Axis
 from haliax.partitioning import ResourceAxis
+from jax._src import config as jax_config
 
+from levanter.callbacks import ProgressEvent
 from levanter.data.dataset import ListAsyncDataset
-from levanter.data.text.examples import GrugLmExample, named_lm_example_from_grug
-from levanter.eval import EvalResult, LossFnOutput, TaggedEvaluator, cb_tagged_evaluate
+from levanter.data.text.examples import (
+    GrugLmExample,
+    LabeledLmExample,
+    LossLabelSpan,
+    loss_labels_from_spans,
+    named_lm_example_from_grug,
+)
+from levanter.eval import (
+    EvalResult,
+    LabeledEvaluator,
+    LabeledLossFnOutput,
+    LossFnOutput,
+    LossLabelSpec,
+    TaggedEvaluator,
+    cb_tagged_evaluate,
+)
 from levanter.models.lm_model import LmExample
 from levanter.tracker import current_tracker
 from levanter.tracker.json_logger import JsonLoggerConfig
 from levanter.utils.tree_utils import inference_mode
 
-from .test_lm_model_loss import ToyLmConfig, ToyLmHeadModel
-from .test_utils import use_test_mesh
+from levanter.testing.helpers import use_test_mesh
+from levanter.testing.toy_lm import ToyLmConfig, ToyLmHeadModel
+
+
+@pytest.mark.asyncio
+async def test_tagged_evaluator_shuffle_reorders_combined_dataset_and_preserves_tags():
+    EvalBatch = Axis("batch", max(1, len(jax.devices())))
+    first_dataset = ListAsyncDataset([jnp.array([i], dtype=jnp.int32) for i in range(8)])
+    second_dataset = ListAsyncDataset([jnp.array([100 + i], dtype=jnp.int32) for i in range(8)])
+    tagged_eval_sets = [(first_dataset, ["first"]), (second_dataset, ["second"])]
+
+    def loss_fn(_model, batch) -> LossFnOutput:
+        weights = jnp.ones_like(batch, dtype=jnp.float32)
+        return batch.astype(jnp.float32), weights, batch
+
+    with use_test_mesh(tensor_parallelism=1) as mesh:
+        ordered_evaluator = TaggedEvaluator(
+            EvalBatch=EvalBatch,
+            tagged_eval_sets=tagged_eval_sets,
+            loss_fn=loss_fn,
+            device_mesh=mesh,
+            axis_mapping={EvalBatch.name: ResourceAxis.DATA},
+            shuffle=False,
+        )
+        shuffled_evaluator = TaggedEvaluator(
+            EvalBatch=EvalBatch,
+            tagged_eval_sets=tagged_eval_sets,
+            loss_fn=loss_fn,
+            device_mesh=mesh,
+            axis_mapping={EvalBatch.name: ResourceAxis.DATA},
+            shuffle=True,
+        )
+
+    indices = list(range(16))
+    ordered = await ordered_evaluator.loader.data_store.get_batch(indices)
+    shuffled = await shuffled_evaluator.loader.data_store.get_batch(indices)
+    ordered_examples = [int(example.item()) for example, _ in ordered]
+    shuffled_examples = [int(example.item()) for example, _ in shuffled]
+
+    assert ordered_examples == list(range(8)) + list(range(100, 108))
+    assert shuffled_examples != ordered_examples
+    assert sorted(shuffled_examples) == sorted(ordered_examples)
+    for example, tags in shuffled:
+        expected_tags = [1, 0] if example.item() < 100 else [0, 1]
+        assert tags.tolist() == expected_tags
 
 
 def test_tagged_evaluator_accepts_grug_lm_examples():
@@ -171,12 +231,128 @@ def test_tagged_evaluator_accepts_grug_loss_protocol():
     assert "grug" in result.tag_micro_losses
 
 
+def test_labeled_evaluator_aggregates_exclusive_loss_labels():
+    EvalBatch = Axis("batch", len(jax.devices()))
+
+    examples = []
+    for _ in range(EvalBatch.size):
+        examples.append(
+            LabeledLmExample(
+                tokens=jnp.array([1, 2, 4, 8], dtype=jnp.int32),
+                loss_labels=loss_labels_from_spans(
+                    4,
+                    [
+                        LossLabelSpan(start=0, end=1, label=1),
+                        LossLabelSpan(start=1, end=2, label=2),
+                        LossLabelSpan(start=2, end=3, label=3),
+                    ],
+                ),
+            )
+        )
+
+    label_spec = LossLabelSpec(
+        id_to_name={
+            0: "dont_score",
+            1: "assistant_text",
+            2: "assistant_tool_call",
+            3: "tool_observation",
+        },
+        aggregates={
+            "assistant": [1, 2],
+            "assistant_text": [1],
+            "tool_observation": [3],
+        },
+    )
+
+    def loss_fn(_model, batch: LabeledLmExample) -> LabeledLossFnOutput:
+        return batch.tokens.astype(jnp.float32), batch.loss_labels, jnp.roll(batch.tokens, -1, axis=-1)
+
+    with use_test_mesh(tensor_parallelism=1) as mesh:
+        evaluator = LabeledEvaluator(
+            EvalBatch=EvalBatch,
+            eval_set=ListAsyncDataset(examples),
+            label_spec=label_spec,
+            loss_fn=loss_fn,
+            tokenizer=None,
+            device_mesh=mesh,
+            axis_mapping={EvalBatch.name: ResourceAxis.DATA},
+        )
+        result = evaluator.evaluate(None)
+
+    np.testing.assert_allclose(result.label_losses["assistant"], 1.5)
+    np.testing.assert_allclose(result.label_losses["assistant_text"], 1.0)
+    np.testing.assert_allclose(result.label_losses["tool_observation"], 4.0)
+    np.testing.assert_allclose(result.label_token_counts["assistant"], EvalBatch.size * 2)
+    assert "dont_score" not in result.label_losses
+
+
+def test_labeled_lm_evaluator_accepts_labeled_lm_examples():
+    cfg = ToyLmConfig(max_seq_len=8, embed_dim=16)
+    Vocab = Axis("vocab", 32)
+    model = ToyLmHeadModel.init(Vocab, cfg, key=jax.random.PRNGKey(0))
+
+    EvalBatch = Axis("batch", len(jax.devices()))
+    examples = []
+    for i in range(EvalBatch.size):
+        tokens = jnp.mod(jnp.arange(cfg.max_seq_len, dtype=jnp.int32) + i, Vocab.size)
+        loss_labels = jnp.ones_like(tokens)
+        loss_labels = loss_labels.at[-1].set(0)
+        examples.append(LabeledLmExample(tokens=tokens, loss_labels=loss_labels))
+
+    label_spec = LossLabelSpec(id_to_name={0: "dont_score", 1: "assistant"})
+
+    with use_test_mesh(tensor_parallelism=1) as mesh:
+        evaluator = LabeledEvaluator.for_labeled_examples(
+            EvalBatch=EvalBatch,
+            eval_set=ListAsyncDataset(examples),
+            label_spec=label_spec,
+            tokenizer=None,
+            device_mesh=mesh,
+            axis_mapping={EvalBatch.name: ResourceAxis.DATA},
+        )
+        result = evaluator.evaluate(model)
+
+    assert np.isfinite(result.label_losses["assistant"])
+    np.testing.assert_allclose(result.label_token_counts["assistant"], EvalBatch.size * (cfg.max_seq_len - 1))
+
+
+def test_loss_label_spec_validates_aggregates():
+    label_spec = LossLabelSpec(id_to_name={1: "assistant"})
+    assert label_spec.aggregate_names == ("assistant",)
+
+    with np.testing.assert_raises_regex(ValueError, "unknown label id"):
+        LossLabelSpec(
+            id_to_name={0: "dont_score", 1: "assistant"},
+            aggregates={"assistant": [2]},
+        )
+
+    with np.testing.assert_raises_regex(ValueError, "dont_score_label"):
+        LossLabelSpec(
+            id_to_name={0: "dont_score", 1: "assistant"},
+            aggregates={"assistant": [0, 1]},
+        )
+
+
+def test_loss_labels_from_spans_rejects_overlapping_spans():
+    with np.testing.assert_raises_regex(ValueError, "overlaps"):
+        loss_labels_from_spans(
+            4,
+            [
+                LossLabelSpan(start=0, end=2, label=1),
+                LossLabelSpan(start=1, end=3, label=2),
+            ],
+        )
+
+
 def test_cb_tagged_evaluate_dedupes_force_and_logs_ema(caplog):
+    pgle_states = []
+
     class _FakeEvaluator:
         tokenizer = None
         dataset = SimpleNamespace(tag_to_index={"base": 0})
 
         def evaluate(self, _model):
+            pgle_states.append(jax_config.enable_pgle.value)
             return EvalResult(
                 micro_avg_loss=1.0,
                 macro_avg_loss=1.0,
@@ -191,12 +367,15 @@ def test_cb_tagged_evaluate_dedupes_force_and_logs_ema(caplog):
 
     callback = cb_tagged_evaluate(_FakeEvaluator(), prefix="eval", eval_current=True, eval_ema=True)
 
+    events = []
     with current_tracker(tracker):
-        step0 = SimpleNamespace(step=0, model=object(), eval_model=object())
-        callback(step0)
-        callback(step0, force=True)
-        step1 = SimpleNamespace(step=1, model=object(), eval_model=object())
-        callback(step1)
+        with jax_config.enable_pgle(True):
+            step0 = SimpleNamespace(step=0, model=object(), eval_model=object(), emit_event=events.append)
+            callback(step0)
+            callback(step0, force=True)
+            step1 = SimpleNamespace(step=1, model=object(), eval_model=object(), emit_event=events.append)
+            callback(step1)
+            assert jax_config.enable_pgle.value
 
     log_events = []
     for record in caplog.records:
@@ -212,3 +391,10 @@ def test_cb_tagged_evaluate_dedupes_force_and_logs_ema(caplog):
     assert "eval/ema/loss" in log_events[1]["metrics"]
     assert "eval/loss" in log_events[2]["metrics"]
     assert "eval/ema/loss" in log_events[3]["metrics"]
+    assert events == [
+        ProgressEvent.EVALUATION_STARTED,
+        ProgressEvent.EVALUATION_FINISHED,
+        ProgressEvent.EVALUATION_STARTED,
+        ProgressEvent.EVALUATION_FINISHED,
+    ]
+    assert pgle_states == [False, False, False, False]

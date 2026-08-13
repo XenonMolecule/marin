@@ -11,9 +11,9 @@ from datetime import timedelta
 
 import equinox
 import equinox as eqx
-import fsspec
 import haliax as hax
 import jax
+import jax.experimental.array_serialization.serialization as array_ser
 import jax.tree_util as jtu
 import numpy as np
 import optax
@@ -22,17 +22,21 @@ from chex import assert_trees_all_close, assert_trees_all_equal
 from haliax import Axis
 from jax import ShapeDtypeStruct
 from jax import numpy as jnp
-from test_utils import MLP, arrays_only, assert_trees_not_close, use_test_mesh
+from rigging.filesystem import StoragePath
+from levanter.testing.helpers import MLP, arrays_only, assert_trees_not_close, use_test_mesh
 
 from levanter.callbacks import StepInfo
 from levanter.checkpoint import (
+    CheckpointCandidate,
     CheckpointDebugConfig,
     Checkpointer,
     CheckpointerConfig,
     CheckpointInterval,
     _collect_debug_checkpointer_state,
     _load_metadata,
+    discover_checkpoint_candidates,
     discover_latest_checkpoint,
+    latest_checkpoint_path,
     load_checkpoint,
     load_checkpoint_or_initialize,
     register_debug_checkpointer_state_provider,
@@ -41,6 +45,7 @@ from levanter.checkpoint import (
 )
 from levanter.trainer import TrainerConfig
 from levanter.trainer_state import TrainerState
+from levanter.utils import jax_utils
 
 
 def _dummy_step_info(step):
@@ -69,6 +74,12 @@ def _on_step(checkpointer: Checkpointer, step: int, *, force: bool = False):
 def _get_checkpoint_steps(checkpoint_dir):
     paths = list(pathlib.Path(checkpoint_dir).iterdir())
     return sorted([_load_metadata(f)["step"] for f in paths])
+
+
+def _write_checkpoint_metadata(path: pathlib.Path, *, step: int, timestamp: str, is_temporary: bool = False) -> None:
+    path.mkdir(parents=True)
+    with (path / "metadata.json").open("w") as f:
+        json.dump({"step": step, "timestamp": timestamp, "is_temporary": is_temporary}, f)
 
 
 def test_checkpointer_changing_policy():
@@ -189,6 +200,27 @@ def _make_state(step, key, depth=3):
     return TrainerState(step, model, optim, opt_state, key, is_trainable=True, mp=None, model_averaging=None)
 
 
+def _save_non_ocdbt(state, checkpoint_path):
+    """Save a state to disk without OCDBT (one tensorstore tree per array leaf)."""
+    manager = array_ser.GlobalAsyncCheckpointManager()
+
+    leaf_key_paths = jax_utils.leaf_key_paths(state, is_leaf=lambda x: x is None)
+    paths = [f"{checkpoint_path}/{key_path.replace('.', '/')}" for key_path in jax.tree.leaves(leaf_key_paths)]
+
+    arrays = [
+        leaf.array if hasattr(leaf, "array") else leaf
+        for leaf in jax.tree.leaves(state)
+        if hasattr(leaf, "array") or jax.Array in type(leaf).__mro__
+    ]
+
+    filtered = [(a, p) for a, p in zip(arrays, paths) if equinox.is_array_like(a)]
+    manager.serialize_with_paths([a for a, _ in filtered], [p for _, p in filtered])
+    manager.wait_until_finished()
+
+    metadata = {"step": int(state.step), "timestamp": datetime.datetime.now().isoformat(), "is_temporary": False}
+    StoragePath(f"{checkpoint_path}/metadata.json").write_text(json.dumps(metadata))
+
+
 def test_checkpoint_simple():
     key0 = jax.random.PRNGKey(0)
     key1 = jax.random.PRNGKey(1)
@@ -279,6 +311,47 @@ def test_checkpoint_discovery_across_multiple_paths():
         assert latest_both == f"{temp_dir}/step-15"
 
 
+def test_checkpoint_candidate_discovery_sorts_by_numeric_step_before_timestamp():
+    with tempfile.TemporaryDirectory() as tempdir:
+        root = pathlib.Path(tempdir)
+        _write_checkpoint_metadata(root / "step-9", step=9, timestamp="2021-01-03T00:00:00")
+        _write_checkpoint_metadata(root / "step-10", step=10, timestamp="2021-01-01T00:00:00")
+        _write_checkpoint_metadata(root / "incomplete", step=11, timestamp="2021-01-04T00:00:00")
+        (root / "incomplete" / "metadata.json").unlink()
+
+        candidates = discover_checkpoint_candidates(tempdir)
+
+        assert candidates == [
+            CheckpointCandidate(
+                path=f"{tempdir}/step-9",
+                step=9,
+                timestamp=datetime.datetime(2021, 1, 3, 0, 0, 0),
+                metadata={"step": 9, "timestamp": "2021-01-03T00:00:00", "is_temporary": False},
+            ),
+            CheckpointCandidate(
+                path=f"{tempdir}/step-10",
+                step=10,
+                timestamp=datetime.datetime(2021, 1, 1, 0, 0, 0),
+                metadata={"step": 10, "timestamp": "2021-01-01T00:00:00", "is_temporary": False},
+            ),
+        ]
+        assert latest_checkpoint_path(tempdir) == f"{tempdir}/step-10"
+
+
+def test_checkpoint_candidate_discovery_can_exclude_rejected_lineage_and_max_step():
+    with tempfile.TemporaryDirectory() as good_dir, tempfile.TemporaryDirectory() as rejected_dir:
+        _write_checkpoint_metadata(pathlib.Path(good_dir) / "step-100", step=100, timestamp="2021-01-01T00:00:00")
+        _write_checkpoint_metadata(pathlib.Path(good_dir) / "step-120", step=120, timestamp="2021-01-02T00:00:00")
+        _write_checkpoint_metadata(pathlib.Path(rejected_dir) / "step-130", step=130, timestamp="2021-01-03T00:00:00")
+
+        candidates = discover_checkpoint_candidates(good_dir, rejected_dir, exclude_paths=[rejected_dir], max_step=110)
+
+        assert [candidate.path for candidate in candidates] == [f"{good_dir}/step-100"]
+        assert latest_checkpoint_path(good_dir, rejected_dir, exclude_paths=[rejected_dir], max_step=110) == (
+            f"{good_dir}/step-100"
+        )
+
+
 def test_checkpointer_temporary_base_path_routes_temp_checkpoints():
     fake_now = datetime.datetime(2021, 1, 1, 0, 0, 0)
     tick = 10
@@ -348,6 +421,12 @@ def test_checkpointer_config_no_temporary_base_path():
     assert config.expanded_temporary_path("run1") is None
 
 
+def test_checkpointer_config_keep_none_means_no_step_policies(tmp_path):
+    config = CheckpointerConfig(base_path=str(tmp_path / "checkpoints"), keep=None)
+    checkpointer = config.create("run1")
+    assert checkpointer.step_policies == []
+
+
 def test_trainer_config_checkpoint_search_paths():
     config = dataclasses.replace(
         TrainerConfig(),
@@ -366,7 +445,7 @@ def test_trainer_config_checkpoint_search_paths():
 def test_checkpointer_config_propagates_debug_settings():
     config = CheckpointerConfig(
         base_path="/tmp/checkpoints",
-        delete_previous_temporary_checkpoint_after_save=False,
+        keep_last_temporary_checkpoints=3,
         debug=CheckpointDebugConfig(
             enabled=True,
             log_interval=12.5,
@@ -380,7 +459,7 @@ def test_checkpointer_config_propagates_debug_settings():
 
     checkpointer = config.create("run-1")
 
-    assert checkpointer.delete_previous_temporary_checkpoint_after_save is False
+    assert checkpointer.keep_last_temporary_checkpoints == 3
     assert checkpointer.debug.enabled is True
     assert checkpointer.debug.log_interval == 12.5
     assert checkpointer.debug.dump_stacks_after == 45.0
@@ -510,7 +589,7 @@ def test_checkpointer_deletes_previous_checkpoints_under_relative_base_paths():
         assert _get_checkpoint_steps(tmpdir) == [2]
 
 
-def test_checkpointer_can_keep_previous_temporary_checkpoint_after_save():
+def test_checkpointer_keeps_configured_temporary_checkpoints_after_save():
     fake_now = datetime.datetime(2021, 1, 1, 0, 0, 0)
     tick = 10
 
@@ -524,7 +603,7 @@ def test_checkpointer_can_keep_previous_temporary_checkpoint_after_save():
             timedelta(seconds=tick),
             [],
             dt_now_injection=lambda: fake_now,
-            delete_previous_temporary_checkpoint_after_save=False,
+            keep_last_temporary_checkpoints=2,
         )
 
         _on_step(checkpointer, 0)
@@ -538,6 +617,77 @@ def test_checkpointer_can_keep_previous_temporary_checkpoint_after_save():
         _on_step(checkpointer, 2)
         checkpointer.wait_until_finished()
         assert _get_checkpoint_steps(tmpdir) == [1, 2]
+
+        advance_time(tick)
+        _on_step(checkpointer, 3)
+        checkpointer.wait_until_finished()
+        assert _get_checkpoint_steps(tmpdir) == [2, 3]
+
+
+def test_checkpointer_keep_zero_deletes_temporary_checkpoint_after_commit():
+    fake_now = datetime.datetime(2021, 1, 1, 0, 0, 0)
+    tick = 10
+
+    def advance_time(delta_seconds):
+        nonlocal fake_now
+        fake_now += timedelta(seconds=delta_seconds)
+
+    with tempfile.TemporaryDirectory(prefix="checkpoints") as tmpdir:
+        checkpointer = Checkpointer(
+            tmpdir,
+            timedelta(seconds=tick),
+            [],
+            dt_now_injection=lambda: fake_now,
+            keep_last_temporary_checkpoints=0,
+        )
+
+        _on_step(checkpointer, 0)
+
+        advance_time(tick)
+        _on_step(checkpointer, 1)
+        checkpointer.wait_until_finished()
+
+        assert _get_checkpoint_steps(tmpdir) == []
+
+
+def test_checkpointer_discovers_temporary_checkpoints_across_base_paths_for_retention():
+    fake_now = datetime.datetime(2021, 1, 1, 0, 0, 0)
+    tick = 10
+
+    def advance_time(delta_seconds):
+        nonlocal fake_now
+        fake_now += timedelta(seconds=delta_seconds)
+
+    with tempfile.TemporaryDirectory() as permanent_dir, tempfile.TemporaryDirectory() as temp_dir:
+        save_checkpoint(dict(model=1), step=2, checkpoint_path=f"{permanent_dir}/step-2", is_temporary=True)
+        save_checkpoint(dict(model=2), step=8, checkpoint_path=f"{permanent_dir}/step-8", is_temporary=True)
+        save_checkpoint(dict(model=3), step=9, checkpoint_path=f"{permanent_dir}/step-9", is_temporary=False)
+        save_checkpoint(dict(model=4), step=7, checkpoint_path=f"{temp_dir}/step-7", is_temporary=True)
+
+        checkpointer = Checkpointer(
+            permanent_dir,
+            timedelta(seconds=tick),
+            [],
+            temporary_base_path=temp_dir,
+            dt_now_injection=lambda: fake_now,
+            keep_last_temporary_checkpoints=2,
+        )
+
+        _on_step(checkpointer, 0)
+        advance_time(tick)
+        _on_step(checkpointer, 10)
+        checkpointer.wait_until_finished()
+
+        assert _get_checkpoint_steps(permanent_dir) == [8, 9]
+        assert _get_checkpoint_steps(temp_dir) == [10]
+
+
+def test_checkpointer_rejects_negative_keep_last_temporary_checkpoints(tmp_path):
+    with pytest.raises(ValueError, match="keep_last_temporary_checkpoints must be non-negative"):
+        Checkpointer(tmp_path / "checkpoints", None, [], keep_last_temporary_checkpoints=-1)
+
+    with pytest.raises(ValueError, match="keep_last_temporary_checkpoints must be non-negative"):
+        CheckpointerConfig(keep_last_temporary_checkpoints=-1)
 
 
 def test_checkpointer_force_save_uses_permanent_path_even_when_time_policy_elapsed():
@@ -728,35 +878,35 @@ def test_load_from_checkpoint_allows_partial_checkpoints():
 
 
 def test_ocdbt_merges_files():
-    """Test that OCDBT checkpoints create manifest.ocdbt file."""
+    """OCDBT should coalesce per-array files into a manifest plus a handful of data blobs.
+
+    The absolute number of OCDBT ``d/`` data blobs is decided by tensorstore's internal
+    chunking and varies run to run, so we assert on what the test actually cares about: a
+    ``manifest.ocdbt`` exists and OCDBT produces materially fewer files than a non-OCDBT
+    save of the same state.
+    """
 
     for depth in [1, 5, 20]:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            key0 = jax.random.PRNGKey(0)
-            initial_state = _make_state(10, key0, depth=depth)
-            save_checkpoint(
-                initial_state,
-                step=initial_state.step,
-                checkpoint_path=tmpdir,
+        key0 = jax.random.PRNGKey(0)
+        state = _make_state(10, key0, depth=depth)
+
+        with tempfile.TemporaryDirectory() as ocdbt_dir, tempfile.TemporaryDirectory() as plain_dir:
+            save_checkpoint(state, step=state.step, checkpoint_path=ocdbt_dir)
+            _save_non_ocdbt(state, plain_dir)
+
+            ocdbt_count = sum(1 for path in pathlib.Path(ocdbt_dir).rglob("*") if path.is_file())
+            plain_count = sum(1 for path in pathlib.Path(plain_dir).rglob("*") if path.is_file())
+
+            manifests = list(pathlib.Path(ocdbt_dir).rglob("manifest.ocdbt"))
+            assert manifests, "OCDBT manifest.ocdbt file should exist in checkpoint"
+            assert ocdbt_count < plain_count, (
+                f"OCDBT should coalesce files (depth={depth}): "
+                f"ocdbt={ocdbt_count} not fewer than non-ocdbt={plain_count}"
             )
-
-            # Check that manifest.ocdbt exists
-            # The manifest should be in one of the checkpoint subdirectories
-            checkpoint_dir = pathlib.Path(tmpdir)
-            checkpoint_files = [path for path in checkpoint_dir.rglob("*") if path.is_file()]
-            assert (
-                len(checkpoint_files) <= 25
-            ), f"There should be fewer than 25 files in the checkpoint directory: {checkpoint_files}"
-            print(depth, len(checkpoint_files), checkpoint_files)
-
-            manifest_files = list(checkpoint_dir.rglob("manifest.ocdbt"))
-            assert len(manifest_files) > 0, "OCDBT manifest.ocdbt file should exist in checkpoint"
 
 
 def test_backward_compatibility_with_ocdbt():
     """Test that we can load old non-OCDBT checkpoints with new OCDBT-enabled code."""
-    import jax.experimental.array_serialization.serialization as array_ser
-
     key0 = jax.random.PRNGKey(0)
     key1 = jax.random.PRNGKey(1)
 
@@ -765,35 +915,7 @@ def test_backward_compatibility_with_ocdbt():
 
     with tempfile.TemporaryDirectory() as tmpdir:
         # Save with old format by directly using serialize_with_paths (non-OCDBT)
-        manager = array_ser.GlobalAsyncCheckpointManager()
-        from levanter.utils import jax_utils
-
-        checkpoint_path = tmpdir
-
-        leaf_key_paths = jax_utils.leaf_key_paths(initial_state, is_leaf=lambda x: x is None)
-        paths = []
-        for key_path in jax.tree.leaves(leaf_key_paths):
-            paths.append(f"{checkpoint_path}/{key_path.replace('.', '/')}")
-
-        arrays = [
-            leaf.array if hasattr(leaf, "array") else leaf
-            for leaf in jax.tree.leaves(initial_state)
-            if hasattr(leaf, "array") or jax.Array in type(leaf).__mro__
-        ]
-
-        filtered = [(a, p) for a, p in zip(arrays, paths) if equinox.is_array_like(a)]
-        arrays_to_save = [a for a, _ in filtered]
-        paths_to_save = [p for _, p in filtered]
-
-        # Save using old non-OCDBT method
-        manager.serialize_with_paths(arrays_to_save, paths_to_save)
-        manager.wait_until_finished()
-
-        # Save metadata (normally done by save_checkpoint)
-        fs, _ = fsspec.core.url_to_fs(checkpoint_path)
-        metadata = {"step": 10, "timestamp": datetime.datetime.now().isoformat(), "is_temporary": False}
-        with fs.open(f"{checkpoint_path}/metadata.json", "w") as f:
-            json.dump(metadata, f)
+        _save_non_ocdbt(initial_state, tmpdir)
 
         # Now try to load it with the new OCDBT-enabled code
         restored_state = load_checkpoint(
