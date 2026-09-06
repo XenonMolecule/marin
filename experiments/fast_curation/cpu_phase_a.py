@@ -1,17 +1,21 @@
 # Copyright The Marin Authors
 # SPDX-License-Identifier: Apache-2.0
 
-"""v2 Phase A (CPU): decode -> fastText gate -> tokenize. NO JustText (deferred to Phase C).
+"""v2/TEXT Phase A (CPU): decode -> [extract] -> fastText gate -> tokenize.
 
-The v2 reorder runs ModernBERT BEFORE JustText so JustText (the dominant CPU cost) only touches
-ModernBERT-survivors. Phase A is therefore cheap per WARC (decode + fastText + tokenize, no
-JustText) and writes one ``a_presurvivors/data-{warc_hash}.parquet`` carrying the RAW html (Phase C
-runs JustText on it) + the pre-tokenized ids (Phase B scores them).
+Two survivor layouts, selected by the spec:
 
-Standalone claim-based worker (launch many via ``launch_cpu_a.py``); only needs fasttext + the
-ModernBERT tokenizer (no extraction-bakeoff/justext extra).
+* **html line** (``fastpipe_v2``/``v3``, ``lpv11_fastpipe_v1``): fastText gates on ``body_strip``
+  text; the presurvivor carries the RAW html (Phase C extracts it after Phase B's keeplist).
+* **TEXT line** (``spec.is_text_line``, e.g. ``lpv11_fastpipe_v2``): resiliparse-rs extraction runs
+  HERE on every decoded doc; fastText gates on ``lower(collapse(extracted))`` (the classifier
+  input); the presurvivor carries the extracted ``text`` itself — there is no Phase C, Phase B
+  writes ``kept/`` directly.
 
-    python -m experiments.fast_curation.cpu_phase_a --spec fastpipe_v2 --shuffle-seed 0
+Standalone claim-based worker (launch many via ``launch_cpu_a.py``).
+
+    python -m experiments.fast_curation.cpu_phase_a --spec fastpipe_v3 --shuffle-seed 0
+    python -m experiments.fast_curation.cpu_phase_a --spec lpv11_fastpipe_v2 --shuffle-seed 0
 """
 
 from __future__ import annotations
@@ -20,9 +24,10 @@ import os
 
 # Re-enable the Rust tokenizer's cross-document Rayon parallelism for the batched tokenize in
 # ``_process_one``. Iris/Fray inject ``TOKENIZERS_PARALLELISM=false`` (a fork-deadlock guard), which
-# silently serializes ``encode_batch`` and would erase the batch speedup. Phase A never forks
-# (JustText — the only ProcessPool user — is deferred to Phase C), so ``"true"`` is safe here. Must
-# be set before the tokenizer's first ``encode_batch``; module import is the earliest safe point.
+# silently serializes ``encode_batch`` and would erase the batch speedup. Safe here: the html line
+# never forks, and the TEXT line's extraction pool uses the ``spawn`` context (children re-import
+# cleanly, no inherited Rayon threads). Must be set before the tokenizer's first ``encode_batch``;
+# module import is the earliest safe point.
 os.environ["TOKENIZERS_PARALLELISM"] = "true"
 
 import argparse
@@ -36,11 +41,24 @@ import time
 import fsspec
 import pyarrow as pa
 
+from experiments.baseline_collection.comparison_sample import normalize_text
 from experiments.baseline_collection.decode_warcs_clean import _decode_one_warc, _load_manifest, _warc_path_hash
-from experiments.baseline_collection.run_extract_standalone import _claim_warc_atomic, _load_completed_registry
+from experiments.baseline_collection.run_extract_standalone import (
+    _claim_warc_atomic,
+    _load_completed_registry,
+    _register_completed_warc,
+)
 from experiments.fast_curation import batch_format, preprocess
+from experiments.fast_curation import shard_worklist as sw
 from experiments.fast_curation.cpu_phase import _gcs_exists, _load_registry_mtimes, run_claim_loop
-from experiments.fast_curation.spec import PipelineSpec, get_spec
+from experiments.fast_curation.cpu_phase_c import _install_rust_extractor, _safe_utf8
+from experiments.fast_curation.spec import (
+    MODERNBERT_CLS_TOKEN_ID,
+    MODERNBERT_SEP_TOKEN_ID,
+    RESILIPARSE_RS_ARTIFACT,
+    PipelineSpec,
+    get_spec,
+)
 from experiments.fast_curation.telemetry import Heartbeat, region_from_bucket
 
 logger = logging.getLogger(__name__)
@@ -159,6 +177,224 @@ def _process_one(
     }
 
 
+def _process_one_text(
+    warc_path: str,
+    warc_hash: str,
+    refresh,
+    *,
+    spec: PipelineSpec,
+    model,
+    tokenize_batch,
+    tokenizer_impl: str,
+    pool,
+    bucket: str,
+    chunk_records: int = CHUNK_RECORDS,
+    cleanup_chunks: bool = True,
+) -> dict:
+    """TEXT-line Phase A: decode -> resiliparse-rs extract (every doc) -> fastText gate on the
+    normalized text -> tokenize. The presurvivor carries the extracted ``text`` (the final corpus
+    content), so Phase B can write ``kept/`` directly and no Phase C exists.
+
+    Parity contract: the classifier input is ``normalize_text(extract(raw_html))`` — exactly the
+    ``*_textraw_*`` deployment columns the spec's thresholds were tuned on (comparison_sample).
+    An empty or crashed extraction scores fastText 0.0 and is dropped, matching the planner's
+    "an abstaining extractor removes the doc" semantics. The decode-time empty-``text_body``
+    population filter is applied INSIDE the extraction pool (``resiliparse_rs_screen_batch``):
+    identical population, but its ~2 min/WARC of body_strip regex work runs on every pool core
+    instead of serially in the parent.
+    """
+    t0 = time.monotonic()
+    records = _decode_one_warc(warc_path, with_text_body=False)
+    t_decode = time.monotonic() - t0
+    n_in = len(records)
+    chunk_dir = f"{spec.namespace(bucket)}/a_chunks/data-{warc_hash}"
+    presurvivor_path = f"{spec.presurvivors_prefix(bucket)}/data-{warc_hash}.parquet"
+
+    chunk_paths: list[str] = []
+    t_extract = t_ft = t_tok = 0.0
+    n_extract_empty = 0
+    n_prefilter_dropped = 0  # empty-text_body population filter (was a decode-time drop)
+    crashed_ids: list[str] = []
+    for ci, cstart in enumerate(range(0, n_in, chunk_records)):
+        cpath = f"{chunk_dir}/chunk_{ci:05d}.parquet"
+        chunk_paths.append(cpath)
+        if _gcs_exists(cpath):
+            continue  # banked by an earlier (pre-preemption) run
+        chunk = records[cstart : cstart + chunk_records]
+        s = time.monotonic()
+        results, crashed = pool.run(
+            [r["html"] for r in chunk], [r["doc_id"] for r in chunk], spec.justext_max_html_chars
+        )
+        t_extract += time.monotonic() - s
+        crashed_ids.extend(crashed)
+        rows: list[dict] = []
+        clf_texts: list[str] = []
+        s = time.monotonic()
+        for r, (text, in_population) in zip(chunk, results, strict=True):
+            if not in_population:
+                n_prefilter_dropped += 1
+                continue
+            # Sanitize BEFORE the classifier prep: the stored corpora the thresholds were tuned on
+            # went through parquet (utf-8 clean), so scoring must see the same bytes.
+            text = _safe_utf8(text)
+            if not text:
+                n_extract_empty += 1
+                continue
+            prob = preprocess.fasttext_useful_prob(model, normalize_text(text))
+            if prob < spec.fasttext_threshold:
+                continue
+            rows.append(
+                {
+                    "doc_id": r["doc_id"],
+                    "url": _safe_utf8(r["url"]),
+                    "warc_hash": r["warc_hash"],
+                    "snapshot": r["snapshot"],
+                    "fasttext_score": float(prob),
+                    "text": text,
+                }
+            )
+            clf_texts.append(normalize_text(text))
+        t_ft += time.monotonic() - s
+        if tokenize_batch is None:  # V3: no stored tokens — Phase B re-tokenizes from ``text``.
+            batch_format.write_presurvivors_v3(cpath, rows)
+        else:
+            s = time.monotonic()
+            ids_column, n_tokens = tokenize_batch(clf_texts)
+            t_tok += time.monotonic() - s
+            batch_format.write_presurvivors_text_columns(cpath, rows, ids_column, n_tokens)
+        refresh()  # keep the WARC claim fresh between chunks
+    del records
+
+    empty_schema = batch_format.PRESURVIVOR_V3_SCHEMA if tokenize_batch is None else batch_format.PRESURVIVOR_TEXT_SCHEMA
+    write_merged = batch_format.write_table_v3 if tokenize_batch is None else batch_format.write_table
+    tables = [batch_format.read_table(cp) for cp in chunk_paths]
+    merged = pa.concat_tables(tables) if tables else empty_schema.empty_table()
+    write_merged(presurvivor_path, merged)
+    n_presurv = merged.num_rows
+    del tables, merged
+    if cleanup_chunks:
+        batch_format.drop_chunk_dir(chunk_dir)
+
+    try:
+        with fsspec.open(f"{spec.namespace(bucket)}/timing_a/data-{warc_hash}.json", "w") as f:
+            json.dump(
+                {
+                    "warc_hash": warc_hash,
+                    "n_in": n_in,
+                    "n_presurvivors": n_presurv,
+                    "n_prefilter_dropped": n_prefilter_dropped,
+                    "n_extract_empty": n_extract_empty,
+                    "n_extract_crashed": len(crashed_ids),
+                    "n_chunks": len(chunk_paths),
+                    "decode_s": round(t_decode, 3),
+                    "extract_s": round(t_extract, 3),
+                    "fasttext_s": round(t_ft, 3),
+                    "tokenize_s": round(t_tok, 3),
+                    # Which tokenizer produced input_ids (ids are parity-asserted identical across
+                    # impls; recorded so per-impl tokenize_s can be compared in an A/B fleet).
+                    "tokenizer_impl": tokenizer_impl,
+                    "wall_s": round(time.monotonic() - t0, 3),
+                },
+                f,
+            )
+    except Exception as e:
+        logger.warning("phase A timing write failed for %s: %s", warc_hash, e)
+    wall = time.monotonic() - t0
+    logger.info(
+        "A(text) %s: %d in -> %d presurvivors (%d prefiltered, %d empty, %d crashed, %d chunks) in %.1fs",
+        warc_hash,
+        n_in,
+        n_presurv,
+        n_prefilter_dropped,
+        n_extract_empty,
+        len(crashed_ids),
+        len(chunk_paths),
+        wall,
+    )
+    return {
+        "docs_in": n_in,
+        "docs_out": n_presurv,
+        "wall_seconds": wall,
+        "compute_seconds": {"decode": t_decode, "extract": t_extract, "fasttext": t_ft, "tokenize": t_tok},
+    }
+
+
+def run_shard_loop(
+    spec: PipelineSpec,
+    bucket: str,
+    *,
+    process_one,
+    shuffle_seed: int,
+    poll_seconds: float,
+    max_idle_passes: int,
+    claim_stale_hours: float = 0.2,
+    max_shard: int | None = None,
+) -> None:
+    """V3 Phase A: claim SHARDS, not WARCs — the O(shards) claim/registry contract for 8M scale.
+
+    A worker serves only shards the frozen index assigns to its own region (presurvivors must land
+    in the region B will read them from; no cross-region writes, no steal — a starved region's
+    shards simply wait for that region's CPU). Per-WARC done markers live under the shard's own
+    central prefix and are listed only by the shard's owner at claim time; the fleet-wide progress
+    signal is one listing of ``_a_done`` sentinels (~n_shards objects).
+    """
+    my_region = region_from_bucket(bucket)
+    my_shards = [
+        e["shard"]
+        for e in sw.load_index(spec)
+        if e["region"] == my_region and (max_shard is None or e["shard"] < max_shard)
+    ]
+    if not my_shards:
+        raise RuntimeError(f"the shard index assigns no shards to region {my_region!r}")
+    random.Random(shuffle_seed).shuffle(my_shards)
+    hb = Heartbeat(spec, phase="a", region=my_region, seed=shuffle_seed, kind="cpu")
+    logger.info("A shard worker (seed=%d, region=%s): %d shards", shuffle_seed, my_region, len(my_shards))
+
+    idle = 0
+    while True:
+        done = _load_completed_registry(sw.sentinel_prefix(spec, "a"))
+        remaining = [s for s in my_shards if f"{s:05d}" not in done]
+        if not remaining:
+            logger.info("all %d region shards have _a_done sentinels; exiting.", len(my_shards))
+            hb.close("done")
+            return
+        progressed = 0
+        for s in remaining:
+            claim_path = f"{sw.claim_prefix(spec, 'a')}/shard-{s:05d}"
+            if not _claim_warc_atomic(claim_path, stale_hours=claim_stale_hours):
+                continue
+            refresh = functools.partial(_refresh_shard_claim, claim_path)
+            marks_prefix = f"{sw.CENTRAL_BUCKET}/{spec.subdir()}/_a_marks/shard-{s:05d}"
+            marked = _load_completed_registry(marks_prefix)
+            pairs = sw.load_shard(spec, s)
+            logger.info("claimed shard %05d: %d WARCs (%d already marked)", s, len(pairs), len(marked))
+            for warc_path, h in pairs:
+                if h in marked:
+                    continue
+                stats = process_one(warc_path, h, refresh)
+                _register_completed_warc(h, marks_prefix)
+                if stats:
+                    hb.record_warc(warc_hash=h, **stats)
+            _register_completed_warc(f"{s:05d}", sw.sentinel_prefix(spec, "a"))
+            progressed += 1
+        if progressed == 0:
+            idle += 1
+            hb.tick("idle")
+            if idle >= max_idle_passes * 12:  # shards are big; be patient before giving up
+                logger.warning("no claimable shards for %d passes; exiting.", idle)
+                hb.close("done")
+                return
+            time.sleep(poll_seconds)
+        else:
+            idle = 0
+
+
+def _refresh_shard_claim(claim_path: str) -> None:
+    from experiments.baseline_collection.run_extract_standalone import _refresh_claim
+
+    _refresh_claim(claim_path)
+
+
 RESCUE_STALE_MINUTES = 20.0
 
 
@@ -167,8 +403,7 @@ def _rescue_loop(
     manifest_path: str,
     bucket: str,
     *,
-    model,
-    tokenizer,
+    process_one,
     shuffle_seed: int,
     poll_seconds: float,
     max_idle_passes: int,
@@ -204,7 +439,7 @@ def _rescue_loop(
             if not _claim_warc_atomic(f"{central}/_claims_a_rescue/data-{h}", stale_hours=1.0):
                 continue  # another rescuer owns it.
             logger.info("RESCUE %s: re-decoding from S3 into %s", h, bucket)
-            stats = _process_one(warc_path, h, lambda: None, spec=spec, model=model, tokenizer=tokenizer, bucket=bucket)
+            stats = process_one(warc_path, h, lambda: None)
             if stats:
                 hb.record_warc(warc_hash=h, **stats)
             progressed += 1
@@ -244,6 +479,27 @@ def main() -> None:
         default=True,
         help="Keep sub-WARC checkpoint chunks after merge (default deletes: ~4 TiB at 10k scale).",
     )
+    ap.add_argument(
+        "--resiliparse-artifact",
+        default=RESILIPARSE_RS_ARTIFACT,
+        help="Prebuilt resiliparse-rs artifact prefix (point at a same-region mirror outside "
+        "us-east5). Only used by TEXT-line specs, whose Phase A extracts.",
+    )
+    ap.add_argument("--extract-procs", type=int, default=4, help="TEXT line: extraction ProcessPool size.")
+    ap.add_argument(
+        "--max-shard",
+        type=int,
+        default=None,
+        help="V3 ladder cap: process only shards < N of the frozen full-pool layout (raise to scale up).",
+    )
+    ap.add_argument(
+        "--tokenizer-impl",
+        default="hf",
+        choices=["hf", "gigatoken"],
+        help="TEXT line: which tokenizer implementation produces input_ids. Both are byte-identical "
+        "(gigatoken is parity-asserted against hf at startup and refuses to run on divergence); "
+        "gigatoken needs `--extra gigatoken` and exists to A/B the tokenize cost per WARC.",
+    )
     args = ap.parse_args()
 
     _check_deps()
@@ -251,29 +507,72 @@ def main() -> None:
     model = preprocess.load_fasttext(spec.fasttext_model_for(args.bucket))  # region-local mirror
     tokenizer = preprocess.load_tokenizer(spec.tokenizer_ref)
 
+    if spec.is_text_line:
+        if spec.storage_version == 3:
+            tokenize_batch = None  # V3 stores no tokens; Phase B tokenizes from ``text``.
+        elif args.tokenizer_impl == "gigatoken":
+            gt_tok = preprocess.load_gigatoken(spec.tokenizer_ref)
+            special = {"cls_id": MODERNBERT_CLS_TOKEN_ID, "sep_id": MODERNBERT_SEP_TOKEN_ID}
+            preprocess.assert_gigatoken_parity(tokenizer, gt_tok, spec.max_length, **special)
+            tokenize_batch = functools.partial(
+                preprocess.tokenize_trunc_batch_gigatoken, gt_tok, max_length=spec.max_length, **special
+            )
+        else:
+            tokenize_batch = functools.partial(
+                preprocess.tokenize_trunc_batch_arrow, tokenizer, max_length=spec.max_length
+            )
+        pool = _install_rust_extractor(
+            args.resiliparse_artifact,
+            spec,
+            args.extract_procs,
+            extract_fn=preprocess.resiliparse_rs_screen_batch,
+            crash_result=("", True),  # a crashed page is in-population with an empty extraction
+        )
+        process_one = functools.partial(
+            _process_one_text,
+            spec=spec,
+            model=model,
+            tokenize_batch=tokenize_batch,
+            tokenizer_impl=args.tokenizer_impl,
+            pool=pool,
+            bucket=args.bucket,
+            chunk_records=args.chunk_records,
+            cleanup_chunks=args.cleanup_chunks,
+        )
+    else:
+        process_one = functools.partial(
+            _process_one,
+            spec=spec,
+            model=model,
+            tokenizer=tokenizer,
+            bucket=args.bucket,
+            chunk_records=args.chunk_records,
+            cleanup_chunks=args.cleanup_chunks,
+        )
+
     if args.rescue:
         _rescue_loop(
             spec,
             args.manifest,
             args.bucket,
-            model=model,
-            tokenizer=tokenizer,
+            process_one=process_one,
             shuffle_seed=args.shuffle_seed,
             poll_seconds=args.poll_seconds,
             max_idle_passes=args.max_idle_passes,
             stale_minutes=args.rescue_stale_minutes,
         )
         return
-
-    process_one = functools.partial(
-        _process_one,
-        spec=spec,
-        model=model,
-        tokenizer=tokenizer,
-        bucket=args.bucket,
-        chunk_records=args.chunk_records,
-        cleanup_chunks=args.cleanup_chunks,
-    )
+    if spec.storage_version == 3:
+        run_shard_loop(
+            spec,
+            args.bucket,
+            process_one=process_one,
+            shuffle_seed=args.shuffle_seed,
+            poll_seconds=args.poll_seconds,
+            max_idle_passes=args.max_idle_passes,
+            max_shard=args.max_shard,
+        )
+        return
     run_claim_loop(
         spec,
         args.manifest,

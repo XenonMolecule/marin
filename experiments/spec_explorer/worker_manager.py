@@ -30,7 +30,7 @@ import threading
 import time
 import urllib.request
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from experiments.spec_explorer.catalog import INDEX_DATASET_REGION
@@ -73,7 +73,7 @@ def region_of(dataset: str) -> str:
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _ssl_ctx() -> ssl.SSLContext:

@@ -1,11 +1,12 @@
 # Copyright The Marin Authors
 # SPDX-License-Identifier: Apache-2.0
 
-"""One-shot launcher: the three-arm system-prompt ablation, all arms in parallel.
+"""One-shot launcher: the system-prompt ablation arms, all in parallel.
 
     A  sysprompt      docs with [S] prepended
     B  token-matched  more docs, no [S], same TOKEN count as A
     C  doc-matched    the SAME docs as A, no [S] (fewer tokens)
+    D  mix50          the SAME docs as A, [S] on a deterministic doc_id-keyed half
 
 Every arm uses the frozen ``completed_adamh`` cell for its (budget, width) — the
 optimizer hyperparameters are byte-identical across arms, so the only difference
@@ -58,23 +59,24 @@ from experiments.scaling_law_sweeps.launch_curation_sweep import PRIORITY_BAND_M
 logger = logging.getLogger(__name__)
 
 EXPERIMENT_TAG = "expFM_natural"  # natural epoching -> no Levanter slicing
-ARMS = ("A", "B", "C")
+ARMS = ("A", "B", "C", "D")
 ARM_DESC = {
     "A": "sysprompt [S][D]",
     "B": "token-matched baseline",
     "C": "doc-matched baseline",
+    "D": "mix50: [S][D] on a doc_id-keyed half, [D] on the rest",
 }
 # Cache lives only in us-central1, and v5p-16 is available in us-central1-a.
 PIN_REGION = "us-central1"
 
 
-def build_plans(tag: str, budget: float, hidden_dim: int) -> list[curation_plan.PlannedRun]:
+def build_plans(tag: str, budget: float, hidden_dim: int, arms: tuple[str, ...]) -> list[curation_plan.PlannedRun]:
     candidate = _candidate_for_fixed_model(hidden_dim, budget, seq_len=SEQ_LEN)
     if candidate is None:
         raise SystemExit(f"no candidate config for hidden_dim={hidden_dim} at budget={budget:.3g}")
 
     plans = []
-    for arm in ARMS:
+    for arm in arms:
         method_name = f"sysprompt30b_{tag}_{arm}"
         if method_name not in curation_plan.METHODS:
             raise SystemExit(
@@ -103,7 +105,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--tag", default="998m_9e19", help="Scale tag used in method/cache names.")
     p.add_argument("--budget", type=float, default=9e19)
     p.add_argument("--hidden-dim", type=int, default=1536)
-    p.add_argument("--arms", default="A,B,C")
+    p.add_argument("--arms", default=",".join(ARMS))
     # Default None -> use the shape the frozen plan computes for this cell, so
     # the TPU scales with the budget automatically: 9e19 -> v5p-16,
     # 1.8e20 -> v5p-32, 3e20 -> v5p-64. Pass --tpu only to override.
@@ -127,9 +129,10 @@ def main(argv: list[str] | None = None) -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     args = _parse_args(argv)
     arms = tuple(x.strip().upper() for x in args.arms.split(",") if x.strip())
-
-    all_plans = {p.method_name.rsplit("_", 1)[1]: p for p in build_plans(args.tag, args.budget, args.hidden_dim)}
-    plans = [all_plans[a] for a in arms]
+    bad = set(arms) - set(ARMS)
+    if bad:
+        raise SystemExit(f"unknown arms: {sorted(bad)}")
+    plans = build_plans(args.tag, args.budget, args.hidden_dim, arms)
 
     for arm, plan in zip(arms, plans, strict=True):
         tokens = plan.batch_size * plan.seq_len * plan.train_steps

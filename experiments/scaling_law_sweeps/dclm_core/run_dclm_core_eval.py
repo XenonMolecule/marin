@@ -48,6 +48,7 @@ from pathlib import Path
 # limit you") is instead TRANSIENT — ridden out by _load_hf_with_retry (below) plus
 # iris job retries, exactly as the 246-run 10k CORE sweep completed. Do not re-add a
 # blanket offline flag without first warming a hub cache for THIS task set's datasets.
+import datasets.config as hf_datasets_config
 import haliax as hax
 import jmp
 import levanter.eval_harness as eval_harness
@@ -432,7 +433,17 @@ def _prepare_offline_dataset_cache(gcs_cache: str, local_dir: str = "/tmp/dclm_c
         n += 1
     os.environ["HF_DATASETS_CACHE"] = local_dir
     os.environ["HF_DATASETS_OFFLINE"] = "1"
-    logger.info("Synced %d dataset-cache files %s -> %s; HF_DATASETS_OFFLINE=1", n, base, local_dir)
+    # `datasets` snapshots HF_DATASETS_CACHE / *_OFFLINE / HF_HOME at IMPORT time, and
+    # levanter.eval_harness has already imported it (via lm_eval) before main() runs -- so the env
+    # vars above were never honored and every prior sweep silently loaded from the Hub with the
+    # default cache dir. Patch the live config so the mirrored in-region cache actually takes effect.
+    # This became load-bearing under huggingface_hub>=1: it rejects the legacy namespace-less
+    # dataset ids (super_glue / openbookqa / winogrande) that copa, boolq, openbookqa, winogrande
+    # resolve to online, but the mirrored cache holds those exact Hub revisions.
+    hf_datasets_config.HF_DATASETS_CACHE = Path(local_dir)
+    hf_datasets_config.HF_HUB_OFFLINE = True
+    hf_datasets_config.HF_DATASETS_OFFLINE = True
+    logger.info("Synced %d dataset-cache files %s -> %s; datasets config patched offline", n, base, local_dir)
     return n
 
 

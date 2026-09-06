@@ -47,7 +47,11 @@ from iris.cluster.types import (
     tpu_device,
 )
 from iris.rpc import job_pb2
-from rigging.filesystem import REGION_TO_DATA_BUCKET
+from rigging.filesystem import data_config
+
+# REGION_TO_DATA_BUCKET was removed from rigging post-merge; identical mapping (region ->
+# bare bucket name) now derived from the data config.
+REGION_TO_DATA_BUCKET = {r: s.name for r, s in data_config().region_buckets.items()}
 
 from experiments.scaling_law_sweeps import curation_plan, region_tracker
 
@@ -77,7 +81,7 @@ PRIORITY_BAND_MAP = {
     "production": job_pb2.PRIORITY_BAND_PRODUCTION,
     "interactive": job_pb2.PRIORITY_BAND_INTERACTIVE,
     "batch": job_pb2.PRIORITY_BAND_BATCH,
-    "unspecified": job_pb2.PRIORITY_BAND_UNSPECIFIED,
+    "unspecified": job_pb2.PRIORITY_BAND_INHERIT,  # UNSPECIFIED renamed post-merge; INHERIT = take parent band
 }
 
 
@@ -273,6 +277,21 @@ def submit_one(
         # capacity. Bounded enough that a genuinely broken plan still fails
         # quickly.
         max_retries_failure=10,
+        # Job-level cumulative failure budget. iris defaults this to 0 = fail the
+        # whole job on the FIRST task failure, which silently overrides the
+        # per-task retry budget above: a multi-host gang that hits one flaky
+        # init crash (JAX coordinator "different incarnation") is dead on
+        # arrival. Match the per-task budget so gang rounds retry as intended.
+        #
+        # Set to 30, not 10. Preemptions are not counted here, but every
+        # preemption restarts the gang, and a restart can re-hit the init race —
+        # so a long preemptible multi-host run accumulates *failures*
+        # proportional to how often it is preempted. Observed 2026-08-17:
+        # 9e+19-d2432-L24-B32 took 3 preemptions in 1h31m and burned all 10
+        # failures, dying at step 3628 of a run that resumes fine on relaunch.
+        # A genuinely broken plan still fails fast (each such failure costs
+        # ~90 s, so 30 bounds it under an hour).
+        max_task_failures=30,
         priority_band=child_priority_band,
     )
     return str(job.job_id)
@@ -525,6 +544,15 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "to launch a specific multi-host candidate).",
     )
     parser.add_argument(
+        "--exclude-names-file",
+        type=str,
+        default=None,
+        help="Path to a file of run_name_core values to skip, one per line. Use to "
+        "resubmit a partial fleet (e.g. widening --allowed-regions) without duplicating "
+        "cells still running under another coordinator — duplicate submissions of a live "
+        "run produce two writers on one checkpoint path.",
+    )
+    parser.add_argument(
         "--force-primary-tpu",
         type=str,
         default=None,
@@ -652,6 +680,17 @@ def main(argv: list[str] | None = None) -> None:
     )
     if args.filter_name_contains is not None:
         plans = [p for p in plans if args.filter_name_contains in p.run_name_core]
+    if args.exclude_names_file is not None:
+        with open(args.exclude_names_file) as f:
+            excluded = {line.strip() for line in f if line.strip()}
+        unmatched = excluded - {p.run_name_core for p in plans}
+        if unmatched:
+            raise SystemExit(
+                f"--exclude-names-file: {len(unmatched)} entries match no plan (typo'd names "
+                f"would silently resubmit a live run): {sorted(unmatched)[:5]}"
+            )
+        plans = [p for p in plans if p.run_name_core not in excluded]
+        logger.info("Excluded %d plans via --exclude-names-file; %d remain", len(excluded), len(plans))
     if args.max_count is not None:
         plans = plans[: args.max_count]
 

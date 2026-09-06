@@ -1,3 +1,6 @@
+# Copyright The Marin Authors
+# SPDX-License-Identifier: Apache-2.0
+
 """Measure the full curation pipeline funnel on a RANDOM RAW sample.
 
 For a random sample of the raw input population (high_quality_3000_distill =
@@ -18,6 +21,7 @@ without re-running BERT.
 Single-host v4-8 (world=4), doc-level sharding, length-bucketed BERT, persistent
 GCS XLA cache — all reused from cascade_chat_filter (the proven, deadlock-free path).
 """
+
 import argparse
 import gzip
 import json
@@ -35,7 +39,6 @@ import torch_xla.runtime as xr
 from transformers import AutoTokenizer
 
 from experiments.baseline_collection.cascade_chat_filter import (
-    LABEL_USEFUL,
     LOCAL_XLA_CACHE,
     MODEL_ID,
     SYSTEM_MESSAGE,
@@ -252,9 +255,11 @@ def _mp_fn(index):
                 ids = bert_tok(fasttext_text(bs), truncation=True, max_length=args.max_length)["input_ids"]
                 survivors.append((src, bs, ids, ftp))
         run_bert_batch(survivors)
-        log(f"WARC {warc:05d} ({wi+1}/{len(warcs)}) done; "
+        log(
+            f"WARC {warc:05d} ({wi+1}/{len(warcs)}) done; "
             f"totals all={counts['all']['n_total']} rules={counts['all']['n_rules_kept']} "
-            f"ft={counts['all']['n_ft_kept']} bert={counts['all']['n_bert_kept']}")
+            f"ft={counts['all']['n_ft_kept']} bert={counts['all']['n_bert_kept']}"
+        )
 
     surv_f.close()
     with open(surv_tmp, "rb") as s, fsspec.open(surv_path, "wb") as d:

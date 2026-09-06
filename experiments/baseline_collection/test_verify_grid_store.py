@@ -23,10 +23,10 @@ import pyarrow.parquet as pq
 import pytest
 from fray.local_backend import LocalClient
 from fray.types import ResourceConfig
+from zephyr.execution import ZephyrContext
 
 from experiments.baseline_collection import grid_corpora, grid_store, grid_tokenize, verify_grid_store
 from experiments.datakit.store.datakit_store import (
-    STAT_SIDECAR,
     SUBSHARD_PLAN,
     ClusteredStoreData,
     _load_or_persist_plan,
@@ -67,14 +67,14 @@ def _build_store(*, tok_dir, topic_dir, quality_dir, store_path, client, resume=
         tokenize={
             DATASET: TokenizedAttrData(
                 output_dirs={"train": str(tok_dir)},
-                source_main_dirs={"train": str(pathlib.Path(store_path).parent / "docs")},
+                source_keys={"train": str(pathlib.Path(store_path).parent / "docs")},
                 tokenizer="stub",
             )
         },
         cluster_assign={
             DATASET: AssignmentAttrData(
                 output_dir=str(topic_dir),
-                source_main_dir=str(pathlib.Path(store_path).parent / "docs"),
+                source_key=str(pathlib.Path(store_path).parent / "docs"),
                 k_train=N_TOPICS,
             )
         },
@@ -88,10 +88,13 @@ def _build_store(*, tok_dir, topic_dir, quality_dir, store_path, client, resume=
         },
         output_path=store_path,
         cluster_view=N_TOPICS,
-        client=client,
-        chunk_storage_prefix=str(pathlib.Path(store_path).parent / "chunks"),
+        zephyr_context=ZephyrContext(
+            client=client,
+            chunk_storage_prefix=str(pathlib.Path(store_path).parent / "chunks"),
+            resources=ResourceConfig(cpu=1, ram="512m"),
+            max_workers=2,
+        ),
         worker_resources=ResourceConfig(cpu=1, ram="512m"),
-        max_workers=2,
         reduce_shards=4,
         default_subshards=1,
         resume=resume,
@@ -205,7 +208,7 @@ def test_resume_skips_finished_cells_and_reproduces_the_artifact(built, local_cl
 
     Finished cells are dropped at the map, so their reducers never run. The
     artifact must still list them -- the driver reads their stats back from the
-    sidecars -- or a resumed store would silently lose every cell it reused.
+    ledgers -- or a resumed store would silently lose every cell it reused.
     """
     monkeypatch.setattr(grid_corpora, "OUTPUT_BASE", str(built["tmp"] / "out"))
     before = read_artifact(built["store"], ClusteredStoreData)
@@ -235,8 +238,9 @@ def test_partial_resume_rebuilds_only_the_missing_cells(built, local_client, mon
     before = read_artifact(built["store"], ClusteredStoreData)
 
     # Simulate a cell that never finished: drop one cell's directory entirely.
-    victim = sorted(pathlib.Path(built["store"]).glob("cluster=*/quality=*/sub=*/train"))[0]
-    dropped_rows = int(json.loads((victim / STAT_SIDECAR).read_text())["rows"])
+    victim = sorted(pathlib.Path(built["store"]).glob("cluster=*/quality=*/train/sub=*"))[0]
+    # A finished cell is identified by its own committed ledger, which also carries the row count.
+    dropped_rows = int(json.loads((victim / "shard_ledger.json").read_text())["total_num_rows"])
     shutil.rmtree(victim)
 
     resumed = _rebuild(built, local_client, resume=True)

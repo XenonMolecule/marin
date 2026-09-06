@@ -50,6 +50,8 @@ import fsspec
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pyarrow as pa
+import pyarrow.parquet as pq
 from jax.sharding import Mesh, NamedSharding
 from jax.sharding import PartitionSpec as P
 
@@ -66,6 +68,7 @@ from experiments.baseline_collection.weborganizer_topic_smoke import (
     EXAMPLES_PER_LABEL,
     NOURL_MODEL,
     URL_MODEL,
+    Corpus,
     Doc,
     Format,
     LabelReservoir,
@@ -131,6 +134,10 @@ CORPUS_TOTAL_TOKENS: dict[str, int] = {
     "med_quality_3k": 26_930_000_000,  # med_quality_3000warcs-73cd32
     "low_quality_3k": 28_850_000_000,  # low_quality @2000warcs (no 3000W entry registered)
     "med_low_quality_3k": 1_450_000_000,  # med_low_quality @100warcs ONLY
+    # PROJECTION, not a ledger: grid_projection_report's shard-weighted estimate (2026-07-31) of the
+    # pre-dedup llama3 mass at 10,364 WARCs. Replace with the tokenized cache's .stats.json once the
+    # run is consolidated, deduped and tokenized.
+    "llm_pipeline_v1_1_10k": 137_800_000_000,
 }
 
 
@@ -158,20 +165,31 @@ def manifest_shards(corpus) -> list[str]:
     return sorted(shards)
 
 
-def chunk_shards(corpus, num_chunks: int, chunk_idx: int) -> list[str]:
-    """Randomly permute the corpus's shards (fixed seed) and deal shard i to chunk i % num_chunks.
+def group_manifest_shards(corpus) -> list[str]:
+    """Shard URLs of a group manifest (rows of {warc, region, shards}), all in the corpus's region."""
+    shards: list[str] = []
+    with fsspec.open(corpus.group_manifest) as fh:
+        for line in fh:  # type: ignore[union-attr]
+            row = json.loads(line)
+            if row["region"] != corpus.region:
+                raise ValueError(
+                    f"{corpus.group_manifest}: WARC {row['warc']} is in {row['region']}, not {corpus.region}"
+                )
+            shards.extend(row["shards"])
+    logger.info("group manifest %s: %d batches", corpus.group_manifest, len(shards))
+    return sorted(shards)
 
-    For manifest corpora the shard list is capped: each batch file holds only ~130 docs, so keeping
-    all ~240k would mean one doc per file and 240k GCS opens per chunk. A random subsample of the
-    batches still lands across essentially every WARC (batches are spread over WARCs), so coverage
-    survives while the open count stays sane.
+
+def deal_shards(shards: list[str], num_chunks: int, chunk_idx: int, cap: bool) -> list[str]:
+    """Randomly permute `shards` (fixed seed) and deal shard i to chunk i % num_chunks.
+
+    With `cap`, the dealt list is cut to MAX_SHARDS_PER_CHUNK: an LLM-extraction batch file holds
+    only ~50-130 docs, so keeping all ~2M of them would mean one doc per file and millions of GCS
+    opens per chunk. A random subsample of the batches still lands across essentially every WARC
+    (batches are spread over WARCs), so coverage survives while the open count stays sane.
     """
-    if corpus.manifest:
-        shards = manifest_shards(corpus)
-    else:
-        shards = sorted(fsspec_glob(f"{corpus.path}/*.{corpus.format.value}"))
     if not shards:
-        raise ValueError(f"no shards for {corpus.path} (manifest={corpus.manifest}, spec={corpus.spec})")
+        raise ValueError("no shards to deal")
     rng = np.random.default_rng(SHARD_PERMUTATION_SEED)
     order = rng.permutation(len(shards))
     mine = [shards[i] for i in order[chunk_idx::num_chunks]]
@@ -183,13 +201,26 @@ def chunk_shards(corpus, num_chunks: int, chunk_idx: int) -> list[str]:
             f"chunk {chunk_idx}/{num_chunks} was dealt 0 of {len(shards)} shards — "
             f"--num-chunks must be <= the shard count ({len(shards)})"
         )
-    if corpus.manifest and len(mine) > MAX_SHARDS_PER_CHUNK:
+    if cap and len(mine) > MAX_SHARDS_PER_CHUNK:
         keep = np.random.default_rng(SHARD_PERMUTATION_SEED + chunk_idx).choice(
             len(mine), size=MAX_SHARDS_PER_CHUNK, replace=False
         )
         mine = [mine[i] for i in sorted(keep.tolist())]
         logger.info("capped shard list to %d batches for this chunk", len(mine))
     return mine
+
+
+def chunk_shards(corpus, num_chunks: int, chunk_idx: int) -> list[str]:
+    """The shards chunk `chunk_idx` of `num_chunks` owns."""
+    if corpus.group_manifest:
+        shards = group_manifest_shards(corpus)
+    elif corpus.manifest:
+        shards = manifest_shards(corpus)
+    else:
+        shards = sorted(fsspec_glob(f"{corpus.path}/*.{corpus.format.value}"))
+    if not shards:
+        raise ValueError(f"no shards for {corpus.path} (manifest={corpus.manifest}, spec={corpus.spec})")
+    return deal_shards(shards, num_chunks, chunk_idx, cap=bool(corpus.manifest or corpus.group_manifest))
 
 
 def read_chunk(corpus, shards: list[str], quota: int, stride: int = ROW_STRIDE) -> list[Doc]:
@@ -239,8 +270,6 @@ def read_chunk(corpus, shards: list[str], quota: int, stride: int = ROW_STRIDE) 
 
 def mirrored_corpus(dataset: str):
     """The mirror of `dataset` in MIRROR_REGION: already-sampled `{url,text}` parquet."""
-    from experiments.baseline_collection.weborganizer_topic_smoke import Corpus
-
     return Corpus(f"gs://marin-{MIRROR_REGION}/{MIRROR_ROOT}/{dataset}", MIRROR_REGION, Format.PARQUET)
 
 
@@ -252,9 +281,6 @@ def run_mirror(dataset: str, target_docs: int, num_chunks: int, chunk_idx: int) 
     often dry. Reading those shards from a us-east5 job would drag the WHOLE corpus across; sampling
     here first means only the ~3 KB/doc we actually score crosses the wire.
     """
-    import pyarrow as pa
-    import pyarrow.parquet as pq
-
     corpus = CORPORA[dataset]
     out_path = f"gs://marin-{MIRROR_REGION}/{MIRROR_ROOT}/{dataset}/part-{chunk_idx:04d}-of-{num_chunks:04d}.parquet"
     fs, _ = fsspec.core.url_to_fs(out_path)
@@ -377,8 +403,6 @@ def run_chunk(
     example_min_prob: float,
     source: str = "native",
 ) -> None:
-    import pyarrow as pa
-    import pyarrow.parquet as pq
 
     # Reading the mirror means the docs are ALREADY sampled, so take every row (stride 1) and let the
     # outputs land in the mirror region alongside the compute.
@@ -486,9 +510,6 @@ def run_merge(dataset: str, examples_per_label: int, source: str = "native") -> 
     mirror (us-east5), not in the corpus's native region, so merging with the wrong one looks in an
     empty directory.
     """
-    import pyarrow as pa
-    import pyarrow.parquet as pq
-
     corpus = mirrored_corpus(dataset) if source == "mirror" else CORPORA[dataset]
     out_dir = f"gs://marin-{corpus.region}/{OUT_ROOT}/{dataset}"
 

@@ -57,7 +57,7 @@ from experiments.data_mixing.olmix_fit import (
 )
 from experiments.data_mixing.olmix_plan import read_manifest
 from experiments.data_mixing.olmix_solve import DEFAULT_KL_REG, DEFAULT_REPETITION_FACTOR
-from experiments.data_mixing.olmix_tasks import build_target_tasks
+from experiments.data_mixing.olmix_tasks import build_olmix_exact_tasks, build_target_tasks
 from experiments.data_mixing.run_olmix_swarm_standalone import PROXY_TRAIN_STEPS
 
 logger = logging.getLogger(__name__)
@@ -198,6 +198,16 @@ def main() -> None:
         "real dclm swarm, so serial is ~2.75 h per corpus; the fan-out is bit-identical "
         "(tests/data_mixing/test_olmix_fit_parallel.py). Set to the core count.",
     )
+    p.add_argument(
+        "--devset",
+        choices=("marin", "olmix_exact"),
+        default="marin",
+        help="Which bpb devset to optimise (ignored unless --metric bpb). 'marin' = the 42-task "
+        "objective with DCLM Core v2 held out. 'olmix_exact' = olmix's own 51-task suite from "
+        "the paper's Table 9, which INCLUDES the 10 Core v2 tasks and drops gsm8k -- use it for "
+        "comparability with the paper, but do not then report beating natural on Core v2. Both "
+        "read the same evals, so running both costs one extra CPU job.",
+    )
     p.add_argument("--write-csv", action="store_true", help="Also write olmix-schema ratios.csv/metrics.csv.")
     p.add_argument(
         "--metric",
@@ -221,6 +231,13 @@ def main() -> None:
     elif args.metric == "blend":
         task_names = list(BLEND_TASKS)
         logger.info("objective: BLEnD cultural bpb, %d country tasks (diagnostic)", len(task_names))
+    elif args.devset == "olmix_exact":
+        task_names = list(build_olmix_exact_tasks(include_mmlu=args.include_mmlu))
+        logger.info(
+            "objective: olmix's own suite reproduced exactly (paper Table 9), %d tasks. "
+            "Core v2 is INSIDE this objective, so results on it are no longer held out.",
+            len(task_names),
+        )
     else:
         task_names = list(build_target_tasks(include_mmlu=args.include_mmlu))
         logger.info("objective: OLMo Base-Easy bpb devset, %d tasks", len(task_names))

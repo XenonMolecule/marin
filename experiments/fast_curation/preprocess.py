@@ -136,17 +136,34 @@ def resiliparse_rs_text(html: str, max_html_chars: int = MAX_JUSTEXT_HTML_CHARS)
     (``score_resiliparse_rs.install_extractor`` does exactly that). The import is function-local
     because the package is downloaded at runtime rather than installed.
 
-    ~31x faster than :func:`justext_text` (291.8 vs 9.43 docs/s/core). It also **segfaults** on a
-    small fraction of pages (0.108% measured, all containing ``<frameset>``): a hard process death,
-    not a Python exception, so a caller MUST run it in a separate process and treat the loss of that
-    process as a dropped document — see ``cpu_phase_c.ResiliparseRsPool``.
+    ~31x faster than :func:`justext_text` (291.8 vs 9.43 docs/s/core). Two crash classes are handled
+    HERE, in the child, so one bad page costs one page instead of poisoning the pool:
+
+    * ``<frameset>`` pages hard-SEGFAULT the Rust engine (0.1-0.25% of the web). The substring
+      screen refuses them -> "" — the same screen (and the same answer: these are parking/redirect
+      shells with no main content) the TEXT classifiers' training corpora were built with
+      (``extract_prep_text_rs``/``extract_text_shards``), so screening is the parity-faithful
+      behavior. Without it, ~every 5k-doc batch contained a crasher, the pool died, and the
+      whole-batch isolation fallback silently ran extraction SINGLE-process — the canary's 14x gap.
+    * The fork can PANIC on a doc (pyo3 ``PanicException`` inherits BaseException, so a plain
+      ``except Exception`` misses it and it kills the worker on the way out) -> "".
+
+    A mixed-case ``<FrameSet``, or any unknown crasher, still segfaults — callers keep
+    ``ResiliparseRsPool``'s process isolation as the backstop.
     """
     if len(html) > max_html_chars:
         logger.warning("skipping resiliparse-rs on %d-char page (> %d cap)", len(html), max_html_chars)
         return ""
+    if "<frameset" in html or "<FRAMESET" in html:
+        return ""
     from resiliparse._extract_rs import extract_plain_text
 
-    return extract_plain_text(html, main_content=True, preserve_formatting="markdown")
+    try:
+        return extract_plain_text(html, main_content=True, preserve_formatting="markdown")
+    except (KeyboardInterrupt, SystemExit):
+        raise
+    except BaseException:  # pyo3 PanicException is a BaseException
+        return ""
 
 
 def resiliparse_rs_batch(args: tuple[list[str], int]) -> list[str]:
@@ -157,6 +174,24 @@ def resiliparse_rs_batch(args: tuple[list[str], int]) -> list[str]:
     """
     htmls, max_html_chars = args
     return [resiliparse_rs_text(h, max_html_chars) for h in htmls]
+
+
+def resiliparse_rs_screen_batch(args: tuple[list[str], int]) -> list[tuple[str, bool]]:
+    """TEXT-line fused pool task: ``(extracted_text, in_population)`` per page.
+
+    ``in_population`` is the decode-time filter (``fasttext_text(body_strip(html))`` non-empty)
+    moved into the pool so its ~2 min/WARC of regex work is parallelized instead of serial in the
+    parent; a page outside the population skips extraction entirely. The population it defines is
+    EXACTLY the one the cascade thresholds were calibrated on (the 100k sample passed this filter).
+    """
+    htmls, max_html_chars = args
+    out: list[tuple[str, bool]] = []
+    for h in htmls:
+        if not fasttext_text(body_strip(h)):
+            out.append(("", False))
+            continue
+        out.append((resiliparse_rs_text(h, max_html_chars), True))
+    return out
 
 
 def _justext_one(args: tuple[str, str, int, str]) -> str:
@@ -249,6 +284,102 @@ def tokenize_trunc_batch(
         chunk = [t[: max_length * 8] for t in texts[i : i + batch_size]]
         out.extend(enc.ids for enc in backend.encode_batch_fast(chunk))
     return out
+
+
+# Texts chosen so any semantic drift between tokenizer implementations surfaces: truncation
+# direction (head/tail-distinct long doc), the char cap, special-tokens-only empties, and UTF-8.
+_PARITY_TEXTS = (
+    "",
+    " ",
+    "short doc",
+    "word " * 20000,
+    " ".join(f"tok{i}word{i * 7 % 13}" for i in range(60000)),
+    "some utf-8: café π 漢字 emoji \U0001f680 mixed in. " * 500,
+    "a" * (8192 * 8 + 50),
+)
+
+
+def load_gigatoken(tokenizer_ref: str):
+    """The raw ``gigatoken.Tokenizer`` built from the HF tokenizer (cached like the HF loader).
+
+    Requires the ``gigatoken`` extra. It shares the SAME vocab/merges as the HF tokenizer, so its
+    ids are drop-in — but never trust that silently: call :func:`assert_gigatoken_parity` once at
+    worker startup before using it on real data.
+    """
+    key = f"gigatoken::{tokenizer_ref}"
+    # Resolve the HF tokenizer BEFORE taking _LOCK: load_tokenizer takes the same non-reentrant
+    # lock, so calling it while holding _LOCK self-deadlocks.
+    hf_tok = load_tokenizer(tokenizer_ref)
+    with _LOCK:
+        tok = _TOKENIZER_CACHE.get(key)
+        if tok is not None:
+            return tok
+        import gigatoken
+
+        logger.info("wrapping %s in gigatoken %s", tokenizer_ref, getattr(gigatoken, "__version__", "?"))
+        tok = gigatoken.Tokenizer(hf_tok)
+        _TOKENIZER_CACHE[key] = tok
+        return tok
+
+
+def tokenize_trunc_batch_arrow(tokenizer, texts: list[str], max_length: int):
+    """HF tokenize -> ``(pyarrow list<int32> column, int32 lengths)`` — the columnar contract.
+
+    Same ids as :func:`tokenize_trunc_batch`; the arrow conversion is what the presurvivor write
+    consumed anyway, moved into the tokenize seam so both implementations share one output type
+    (and one timing boundary in ``timing_a``).
+    """
+    import numpy as np
+    import pyarrow as pa
+
+    ids = tokenize_trunc_batch(tokenizer, texts, max_length)
+    column = pa.array(ids, type=pa.list_(pa.int32()))
+    return column, np.array([len(x) for x in ids], dtype=np.int32)
+
+
+def tokenize_trunc_batch_gigatoken(gt_tok, texts: list[str], max_length: int, *, cls_id: int, sep_id: int):
+    """Gigatoken tokenize -> ``(pyarrow list<int32> column, int32 lengths)``, never touching Python.
+
+    ~23x the HF path at real WARC scale: gigatoken's native ``encode_batch`` returns a ragged
+    awkward array backed by offsets+values buffers; truncation to ``max_length - 2`` body tokens
+    and the ``[CLS]``/``[SEP]`` assembly are vectorized array ops; the result converts to the
+    parquet schema's ``list<int32>`` without materializing per-doc Python lists (which is where the
+    naive integration spent ~90% of its time). Ids are byte-identical to
+    :func:`tokenize_trunc_batch_arrow` — verified per worker by :func:`assert_gigatoken_parity`.
+    """
+    import awkward as ak
+    import numpy as np
+    import pyarrow as pa
+
+    if not texts:
+        return pa.array([], type=pa.list_(pa.int32())), np.array([], dtype=np.int32)
+    capped = [t[: max_length * 8] for t in texts]
+    ids = ak.values_astype(gt_tok.encode_batch(capped)[:, : max_length - 2], np.int32)
+    n = len(ids)
+    one = np.ones(n, np.int64)
+    cls_col = ak.unflatten(np.full(n, cls_id, np.int32), one)
+    sep_col = ak.unflatten(np.full(n, sep_id, np.int32), one)
+    full = ak.concatenate([cls_col, ids, sep_col], axis=1)
+    column = ak.to_arrow(full, list_to32=True).cast(pa.list_(pa.int32()))
+    return column, np.asarray(ak.num(full)).astype(np.int32)
+
+
+def assert_gigatoken_parity(tokenizer, gt_tok, max_length: int, *, cls_id: int, sep_id: int) -> None:
+    """Fail fast unless gigatoken reproduces the HF tokenization EXACTLY on adversarial inputs.
+
+    The token ids are the classifier input the cascade thresholds were calibrated on, so a
+    tokenizer that is merely "close" silently shifts every score. Runs once at worker startup;
+    costs a few hundred ms.
+    """
+    ref, ref_n = tokenize_trunc_batch_arrow(tokenizer, list(_PARITY_TEXTS), max_length)
+    cand, cand_n = tokenize_trunc_batch_gigatoken(gt_tok, list(_PARITY_TEXTS), max_length, cls_id=cls_id, sep_id=sep_id)
+    for i, (a, b, an, bn) in enumerate(zip(ref.to_pylist(), cand.to_pylist(), ref_n, cand_n, strict=True)):
+        if a != b or an != bn:
+            raise RuntimeError(
+                f"gigatoken tokenization diverges from HF on parity text {i} "
+                f"(len {len(a)}/{an} vs {len(b)}/{bn}); refusing to tokenize the corpus with it."
+            )
+    logger.info("gigatoken parity check passed (%d texts, max_length=%d)", len(ref), max_length)
 
 
 def assert_justext_version(expected: str) -> None:

@@ -32,7 +32,7 @@ import multiprocessing as mp
 import os
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import fsspec
 
@@ -116,7 +116,7 @@ def _process_file(input_path: str) -> dict:
         "url_utf8_bytes": url_utf8_bytes,
         "uncompressed_jsonl_bytes": json_line_bytes,
         "elapsed_s": round(elapsed, 2),
-        "completed_at": datetime.now(timezone.utc).isoformat(),
+        "completed_at": datetime.now(UTC).isoformat(),
     }
 
     with fsspec.open(ckpt_path, "w") as f:
@@ -150,7 +150,7 @@ def _aggregate() -> dict:
         totals["n_files"] += 1
         for k in ("n_records", "html_chars", "html_utf8_bytes", "url_utf8_bytes", "uncompressed_jsonl_bytes"):
             totals[k] += rec.get(k, 0)
-    totals["aggregated_at"] = datetime.now(timezone.utc).isoformat()
+    totals["aggregated_at"] = datetime.now(UTC).isoformat()
     with fsspec.open(SUMMARY_PATH, "w") as f:
         json.dump(totals, f, indent=2)
     return totals

@@ -16,8 +16,10 @@ import pytest
 
 from experiments.data_mixing.olmix_tasks import (
     CORE_V2_ALIASES,
+    GSM8K_VARIANT,
     MMLU_BPB,
     OLMIX_DROPPED_TASKS,
+    build_olmix_exact_tasks,
     build_target_tasks,
     core_v2_task_names,
     family_counts,
@@ -237,3 +239,71 @@ def test_no_target_task_shares_a_dataset_with_core_v2():
 )
 def test_task_family_classification(task_variant, expected):
     assert task_family(task_variant) == expected
+
+
+# --- olmix's own suite, reproduced exactly (paper Table 9) -------------------------------
+#
+# Transcribed from the paper, NOT from our implementation, so a drift in either direction
+# fails. Table 9 lists per-family counts and marks subtasks; MMLU is averaged into its 4
+# categories ("We treat subtasks as standalone tasks, except for MMLU").
+TABLE_9_FAMILY_COUNTS = {"math": 7, "code": 19, "qa": 25}
+
+# The 10 tasks the marin objective holds out for Core v2 but Table 9 fits on.
+TABLE_9_CORE_V2_OVERLAP = {
+    "arc_easy",
+    "arc_challenge",
+    "csqa",
+    "hellaswag",
+    "winogrande",
+    "piqa",
+    "coqa",
+    "jeopardy",
+    "squad",
+    "lambada",
+}
+
+
+def test_olmix_exact_matches_table_9_size_and_families():
+    tasks = build_olmix_exact_tasks()
+    assert len(tasks) == 51
+    assert family_counts(tasks) == TABLE_9_FAMILY_COUNTS
+
+
+def test_olmix_exact_fits_on_core_v2_unlike_marin_objective():
+    """The whole point of the exact suite: it does NOT hold Core v2 out."""
+    exact = {task_name(tv) for tv in build_olmix_exact_tasks()}
+    marin = {task_name(tv) for tv in build_target_tasks()}
+    assert TABLE_9_CORE_V2_OVERLAP <= exact
+    assert TABLE_9_CORE_V2_OVERLAP.isdisjoint(marin)
+
+
+def test_olmix_exact_drops_gsm8k():
+    """Table 9's Math family is Minerva's 7 splits; "GSM" never appears in the paper."""
+    assert GSM8K_VARIANT in build_target_tasks()
+    assert GSM8K_VARIANT not in build_olmix_exact_tasks()
+
+
+def test_olmix_exact_keeps_the_five_metrics_olmix_drops():
+    kept = {task_name(tv) for tv in build_olmix_exact_tasks()}
+    assert kept.isdisjoint(OLMIX_DROPPED_TASKS)
+
+
+def test_olmix_exact_uses_the_seven_minerva_splits_at_bpb():
+    """Minerva contributes exactly 7 subject splits -- not minerva_math_500, not 8 with gsm8k."""
+    minerva = sorted(tv for tv in build_olmix_exact_tasks() if task_name(tv).startswith("minerva_math"))
+    assert len(minerva) == 7
+    assert not any("minerva_math_500" in tv for tv in minerva)
+
+
+def test_olmix_exact_differs_from_marin_objective_only_as_documented():
+    exact, marin = set(build_olmix_exact_tasks()), set(build_target_tasks())
+    assert {task_name(tv) for tv in exact - marin} == TABLE_9_CORE_V2_OVERLAP
+    assert exact - marin != set()
+    assert marin - exact == {GSM8K_VARIANT}
+
+
+def test_olmix_exact_mmlu_is_four_categories():
+    tasks = build_olmix_exact_tasks(include_mmlu=True)
+    assert set(MMLU_BPB) <= set(tasks)
+    assert len([tv for tv in tasks if task_name(tv).startswith("mmlu")]) == 4
+    assert set(MMLU_BPB).isdisjoint(build_olmix_exact_tasks(include_mmlu=False))

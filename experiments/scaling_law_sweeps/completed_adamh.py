@@ -36,18 +36,14 @@ from collections.abc import Iterator
 from dataclasses import dataclass, replace
 
 from fray.cluster import ResourceConfig
-from levanter.data.text import LMMixtureDatasetConfig
 from levanter.layers.rotary import Llama3RotaryEmbeddingsConfig
 from levanter.models.llama import LlamaConfig
 from levanter.models.qwen import Qwen3Config
 from levanter.optim.adamh import AdamHConfig
-from marin.execution.executor import ExecutorStep, InputName
 from marin.processing.tokenize import get_vocab_size_for_tokenizer
 from marin.scaling_laws import CandidateConfig, pick_v4_type
 from marin.scaling_laws.tpu_utils import V4_SPEC
 
-from experiments.defaults import default_train
-from experiments.evals.evals import default_eval
 from experiments.evals.task_configs import EvalTaskConfig
 from experiments.simple_train_config import SimpleTrainConfig
 
@@ -122,6 +118,9 @@ class CompletedAdamHHeuristic:
     # --- Fixed hyperparameters (not scaled) ---
     max_grad_norm: float = 0.1
     z_loss_weight: float = 1.0e-07
+    # nesterov was a DEAD flag: pre-merge AdamHConfig declared it but its build() never read it,
+    # and the frozen recipe always passed False. Upstream deleted the field; keeping the knob here
+    # (unpassed) documents the recipe unchanged. Optimizer math is identical either way.
     nesterov: bool = False
 
     # --- Schedule ---
@@ -205,7 +204,6 @@ class CompletedAdamHHeuristic:
             max_grad_norm=self.max_grad_norm,
             lr_schedule=self.lr_schedule,
             decay=self.decay,
-            nesterov=self.nesterov,
         )
 
     def _compute_num_layers(self, hidden_size: int) -> int:
@@ -340,13 +338,24 @@ completed_adamh_heuristic = CompletedAdamHHeuristic()
 
 
 def create_isoflop_sweep_steps(
-    tokenized: InputName | str | LMMixtureDatasetConfig,
+    tokenized,  # InputName | str | LMMixtureDatasetConfig (InputName died with the executor)
     experiment_name: str,
     budgets: tuple[float, ...],
     eval_tasks: tuple[EvalTaskConfig, ...] | None = None,
     seq_len: int = SEQ_LEN,
-) -> tuple[list[ExecutorStep], list[CandidateConfig]]:
-    """Create ExecutorSteps for an ISOFlop sweep using Completed AdamH heuristic."""
+):  # -> tuple[list[ExecutorStep], list[CandidateConfig]]
+    """Create ExecutorSteps for an ISOFlop sweep using Completed AdamH heuristic.
+
+    LEGACY (expA/B/C generation): built on the removed ``marin.execution.executor`` framework and
+    kept only for ``data_curation_isoflop.py``. The imports are guarded here so the LIVE consumers
+    of this module (the frozen HP heuristic used by launch_10k_natural/curation_plan) import
+    cleanly post-merge; calling THIS function still requires the dead executor and will raise.
+    """
+    from marin.execution.executor import ExecutorStep  # noqa: PLC0415  (dead post-merge)
+
+    from experiments.defaults import default_train  # noqa: PLC0415
+    from experiments.evals.evals import default_eval  # noqa: PLC0415
+
     candidates = [c for budget in budgets for c in completed_adamh_heuristic.candidates_for_budget(budget, seq_len)]
 
     base_train_config = SimpleTrainConfig(

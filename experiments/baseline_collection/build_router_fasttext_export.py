@@ -1,3 +1,6 @@
+# Copyright The Marin Authors
+# SPDX-License-Identifier: Apache-2.0
+
 """Convert the jusText router dataset into a fastText training set.
 
 The router parts (justext_router_labels/{split}/part-*.jsonl.gz) carry per-doc:
@@ -10,6 +13,7 @@ collapsed + lowercased — same prep as the useful classifier), one gzipped file
 
 Output: {router_root}/fasttext/{train,dev,test}.txt.gz  (gunzip before `fasttext supervised`).
 """
+
 import argparse
 import gzip
 import json
@@ -66,12 +70,18 @@ def main() -> None:
                 n += 1
                 pos += int(d["label"])
                 if n % 5000 == 0:
-                    print(f"{split}: {n} written, pos={pos} ({100*pos/n:.1f}%), {n/(time.time()-t0):.0f} rows/s", flush=True)
+                    print(
+                        f"{split}: {n} written, pos={pos} ({100*pos/n:.1f}%), {n/(time.time()-t0):.0f} rows/s",
+                        flush=True,
+                    )
         with open(tmp, "rb") as src, fsspec.open(out_path, "wb") as dst:
             dst.write(src.read())
         os.remove(tmp)
-        print(f"{split}: DONE {n} lines, extractable={pos} ({100*pos/max(n,1):.1f}%), "
-              f"needs_llm={n-pos}, skipped_empty={empty} -> {out_path}", flush=True)
+        print(
+            f"{split}: DONE {n} lines, extractable={pos} ({100*pos/max(n,1):.1f}%), "
+            f"needs_llm={n-pos}, skipped_empty={empty} -> {out_path}",
+            flush=True,
+        )
 
 
 if __name__ == "__main__":

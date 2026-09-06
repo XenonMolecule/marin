@@ -90,6 +90,10 @@ METHOD_COLORS = {
     "fineweb_edu": COMPARE_COLORS["fineweb_edu"],  # magenta-pink
     "high_quality": COMPARE_COLORS["high_quality"],  # green
     "resiliparse": COMPARE_COLORS["resiliparse"],  # purple
+    # The llm-pipeline focus line (v1.1 + fastpipe). Red is reserved for it by the
+    # locked curation palette; without an entry here it falls back to #333333 and
+    # becomes indistinguishable from the fastpipe_v3 grey ramp.
+    "lpv11_fastpipe_v1": "#d62728",  # red
     "med_quality": "#8c564b",  # brown (3k sweeps only; absent from 10k)
     # OLMIX optimised-mixture arms. Deliberately the SAME hue family as their own
     # baseline (dclm=blue, high_quality=green) but darker, so a mix arm reads as
@@ -100,6 +104,23 @@ METHOD_COLORS = {
     # each other, which hides the two lines the figure exists to compare.
     "dclm_10k_mix": "#1f77b4",  # blue
     "high_quality_10k_mix": "#2ca02c",  # green
+    # OlmixExact arms (paper's exact 51-task devset, KL lambda=0.01): corpus hue,
+    # same rationale as the arms above. All four are cross-corpus-comparable, so
+    # each takes its corpus's canonical hue rather than a shade of it.
+    "dclm_10k_mix_olmixexact_lambda0p01": "#1f77b4",  # blue
+    "high_quality_10k_mix_olmixexact_lambda0p01": "#2ca02c",  # green
+    "lpv11_fastpipe_v1_10k_mix_olmixexact_lambda0p01": "#d62728",  # red
+    "resiliparse_10k_mix_olmixexact_lambda0p01": "#9467bd",  # purple
+}
+
+# The olmixexact comparison: the four corpora's paper-exact mixtures head to head —
+# which DATASET is best once each is optimally re-weighted. Baselines and other mix
+# flavours would blur that question, so this view carries only the four arms.
+OLMIXEXACT_COMPARE_METHODS = {
+    "dclm_10k_mix_olmixexact_lambda0p01",
+    "high_quality_10k_mix_olmixexact_lambda0p01",
+    "lpv11_fastpipe_v1_10k_mix_olmixexact_lambda0p01",
+    "resiliparse_10k_mix_olmixexact_lambda0p01",
 }
 
 # The 3000-WARC sweeps name their runs differently from the canonical 10k method
@@ -114,6 +135,19 @@ MIX_COMPARE_METHODS = {
     "high_quality",
     "dclm_10k_mix",
     "high_quality_10k_mix",
+}
+# The lpv11 comparison: the named corpus baselines against the llm-pipeline line,
+# and nothing else. The default 10k view also carries the OLMIX mix arms and the
+# fastpipe_v3 ramp -- 19 traces, which buries the corpus-vs-corpus question this
+# figure exists to answer.
+LPV11_COMPARE_METHODS = {
+    "dclm",
+    "nemotron",
+    "fineweb_cc",
+    "fineweb_edu",
+    "high_quality",
+    "resiliparse",
+    "lpv11_fastpipe_v1",
 }
 BIASED_3K_METHODS = {
     "dclm",
@@ -537,6 +571,14 @@ REGIME_PRESETS: dict[str, dict] = {
         vlines=False,
         title="DCLM CoreV2 vs tokens by model scale — OLMIX optimised mixture vs natural (R=30B, k=20)",
         default_out="core_v2/core_v2_grid_x_tokens_mix.html",
+    ),
+    "10klpv11": dict(
+        core=DEFAULT_CORE_PREFIX,
+        tokens=DEFAULT_TOKENS_PREFIX,
+        include=LPV11_COMPARE_METHODS,
+        vlines=True,
+        title="DCLM CoreV2 vs tokens by model scale - lpv11_fastpipe_v1 vs corpus baselines (10k)",
+        default_out="core_v2/core_v2_grid_x_tokens_lpv11.html",
     ),
     "biased3k": dict(
         core=THREEK_CORE_PREFIX,

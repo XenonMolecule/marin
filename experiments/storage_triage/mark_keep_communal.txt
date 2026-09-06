@@ -1,0 +1,8 @@
+gs://marin-us-central2/finelog/
+gs://marin-us-central2/iris/
+gs://marin-us-central2/raw/lima_text-68958e9/
+gs://marin-us-central2/raw/lima-68958e9/
+gs://marin-us-central2/raw/openai/
+gs://marin-us-central2/raw/paloma-fc6827/
+gs://marin-us-central2/raw/uncheatable_eval/
+gs://marin-us-central2/raw/uncheatable-eval/

@@ -36,7 +36,7 @@ import re
 import time
 from collections import Counter
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from urllib.parse import urlparse
 
 import fsspec
@@ -194,7 +194,7 @@ def _process_file(input_path: str) -> dict:
         "size_bucket_boundaries": [int(b) if b != float("inf") else None for b in _BUCKET_BOUNDARIES],
         "top_domains": top_domains,
         "elapsed_s": round(elapsed, 2),
-        "completed_at": datetime.now(timezone.utc).isoformat(),
+        "completed_at": datetime.now(UTC).isoformat(),
     }
 
     with fsspec.open(ckpt_path, "w") as f:
@@ -272,7 +272,7 @@ def _aggregate() -> dict:
         "by_snapshot": by_snapshot,
         "top_domains_by_records": top_by_records,
         "top_domains_by_bytes": top_by_bytes,
-        "aggregated_at": datetime.now(timezone.utc).isoformat(),
+        "aggregated_at": datetime.now(UTC).isoformat(),
     }
     with fsspec.open(SUMMARY_PATH, "w") as f:
         json.dump(summary, f, indent=2)

@@ -27,10 +27,11 @@ a retry. blake2b gives a fixed 64-bit value.
 from __future__ import annotations
 
 import hashlib
-import json
 from dataclasses import dataclass, field
 
 import fsspec
+from marin.execution.artifact import read_artifact as _marin_read_artifact
+from marin.execution.artifact import write_artifact as _marin_write_artifact
 
 from experiments.fsspec_paths import fsspec_glob
 
@@ -62,15 +63,18 @@ def deterministic_hash(value: str) -> int:
 
 
 def write_artifact(artifact, output_path: str) -> None:
-    """Persist a pydantic model to ``<output_path>/.artifact.json``."""
-    with fsspec.open(f"{output_path.rstrip('/')}/.artifact.json", "w") as fh:
-        fh.write(artifact.model_dump_json(indent=2))
+    """Persist a pydantic model beside the store.
+
+    Delegates to marin's artifact writer, which the merged ``datakit_store`` also uses. Keeping a
+    private format here would let the writer and the readers (``verify_grid_store``,
+    ``olmix_domains``) drift apart, which surfaces only as a validation error at read time.
+    """
+    _marin_write_artifact(artifact, output_path)
 
 
 def read_artifact(output_path: str, model_cls):
     """Load a pydantic model previously written by :func:`write_artifact`."""
-    with fsspec.open(f"{output_path.rstrip('/')}/.artifact.json") as fh:
-        return model_cls(**json.load(fh))
+    return _marin_read_artifact(output_path, model_cls)
 
 
 # --- input descriptors -------------------------------------------------------
@@ -82,13 +86,14 @@ def read_artifact(output_path: str, model_cls):
 class TokenizedAttrData:
     """Tokenized ``{id, input_ids}`` parquet, one file per attribute shard.
 
-    ``source_main_dirs`` records which document tree each split was tokenized
-    from; the store cross-checks it against the assignment table's own record so
-    a mixed-provenance join fails loudly instead of silently mis-labelling docs.
+    ``source_keys`` records which document tree each split was tokenized from; the store
+    cross-checks it against the assignment table's own ``source_key`` so a mixed-provenance join
+    fails loudly instead of silently mis-labelling docs. Upstream derives the key from a datakit
+    artifact; here the source directory IS the key, which serves the same purpose.
     """
 
     output_dirs: dict[str, str]
-    source_main_dirs: dict[str, str]
+    source_keys: dict[str, str]
     tokenizer: str
 
 
@@ -108,7 +113,7 @@ class AssignmentAttrData:
     """
 
     output_dir: str
-    source_main_dir: str
+    source_key: str
     k_train: int
     k_views: list[int] = field(default_factory=list)
 

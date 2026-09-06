@@ -19,9 +19,11 @@ back to the tokenizer's pad id).
 """
 
 import dataclasses
+import enum
 import json
 import os
 import tempfile
+import typing
 from typing import Callable, Optional
 
 import equinox as eqx
@@ -100,6 +102,42 @@ def save_eqx_classifier(config, model, path: str) -> None:
             dst.write(src.read())
     with fsspec.open(f"{path}/config.json", "w") as f:
         json.dump({"config_class": type(config).__name__, **dataclasses.asdict(config)}, f, default=str)
+
+
+def _enum_type(hint) -> Optional[type]:
+    """The Enum class named by ``hint``, unwrapping Optional/Union; ``None`` if there isn't one."""
+    if isinstance(hint, type) and issubclass(hint, enum.Enum):
+        return hint
+    for arg in typing.get_args(hint):
+        if isinstance(arg, type) and issubclass(arg, enum.Enum):
+            return arg
+    return None
+
+
+def load_eqx_config(path: str):
+    """Reconstruct the config written by :func:`save_eqx_classifier`, with enums restored.
+
+    ``json.dump`` writes a ``StrEnum`` member as a bare string, so a naive ``ConfigCls(**raw)`` hands
+    back ``str`` where the model expects the enum and ``FunnelBertConfig(**raw)`` fails on
+    ``activation_function``. Coerce by the field's declared type so every consumer gets a real config
+    instead of hand-rolling the same coercion.
+    """
+    with fsspec.open(f"{path}/config.json", "r") as f:
+        raw = json.load(f)
+    name = raw.pop("config_class", None)
+    by_name = {cls.__name__: cls for cls in _BUILDERS}
+    if name not in by_name:
+        raise ValueError(f"config_class {name!r} is not a registered arch; registered: {sorted(by_name)}")
+    config_cls = by_name[name]
+    hints = typing.get_type_hints(config_cls)
+    kwargs = {}
+    for field in dataclasses.fields(config_cls):
+        if not field.init or field.name not in raw:
+            continue
+        value = raw[field.name]
+        enum_cls = _enum_type(hints.get(field.name))
+        kwargs[field.name] = enum_cls(value) if enum_cls is not None and isinstance(value, str) else value
+    return config_cls(**kwargs)
 
 
 def load_eqx_classifier(template, path: str):

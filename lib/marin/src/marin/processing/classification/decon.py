@@ -19,19 +19,22 @@ from enum import StrEnum, auto
 import draccus
 import dupekit
 import msgspec
-from fray import ResourceConfig
-from rigging.filesystem import url_to_fs
+from fray.types import ResourceConfig
+from rigging.filesystem import rebase_file_path, url_to_fs
 from rigging.log_setup import configure_logging
-from zephyr import Dataset, ZephyrContext
+from zephyr.dataset import Dataset
+from zephyr.execution import ZephyrContext
 from zephyr.readers import load_file
 
-from marin.execution.executor import THIS_OUTPUT_PATH
 from marin.processing.classification.deduplication.dedup_commons import (
     DEFAULT_FILETYPES,
     _collect_input_files,
     _get_extension,
 )
-from marin.utils import rebase_file_path
+
+# marin.execution.executor (and its THIS_OUTPUT_PATH placeholder) was removed in the StepRunner
+# migration; the draccus config below only needs a "caller must supply output_path" sentinel.
+THIS_OUTPUT_PATH: str = "$THIS_OUTPUT_PATH"
 
 logger = logging.getLogger(__name__)
 

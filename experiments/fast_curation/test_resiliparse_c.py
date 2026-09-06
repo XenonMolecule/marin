@@ -11,6 +11,7 @@ Python exception. ``test_sentinel_is_a_real_process_death`` proves the stand-in 
 
 from __future__ import annotations
 
+import functools
 import json
 import multiprocessing as mp
 import os
@@ -19,7 +20,7 @@ import signal
 
 import pytest
 
-from experiments.fast_curation import batch_format, cpu_phase_c
+from experiments.fast_curation import batch_format, cpu_phase_a, cpu_phase_c, preprocess
 from experiments.fast_curation.spec import Extractor, get_spec
 
 # A page shaped like the ones that really crash the Rust engine.
@@ -242,6 +243,120 @@ def test_process_one_completes_warc_despite_a_crashing_page(tmp_path):
     assert timing["crashed_doc_ids"] == ["crash"]
     assert timing["n_modernbert_keep"] == 4
     assert timing["n_kept"] == 3
+
+
+def test_process_one_text_consumes_the_fused_pool_contract(tmp_path, monkeypatch):
+    """END TO END: TEXT-line Phase A must route each fused-pool ``(text, in_population)`` result to
+    its fate and land the survivors in the presurvivor parquet with correct funnel counters.
+
+    Regression: the unit tests each covered one seam, but nothing ran ``_process_one_text`` against
+    the fused pool's tuple results — a silently-unapplied edit left the loop treating them as
+    strings, and every worker of a 32-worker fleet died on its first chunk
+    (``AttributeError: 'tuple' object has no attribute 'encode'``)."""
+    spec = get_spec("lpv11_fastpipe_v2")
+    records = [
+        {"doc_id": d, "url": f"http://{d}", "warc_hash": "h01", "snapshot": "CC-MAIN-2020-05", "html": f"<p>{d}</p>"}
+        for d in ("keep", "prefiltered", "empty_extract", "below_gate")
+    ]
+    monkeypatch.setattr(cpu_phase_a, "_decode_one_warc", lambda wp, with_text_body=True: list(records))
+    monkeypatch.setattr(cpu_phase_a, "_gcs_exists", lambda p: False)  # keep chunk probes off GCS
+
+    class _FusedPool:
+        """Returns the fused shape for each fate the loop must route."""
+
+        def run(self, htmls, doc_ids, cap):
+            table = {
+                "keep": ("Real article text worth keeping.", True),
+                "prefiltered": ("", False),  # empty text_body -> out of population
+                "empty_extract": ("", True),  # in population, extractor found nothing
+                "below_gate": ("junk", True),  # extracted but fastText rejects it
+            }
+            return [table[d] for d in doc_ids], []
+
+    class _Model:
+        class f:
+            @staticmethod
+            def predict(text, k, threshold, mode):
+                return [("__label__useful", 0.9 if "real article" in text else 1e-6)]
+
+    tokenizer = preprocess.load_tokenizer("answerdotai/ModernBERT-base")
+    stats = cpu_phase_a._process_one_text(
+        "warc://x",
+        "h01",
+        lambda: None,
+        spec=spec,
+        model=_Model(),
+        tokenize_batch=functools.partial(preprocess.tokenize_trunc_batch_arrow, tokenizer, max_length=128),
+        tokenizer_impl="hf",
+        pool=_FusedPool(),
+        bucket=str(tmp_path),
+        cleanup_chunks=False,
+    )
+
+    t = batch_format.read_table(f"{spec.presurvivors_prefix(str(tmp_path))}/data-h01.parquet")
+    assert t.column("doc_id").to_pylist() == ["keep"], "exactly the doc that passed every gate survives"
+    assert t.column("text").to_pylist() == ["Real article text worth keeping."]
+    assert t.column("input_ids").to_pylist()[0][0] == 50281  # [CLS]-framed, really tokenized
+    assert stats == {
+        "docs_in": 4,
+        "docs_out": 1,
+        "wall_seconds": stats["wall_seconds"],
+        "compute_seconds": stats["compute_seconds"],
+    }
+    with open(f"{spec.namespace(str(tmp_path))}/timing_a/data-h01.json") as f:
+        timing = json.load(f)
+    assert (timing["n_prefilter_dropped"], timing["n_extract_empty"]) == (1, 1)
+    assert timing["tokenizer_impl"] == "hf"
+
+
+def test_frameset_screen_refuses_before_the_engine_is_touched():
+    """``<frameset>`` pages hard-SEGFAULT the Rust engine; the child-side screen must return ""
+    WITHOUT importing/calling it (this test runs with no artifact installed — reaching the engine
+    would raise ImportError, not return). Both the lowercase and uppercase spellings the training
+    corpora screened must be refused; screening is what keeps the pool alive and parallel."""
+    from experiments.fast_curation import preprocess
+
+    assert preprocess.resiliparse_rs_text(CRASH_SENTINEL, NO_CAP) == ""
+    assert preprocess.resiliparse_rs_text("<html><FRAMESET rows='*'></FRAMESET></html>", NO_CAP) == ""
+
+
+def test_screen_batch_population_filter_skips_extraction():
+    """The fused TEXT-line task must mark empty-``text_body`` pages out-of-population WITHOUT
+    extracting them (same reason as above: no artifact here, so touching the engine would raise),
+    and screened framesets stay IN-population with an empty extraction — matching what the old
+    decode-filter + crash-isolation pipeline produced for them."""
+    from experiments.fast_curation import preprocess
+
+    no_body = "<html><head><title>t</title></head><body>   </body></html>"
+    frameset_with_body = f"<html><body>real body text here</body>{CRASH_SENTINEL}</html>"
+    out = preprocess.resiliparse_rs_screen_batch(([no_body, frameset_with_body], NO_CAP))
+    assert out[0] == ("", False), "no body text -> out of population, never extracted"
+    assert out[1] == ("", True), "frameset with body text -> in population, screened to empty"
+
+
+def test_pool_crash_result_matches_the_fused_task_shape(tmp_path):
+    """When a fused-task page crashes anyway (mixed-case frameset, unknown crasher), the isolation
+    path must emit the caller's crash_result so the results stay shape-homogeneous with the fused
+    ``(text, in_population)`` tuples — a bare "" would crash the strict zip in Phase A."""
+    pool = cpu_phase_c.ResiliparseRsPool(2, str(tmp_path), extract_fn=_segfault_screen_extract, crash_result=("", True))
+    try:
+        results, crashed = pool.run(["<p>fine</p>", CRASH_SENTINEL, "<p>also fine</p>"], ["a", "b", "c"], NO_CAP)
+    finally:
+        pool.close()
+    assert crashed == ["b"]
+    assert results[1] == ("", True), "the crashed page carries the fused crash_result"
+    assert results[0] == ("ok:<p>fine</p>", True) and results[2] == ("ok:<p>also fine</p>", True)
+
+
+def _segfault_screen_extract(args: tuple[list[str], int]) -> list[tuple[str, bool]]:
+    """Fused-shape stand-in that hard-kills the process on :data:`CRASH_SENTINEL`."""
+    htmls, _cap = args
+    out = []
+    for h in htmls:
+        if h == CRASH_SENTINEL:
+            os.kill(os.getpid(), CRASH_SIGNAL)
+        out.append((f"ok:{h}", True))
+    return out
 
 
 def test_size_aware_chunks_bound_bytes_without_dropping_docs():

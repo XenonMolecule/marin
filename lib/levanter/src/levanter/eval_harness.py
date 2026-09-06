@@ -25,6 +25,7 @@ import json
 import logging
 import os
 import random
+import sys
 import tempfile
 import time
 import typing
@@ -62,10 +63,23 @@ from levanter.tokenizers import MarinTokenizer
 from levanter.utils.background_iterable import BackgroundIterator
 from levanter.utils.py_utils import set_global_rng_seeds
 
-# The pinned lm-eval fork reads attributes such as `transformers.AutoModelForVision2Seq` (removed in
-# transformers>=5) at import time, raising AttributeError rather than ImportError. Catch both so a
-# broken or absent fork degrades to "lm-eval unavailable" instead of crashing the run.
+# The pinned lm-eval fork reads `transformers.AutoModelForVision2Seq` at import time (class body of
+# `lm_eval.models.hf_vlms.HFMultimodalLM`, a model class Levanter never instantiates). transformers>=5
+# renamed it to `AutoModelForImageTextToText`, so `import lm_eval` raises AttributeError and the
+# guard below silently falls back to the `object` sentinels -- which then fails much later as
+# `object.evaluate`. Alias the old name so the fork imports under transformers 5.
+# `transformers.processing_utils` re-executes transformers/__init__ through `direct_transformers_import`
+# and re-binds sys.modules["transformers"], so import it first and alias on the module object lm_eval
+# will actually see. Scoring-neutral: only satisfies an import in a code path never exercised here.
+# Catch AttributeError as well as ImportError so an absent or otherwise broken fork still degrades to
+# "lm-eval unavailable" instead of crashing the run.
 try:
+    import transformers.processing_utils  # noqa: F401
+
+    _transformers = sys.modules["transformers"]
+    if not hasattr(_transformers, "AutoModelForVision2Seq"):
+        _transformers.AutoModelForVision2Seq = _transformers.AutoModelForImageTextToText
+
     from lm_eval import evaluator
     from lm_eval.api.instance import Instance
     from lm_eval.api.model import TemplateLM
@@ -1119,7 +1133,12 @@ class LmEvalHarnessConfig:
 
         task_name = task if isinstance(task, str) else task["task"]
 
-        task_dict = _call_with_retry(lambda: tasks.get_task_dict([task], manager))
+        # lm-eval's get_task_dict pops "task" out of the dict it is handed, so a retry with the
+        # same object sees a task-less dict, falls into the group-config path, and dies with an
+        # unrelated TypeError that masks the real first-attempt error. Give each attempt a copy.
+        task_dict = _call_with_retry(
+            lambda: tasks.get_task_dict([dict(task) if isinstance(task, dict) else task], manager)
+        )
         assert len(task_dict) == 1, f"Expected 1 task, got {len(task_dict)}"
         try:
             this_task = self._rename_tasks_for_eval_harness(task_dict, task_name, our_name)

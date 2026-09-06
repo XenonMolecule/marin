@@ -1,17 +1,18 @@
 # Copyright The Marin Authors
 # SPDX-License-Identifier: Apache-2.0
 
-"""Score a trained ``pooled_transformer`` useful-classifier over the 100k comparison sample.
+"""Score an equinox-checkpointed useful-classifier (pooled_transformer, funnelbert) over the 100k sample.
 
 The cascade planner needs one scalar ``P(useful)`` column per candidate stage, over the SAME 100k
-docs in the SAME order as every other classifier. This is the pooled-transformer counterpart to
-``score_modernbert_useful`` (HF/safetensors) and ``score_fasttext_useful`` (CPU) — it reuses their
-sample reader and preprocessing verbatim, so doc *i* is doc *i* across all three families.
+docs in the SAME order as every other classifier. This is the eqx counterpart to
+``score_modernbert_useful`` (HF/safetensors) and ``score_fasttext_useful`` (CPU) — all three read the
+sample through ``comparison_sample``, so doc *i* is doc *i* across every family and both input
+representations (body_strip HTML, or the resiliparse-rs TEXT of that HTML for the ``*-text-*`` runs).
 
 Checkpoints are the generic equinox format written by ``save_eqx_classifier`` (``model.eqx`` +
-``config.json``), NOT HF — the architecture is read back out of ``config.json``, so any pooled run id
-works. Output lands in the shared ``model_scores/<col>/`` layout that
-``score_modernbert_useful join`` merges onto the sample.
+``config.json``), NOT HF — ``config.json`` names its ``config_class``, which selects the loader
+(``_EQX_ARCHS``), so any pooled or funnelbert run id works. Output lands in the shared
+``model_scores/<col>/`` layout that ``score_modernbert_useful join`` merges onto the sample.
 
 Sibling script ``score_pooled_frozen_eval`` scores the frozen lpv11 7k eval set instead; use that for
 threshold/cascade curves against the fastText w640 run, and this one for the planner.
@@ -31,6 +32,7 @@ Then merge every score column onto the sample::
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import logging
 import time
 
@@ -42,31 +44,69 @@ import pyarrow.parquet as pq
 from haliax.partitioning import ResourceAxis, set_mesh
 from jax.sharding import Mesh
 from levanter.main.train_classifier import score_texts
-from levanter.models.pooled_transformer import load_pooled_transformer_classifier
+from levanter.models.classification import load_eqx_config
+from levanter.models.funnelbert import FunnelBertConfig, load_funnelbert_classifier
+from levanter.models.pooled_transformer import PooledTransformerConfig, load_pooled_transformer_classifier
 from transformers import AutoTokenizer
 
-from experiments.baseline_collection.score_modernbert_useful import SCORES_DIR, TOKENIZER_REF, _read_sample
-from experiments.baseline_collection.score_pooled_frozen_eval import MODERNBERT_VOCAB_SIZE, load_config
+from experiments.baseline_collection.comparison_sample import SCORES_DIR, ClassifierInput, read_sample
+from experiments.baseline_collection.extract_text_shards import EMPTY_PLACEHOLDER
+from experiments.baseline_collection.score_modernbert_useful import TOKENIZER_REF
+from experiments.baseline_collection.score_pooled_frozen_eval import MODERNBERT_VOCAB_SIZE
 
 logger = logging.getLogger(__name__)
 
 CKPT_NS = "checkpoints/modernbert-useful"
 
-# col -> checkpoint run-id. All target llm_pipeline_v1_1 (lpv11), not the 8B high_quality run.
-MODELS: dict[str, str] = {
-    "pooled_lpv11_prob_1M_r5": "mb-clf-lpv11-pooled-1M-r5",
-    "pooled_lpv11_prob_10M": "mb-clf-lpv11-pooled-10M",
-    "pooled_lpv11_prob_10M_e3": "mb-clf-lpv11-pooled-10M-e3",
-    "pooled_lpv11_prob_big_10M": "mb-clf-lpv11-pooledbig-10M",
+# col -> (checkpoint run-id, classifier input). All target llm_pipeline_v1_1 (lpv11), not the 8B run.
+MODELS: dict[str, tuple[str, ClassifierInput]] = {
+    "pooled_lpv11_prob_1M_r5": ("mb-clf-lpv11-pooled-1M-r5", ClassifierInput.HTML),
+    "pooled_lpv11_prob_10M": ("mb-clf-lpv11-pooled-10M", ClassifierInput.HTML),
+    "pooled_lpv11_prob_10M_e3": ("mb-clf-lpv11-pooled-10M-e3", ClassifierInput.HTML),
+    "pooled_lpv11_prob_big_10M": ("mb-clf-lpv11-pooledbig-10M", ClassifierInput.HTML),
+    # 90M HTML completes the pooled 3x2 (1M/10M/90M x HTML/TEXT) grid; trained in us-central2, hf/ mirrored.
+    "pooled_lpv11_prob_90M": ("mb-clf-lpv11-pooled-90M", ClassifierInput.HTML),
+    # Arch-sweep 1M survivor (HTML), funnelbert = 4 warm-started ModernBERT layers -> 8x mean-pool -> 4 fresh.
+    "funnelbert_lpv11_prob_1M": ("mb-clf-lpv11-funnelbert-1M", ClassifierInput.HTML),
+    # TEXT-trained (input = resiliparse-rs main content of the body_strip HTML). 90M was trained in
+    # us-central2; its hf/ is mirrored to us-east5 so this job reads in-region.
+    "pooled_lpv11_text_prob_1M": ("mb-clf-lpv11-text-pooled-1M", ClassifierInput.TEXT),
+    "pooled_lpv11_text_prob_10M": ("mb-clf-lpv11-text-pooled-10M", ClassifierInput.TEXT),
+    "pooled_lpv11_text_prob_90M": ("mb-clf-lpv11-text-pooled-90M", ClassifierInput.TEXT),
+    # Deployment input (one extraction on raw HTML, normalized after) — what the planner prices; see
+    # score_modernbert_useful.MODELS for the verification note.
+    "pooled_lpv11_textraw_prob_1M": ("mb-clf-lpv11-text-pooled-1M", ClassifierInput.TEXT_FROM_RAW),
+    "pooled_lpv11_textraw_prob_10M": ("mb-clf-lpv11-text-pooled-10M", ClassifierInput.TEXT_FROM_RAW),
+    "pooled_lpv11_textraw_prob_90M": ("mb-clf-lpv11-text-pooled-90M", ClassifierInput.TEXT_FROM_RAW),
+}
+
+# Config dataclass -> loader. Adding an eqx arch = one entry here (config parsing, incl. enum
+# restoration, is `levanter.models.classification.load_eqx_config`, shared with every other consumer).
+_EQX_LOADERS = {
+    PooledTransformerConfig: load_pooled_transformer_classifier,
+    FunnelBertConfig: load_funnelbert_classifier,
 }
 
 
-def run_score(col: str, batch_size: int, ctx: int | None, limit: int | None, input_bucket: str) -> None:
-    ckpt = f"gs://{input_bucket}/{CKPT_NS}/{MODELS[col]}/hf"
-    config = load_config(ckpt, ctx)
-    logger.info("col=%s ckpt=%s ctx=%d devices=%s", col, ckpt, config.max_seq_len, jax.devices())
+def load_eqx_arch(ckpt: str, ctx: int | None):
+    """(config, loader) for an eqx checkpoint dir; ``ctx`` overrides the eval context length."""
+    config = load_eqx_config(ckpt)
+    loader = _EQX_LOADERS.get(type(config))
+    if loader is None:
+        raise ValueError(
+            f"{ckpt}: {type(config).__name__} has no loader here; known: {[c.__name__ for c in _EQX_LOADERS]}"
+        )
+    return (config if ctx is None else dataclasses.replace(config, max_seq_len=ctx)), loader
 
-    ids, texts = _read_sample(input_bucket)
+
+def run_score(col: str, batch_size: int, ctx: int | None, limit: int | None, input_bucket: str) -> None:
+    run_id, kind = MODELS[col]
+    ckpt = f"gs://{input_bucket}/{CKPT_NS}/{run_id}/hf"
+    config, loader = load_eqx_arch(ckpt, ctx)
+    logger.info("col=%s ckpt=%s ctx=%d input=%s devices=%s", col, ckpt, config.max_seq_len, kind, jax.devices())
+
+    # Neural TEXT corpora carry EMPTY_PLACEHOLDER for empty extractions; feed the same at inference.
+    ids, texts = read_sample(input_bucket, kind, empty_text=EMPTY_PLACEHOLDER)
     if limit:
         ids, texts = ids[:limit], texts[:limit]
 
@@ -76,7 +116,7 @@ def run_score(col: str, batch_size: int, ctx: int | None, limit: int | None, inp
     n_dev = len(jax.devices())
     mesh = Mesh(np.array(jax.devices()).reshape(n_dev, 1), (ResourceAxis.DATA, ResourceAxis.MODEL))
     with set_mesh(mesh):
-        model = load_pooled_transformer_classifier(config, ckpt, vocab_size=MODERNBERT_VOCAB_SIZE)
+        model = loader(config, ckpt, vocab_size=MODERNBERT_VOCAB_SIZE)
         t0 = time.monotonic()
         probs = score_texts(model, texts, tokenizer, config.max_Pos, config.pad_token_id, batch_size=batch_size)
         elapsed = time.monotonic() - t0

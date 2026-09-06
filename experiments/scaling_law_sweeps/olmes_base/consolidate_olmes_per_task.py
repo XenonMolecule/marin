@@ -37,7 +37,9 @@ N_BY_DL = {
     (3584, 35): 9.169166e09,
 }
 
-RUN_RE = re.compile(r"curation-(?P<method>.+?)-expFM_natural-(?P<budget>[0-9]+e\+[0-9]+)-d(?P<d>[0-9]+)-L(?P<L>[0-9]+)-B(?P<B>[0-9]+)")
+RUN_RE = re.compile(
+    r"curation-(?P<method>.+?)-expFM_natural-(?P<budget>[0-9]+e\+[0-9]+)-d(?P<d>[0-9]+)-L(?P<L>[0-9]+)-B(?P<B>[0-9]+)"
+)
 
 
 def norm_method(raw: str) -> str:
@@ -82,14 +84,26 @@ def main():
                 v = task_value(metrics)
                 if v is None:
                     continue
-                rows.append(dict(run_stem=run, method=norm_method(m["method"]), hidden_dim=d, num_layers=L,
-                                 budget=m["budget"], tokens=tok, task=task, value=v))
+                rows.append(
+                    dict(
+                        run_stem=run,
+                        method=norm_method(m["method"]),
+                        hidden_dim=d,
+                        num_layers=L,
+                        budget=m["budget"],
+                        tokens=tok,
+                        task=task,
+                        value=v,
+                    )
+                )
                 got = True
             n_runs += got
     logger.info("emitted %d task-rows from %d runs", len(rows), n_runs)
 
     buf = io.StringIO()
-    w = csv.DictWriter(buf, fieldnames=["run_stem", "method", "hidden_dim", "num_layers", "budget", "tokens", "task", "value"])
+    w = csv.DictWriter(
+        buf, fieldnames=["run_stem", "method", "hidden_dim", "num_layers", "budget", "tokens", "task", "value"]
+    )
     w.writeheader()
     w.writerows(rows)
     with fs.open(args.out, "w") as f:

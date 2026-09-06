@@ -166,6 +166,20 @@ GRID_CORPORA: dict[str, GridCorpus] = {
         Format.JSONL_GZ,
         post_decon=True,
     ),
+    # lpv11 fastpipe corpus, full 10,364-WARC pool, post fuzzy-dedup + CORE v2 decon
+    # (77,051,628 docs, the set behind `tokenized/lpv11_fastpipe_v1_decon_10364warcs-a16e729`).
+    # Rebuilt per WARC with every kept_text column (url, doc_id, warc_hash, snapshot,
+    # fasttext_score, modernbert_prob) by `experiments/fast_curation/recover_provenance.py`
+    # because the dedup that produced the original tree projected records to
+    # {text, modernbert_prob}. us-east5 only; label with
+    # `--region us-east5 --output-base gs://marin-us-east5 --source native`.
+    "lpv11_fastpipe_v1_10k": GridCorpus(
+        "gs://marin-us-east5/documents/baseline_lpv11_fastpipe_v1_decon_deduped_urls/10364warcs/deduped",
+        "us-east5",
+        Format.JSONL_GZ,
+        native_id_field="doc_id",
+        post_decon=True,
+    ),
 }
 
 

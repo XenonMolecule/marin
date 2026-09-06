@@ -8,11 +8,10 @@ uses. Run as a CPU iris job in the data's region; all train_classifier runs then
 import argparse
 import logging
 
-from transformers import AutoTokenizer
-
 from levanter.data.sharded_datasource import TextUrlDataSource
 from levanter.main.train_classifier import ClassificationLineProcessor, _expand_globs
 from levanter.store.cache import CacheOptions, build_or_load_cache
+from transformers import AutoTokenizer
 
 logging.basicConfig(level=logging.INFO)
 

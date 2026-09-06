@@ -192,7 +192,7 @@ def _doc_text(rec: dict) -> str | None:
 # Source columns the key build reads from a parquet doc (intersected with the
 # shard's actual schema in _read_records). Excludes bulky derived columns like a
 # tokenized tier's ``input_ids``. Subset/min-field join columns are appended per run.
-_BUILD_READ_COLUMNS = ["url", "text", "generated_text", "warc_record_id", "snapshot", "warc_file"]
+_BUILD_READ_COLUMNS = ["url", "text", "generated_text", "warc_record_id", "doc_id", "snapshot", "warc_file"]
 
 
 def _build_read_columns(subset: SubsetFilter | None, min_field: str | None) -> list[str]:
@@ -236,7 +236,8 @@ def _row_for_rec(
         if prov:
             rec = {**rec, **prov}
     url = rec.get("url") or ""
-    rid = _normalize_record_id(rec.get("warc_record_id") or "")
+    # fast_curation kept tiers carry the normalized WARC-Record-ID as ``doc_id``.
+    rid = _normalize_record_id(rec.get("warc_record_id") or rec.get("doc_id") or "")
     uk = url_key(url)
     dom = domain_of(url)
     return {

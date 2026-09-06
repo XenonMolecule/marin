@@ -23,21 +23,22 @@ from iris.client.client import IrisClient
 from iris.cluster.constraints import Constraint, ConstraintOp, WellKnownAttribute, preemptible_constraint
 from iris.cluster.types import Entrypoint, EnvironmentSpec, ResourceSpec, tpu_device
 from iris.rpc import job_pb2
-from rigging.filesystem import REGION_TO_DATA_BUCKET
+from marin.external_dependencies import TPU_INFERENCE_FORK_REQUIREMENT, VLLM_FORK_REQUIREMENT
+from rigging.filesystem import data_config
 
 # Priority band name → proto enum. Used by --child-priority flag.
 PRIORITY_BAND_MAP = {
     "production": job_pb2.PRIORITY_BAND_PRODUCTION,
     "interactive": job_pb2.PRIORITY_BAND_INTERACTIVE,
     "batch": job_pb2.PRIORITY_BAND_BATCH,
-    "unspecified": job_pb2.PRIORITY_BAND_UNSPECIFIED,
+    "unspecified": job_pb2.PRIORITY_BAND_INHERIT,
 }
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_MANIFEST = "experiments/distill/baseline_warcs_3000.txt"
 SCRIPT = "experiments/baseline_collection/run_extract_standalone.py"
-ALL_REGIONS = sorted(REGION_TO_DATA_BUCKET.keys())
+ALL_REGIONS = sorted(data_config().region_buckets.keys())
 
 MULTIHOST_TYPES = {
     "v5p-16",
@@ -80,7 +81,7 @@ def submit_chunk(
     group_size: int | None = None,
     model: str | None = None,
     region: str | None = None,
-    child_priority_band: int = job_pb2.PRIORITY_BAND_UNSPECIFIED,
+    child_priority_band: int = job_pb2.PRIORITY_BAND_INHERIT,
     preemptible: bool = True,
 ) -> list[str]:
     """Submit a chunk of jobs. Returns list of submitted job names.
@@ -97,6 +98,12 @@ def submit_chunk(
     """
     is_multihost = tpu_type in MULTIHOST_TYPES
     env_vars = dict(MULTIHOST_ENV) if is_multihost else {}
+    # The TPU vLLM fork lives outside the workspace lock (no `vllm` extra anymore);
+    # it is provisioned into the worker venv via pip_packages below. These steer its
+    # source build: TPU target instead of CUDA, and CPU torch wheels for its torch dep
+    # (jax/libtpu do the TPU compute), mirroring marin.inference's IsolatedTpuVllm.
+    env_vars["VLLM_TARGET_DEVICE"] = "tpu"
+    env_vars["UV_TORCH_BACKEND"] = "cpu"
     tp_args = ["--tp", "4"] if is_multihost else []
 
     name_prefix = f"extract-{pipeline}-" if pipeline else (f"extract-{spec}-" if spec else "extract-")
@@ -149,7 +156,8 @@ def submit_chunk(
                     device=tpu_device(tpu_type),
                 ),
                 environment=EnvironmentSpec(
-                    extras=["vllm", "tpu"],
+                    extras=["tpu"],
+                    pip_packages=[VLLM_FORK_REQUIREMENT, TPU_INFERENCE_FORK_REQUIREMENT],
                     env_vars=env_vars,
                 ),
                 # Region constraint is SOFT (preferred, not required) so it prevents
@@ -190,7 +198,12 @@ def submit_chunk(
 
 
 def _count_child_states(client: IrisClient, submitted_job_ids: list[str]) -> tuple[int, int, int]:
-    """Query actual child job states. Returns (running, pending, failed)."""
+    """Query actual child job states. Returns (running, pending, failed).
+
+    Succeeded children count toward none of the three: they hold no capacity, so they must
+    not gate scale-up. (Counting them as pending froze the OLMIX resiliparse coordinator at
+    its initial batch the moment its first child finished.)
+    """
     running = 0
     pending = 0
     failed = 0
@@ -203,6 +216,8 @@ def _count_child_states(client: IrisClient, submitted_job_ids: list[str]) -> tup
             status = client.status(job_id)
             if status.state == job_pb2.JOB_STATE_RUNNING:
                 running += 1
+            elif status.state == job_pb2.JOB_STATE_SUCCEEDED:
+                continue
             elif status.state == job_pb2.JOB_STATE_PENDING:
                 pending += 1
             elif status.state in (job_pb2.JOB_STATE_FAILED, job_pb2.JOB_STATE_KILLED):
@@ -231,7 +246,7 @@ def run_adaptive(
     group_size: int | None = None,
     model: str | None = None,
     region: str | None = None,
-    child_priority_band: int = job_pb2.PRIORITY_BAND_UNSPECIFIED,
+    child_priority_band: int = job_pb2.PRIORITY_BAND_INHERIT,
     preemptible: bool = True,
 ):
     """Adaptive scaling loop. Only submits more when ALL previous jobs are running."""
@@ -281,12 +296,24 @@ def run_adaptive(
     # Adaptive loop: only scale up when ALL submitted jobs are running.
     # Never permanently gives up — backs off with increasing cooldown, then retries.
     backoff_multiplier = 1
-    while total_submitted < max_count:
+    # Runaway backstop: backfill is unbounded in time, so a pool whose children always
+    # die instantly (hardware the inference stack cannot run on) would resubmit forever,
+    # burning TPU on model loads that never produce a batch. Cap lifetime submissions at
+    # a multiple of the ceiling: hitting it means the pool is structurally broken rather
+    # than merely being preempted.
+    submit_cap = max_count * 3
+    # ``max_count`` is a ceiling on LIVE children, not a lifetime submission quota:
+    # children that die (preemption, an upstream outage) free their slot and are
+    # backfilled. Counting dead children against the cap used to retire a pool
+    # permanently after a transient outage -- the coordinator stayed alive with zero
+    # children and no ability to submit more.
+    while total_submitted < submit_cap:
         logger.info("Waiting %ds before checking allocation...", check_interval)
         time.sleep(check_interval)
 
         # Actually check child job states
         running, pending, failed = _count_child_states(client, all_job_ids)
+        live = running + pending
         logger.info(
             "Child states: %d running, %d pending, %d failed (of %d submitted)",
             running,
@@ -339,8 +366,8 @@ def run_adaptive(
                 time.sleep(cooldown)
                 stall_count = 0
                 # Submit a small probe batch to test if TPUs are available again
-                if total_submitted < max_count:
-                    probe_size = min(2, max_count - total_submitted)
+                if live < max_count:
+                    probe_size = min(2, max_count - live)
                     logger.info(
                         "=== Probe batch: %d jobs (total will be %d/%d) ===",
                         probe_size,
@@ -356,7 +383,10 @@ def run_adaptive(
         # All submitted jobs are running. Scale up!
         stall_count = 0
         backoff_multiplier = 1  # Reset backoff on success
-        remaining = max_count - total_submitted
+        remaining = min(max_count - live, submit_cap - total_submitted)
+        if remaining <= 0:
+            # Pool is at its ceiling; keep watching so deaths get backfilled.
+            continue
         next_chunk = min(chunk_size, remaining)
         logger.info(
             "=== All %d jobs running! Submitting %d more (total will be %d/%d) ===",
@@ -369,8 +399,6 @@ def run_adaptive(
         total_submitted += len(names)
         seed_counter += next_chunk
         all_job_ids.extend(names)
-
-    logger.info("=== Adaptive scaling complete: %d/%d jobs submitted ===", total_submitted, max_count)
 
 
 def main():

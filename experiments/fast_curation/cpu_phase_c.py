@@ -163,12 +163,16 @@ class ResiliparseRsPool:
         *,
         task_chunk: int = RS_TASK_CHUNK,
         extract_fn=preprocess.resiliparse_rs_batch,
+        crash_result="",
     ):
         self.n_procs = max(1, n_procs)
         self._ctx = mp.get_context("spawn")
         self._pkg_dir = pkg_dir
         self._task_chunk = task_chunk
         self._fn = extract_fn
+        # What a crashed page yields in the results list — "" for the plain extractor; a fused
+        # extract_fn with a richer per-doc result passes its own "dropped" value.
+        self._crash_result = crash_result
         self._pool: ProcessPoolExecutor | None = None
 
     def _new_executor(self, n_procs: int) -> ProcessPoolExecutor:
@@ -217,7 +221,7 @@ class ResiliparseRsPool:
                     solo = self._new_executor(1)
                 except Exception as e:
                     reason = f"{type(e).__name__}: {e}"
-                texts.append("")
+                texts.append(self._crash_result)
                 crashed.append(doc_id)
                 logger.warning("resiliparse-rs dropped %s (%d chars): %s", doc_id, len(html), reason)
         finally:
@@ -235,8 +239,20 @@ class ResiliparseRsPool:
             self._pool = None
 
 
-def _install_rust_extractor(artifact_prefix: str, spec: PipelineSpec, n_procs: int) -> ResiliparseRsPool:
+def _install_rust_extractor(
+    artifact_prefix: str,
+    spec: PipelineSpec,
+    n_procs: int,
+    *,
+    extract_fn=preprocess.resiliparse_rs_batch,
+    crash_result="",
+    dest: str | None = None,
+) -> ResiliparseRsPool:
     """Verify + install the prebuilt Rust extractor and return a smoke-tested pool for it.
+
+    ``dest`` overrides the unpack directory — REQUIRED when several processes on one host
+    install concurrently (the fused worker's A subprocesses): racing unpacks into the shared
+    default dir produce truncated ``.so`` files ("file too short", observed 2026-09-01).
 
     ``install_extractor`` is imported here, not at module scope, on purpose: importing
     ``score_resiliparse_rs`` drags in ``marin.utils`` (datasets / rigging / huggingface_hub) and runs
@@ -245,11 +261,13 @@ def _install_rust_extractor(artifact_prefix: str, spec: PipelineSpec, n_procs: i
     from experiments.baseline_collection.score_resiliparse_rs import install_extractor
 
     _assert_artifact_matches_spec(artifact_prefix, spec)
-    pkg_dir = install_extractor(artifact_prefix)  # unpacks under /root: /tmp is noexec -> dlopen fails
-    pool = ResiliparseRsPool(n_procs, pkg_dir)
-    texts, crashed = pool.run([SMOKE_HTML], ["_smoke"], spec.justext_max_html_chars)
-    if crashed or not texts[0].strip():
-        raise RuntimeError(f"resiliparse-rs smoke extraction failed (crashed={crashed}, text={texts[0]!r})")
+    # Unpacks under /root by default: /tmp is noexec -> dlopen fails.
+    pkg_dir = install_extractor(artifact_prefix) if dest is None else install_extractor(artifact_prefix, dest=dest)
+    pool = ResiliparseRsPool(n_procs, pkg_dir, extract_fn=extract_fn, crash_result=crash_result)
+    results, crashed = pool.run([SMOKE_HTML], ["_smoke"], spec.justext_max_html_chars)
+    smoke_text = results[0][0] if isinstance(results[0], tuple) else results[0]
+    if crashed or not smoke_text.strip():
+        raise RuntimeError(f"resiliparse-rs smoke extraction failed (crashed={crashed}, result={results[0]!r})")
     logger.info("resiliparse-rs ready (%s, %d procs)", pkg_dir, pool.n_procs)
     return pool
 

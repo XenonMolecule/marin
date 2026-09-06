@@ -3,9 +3,11 @@
 
 """Score a fastText useful-classifier over the 100k comparison sample -> scalar P(useful) column.
 
-Mirrors score_modernbert_useful (same body_strip preprocessing, raw scalar so the threshold is
-tunable). fastText is CPU + fast, so this is one un-sharded job. Writes to the SAME
-``bert_scores/<col>/`` layout so score_modernbert_useful's ``join`` merges it as another column.
+Mirrors score_modernbert_useful (same ``comparison_sample`` reader, raw scalar so the threshold is
+tunable). ``--input html`` feeds the body_strip HTML the ``*_prep_mc500`` models trained on;
+``--input text`` feeds the resiliparse-rs main-content text of that HTML (the ``*_TEXT`` models).
+fastText is CPU + fast, so this is one un-sharded job. Writes to the SAME ``model_scores/<col>/``
+layout so score_modernbert_useful's ``join`` merges it as another column.
 
 Run (CPU, us-east5 where the sample lives; model.bin pulled from us-central2 once)::
 
@@ -19,32 +21,18 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import re
 import time
 
 import fsspec
 
-from experiments.fsspec_paths import fsspec_glob
+from experiments.baseline_collection.comparison_sample import SCORES_DIR, TIMING_DIR, ClassifierInput, read_sample
 
 logger = logging.getLogger(__name__)
-
-OUT_ROOT = "gs://marin-us-east5/documents/extractor_compare/high_quality_200warc"
-SCORES_DIR = f"{OUT_ROOT}/model_scores"
-TIMING_DIR = f"{OUT_ROOT}/model_timing"  # <col>.json — measured docs/s/core for stage_registry
-SAMPLE_DIR = f"{OUT_ROOT}/sample_100k"
 
 # Default = the w80 model (us-central2). Width sweep (w160/w320) lives in us-east5; pass --model-url/--col.
 MODEL = "gs://marin-us-central2/classifiers/useful_fasttext/body_strip_scale_w80_strat_prep_mc500/model.bin"
 COL = "fasttext_useful_prob"
 USEFUL_LABEL = "__label__useful"
-MAX_TEXT_CHARS = 1_000_000
-
-_WS_RE = re.compile(r"\s+")
-
-
-def _preprocess(stripped_html: str | None) -> str:
-    """body_strip HTML -> classifier input (whitespace-collapse + lowercase), matching to_fasttext_text."""
-    return _WS_RE.sub(" ", (stripped_html or "")[:MAX_TEXT_CHARS]).strip().lower()
 
 
 def _useful_prob(model, text: str) -> float:
@@ -62,7 +50,7 @@ def _useful_prob(model, text: str) -> float:
     return 0.0
 
 
-def run(model_url: str, col: str) -> None:
+def run(model_url: str, col: str, kind: ClassifierInput) -> None:
     import fasttext
     import pyarrow as pa
     import pyarrow.parquet as pq
@@ -73,21 +61,16 @@ def run(model_url: str, col: str) -> None:
         dst.write(src.read())
     model = fasttext.load_model(local)
 
-    ids: list[str] = []
+    # fastText TEXT prep shards carry a bare line for empty extractions, i.e. "" (default empty_text).
+    ids, texts = read_sample("marin-us-east5", kind)
     scores: list[float] = []
     t_score = 0.0  # pure inference time (excludes parquet I/O), for a clean per-core docs/s
-    for path in sorted(fsspec_glob(f"{SAMPLE_DIR}/*.parquet")):
-        with fsspec.open(path, "rb") as fh:
-            t = pq.ParquetFile(fh).read(columns=["warc_record_id", "stripped_html"])
-        rids = t.column("warc_record_id").to_pylist()
-        htmls = t.column("stripped_html").to_pylist()
+    for start in range(0, len(texts), 20000):
+        chunk = texts[start : start + 20000]
         t0 = time.monotonic()
-        for rid, html in zip(rids, htmls, strict=True):
-            ids.append(rid)
-            scores.append(_useful_prob(model, _preprocess(html)))
+        scores.extend(_useful_prob(model, text) for text in chunk)
         t_score += time.monotonic() - t0
-        if len(ids) % 20000 < len(rids):
-            logger.info("scored %d docs", len(ids))
+        logger.info("scored %d docs", len(scores))
 
     logger.info(
         "TIMING col=%s: scored %d docs in %.1fs = %.1f docs/s/core (single CPU; excludes parquet I/O)",
@@ -104,6 +87,7 @@ def run(model_url: str, col: str) -> None:
             {
                 "col": col,
                 "model_url": model_url,
+                "input": str(kind),
                 "docs": len(ids),
                 "seconds": round(t_score, 3),
                 "docs_per_sec_per_core": round(len(ids) / t_score, 1) if t_score else 0.0,
@@ -126,8 +110,16 @@ def main() -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--model-url", default=MODEL, help="fastText model.bin (gs://). Default = w80.")
     p.add_argument("--col", default=COL, help="Output score column name.")
+    p.add_argument(
+        "--input",
+        type=ClassifierInput,
+        choices=list(ClassifierInput),
+        default=ClassifierInput.HTML,
+        help="html = body_strip HTML (what the *_prep_mc500 models trained on); text = resiliparse-rs "
+        "main-content text of that HTML (the *_TEXT models). See comparison_sample.",
+    )
     args = p.parse_args()
-    run(args.model_url, args.col)
+    run(args.model_url, args.col, args.input)
 
 
 if __name__ == "__main__":

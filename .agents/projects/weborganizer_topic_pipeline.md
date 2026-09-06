@@ -230,3 +230,40 @@ from the 500-doc smoke to a 20M-doc production pass **unchanged**:
   (only the checkpoint + label set change). The paper's topic×format cross-tab is the real payoff.
 - **MQ/LQ**: no 10k document tree exists — decide whether to label the 3k-pool versions or build 10k
   variants first.
+
+## 2026-09-03 — llm_pipeline_v1_1 (the Qwen3-8B twin pipeline) joins the 1M-doc comparison
+
+The July set was labelled at 1M docs per corpus; lpv11 gets the same treatment so it can sit next to
+the other filters. lpv11 here is the LLM pipeline proper, not `lpv11_fastpipe_v1` (which already has
+a full-corpus 24x5 grid in the datakit store).
+
+**Why not the consolidated archive.** `resolved_llm_pipeline_v1_1.jsonl.gz` (2026-08-12) indexes
+6,943 of the 10,363 completed WARCs, its `path` column points at the RAW regional buckets, and the
+`by_region/*/llm_pipeline_v1_1` copy in us-central1 is only partly transferred (europe-west4: 2,281
+of 5,422 WARC dirs). It is not a single-region corpus.
+
+**What we read instead.** Which fleet claimed a WARC is unrelated to its content, so one region's
+share of the run is a random subsample of it. The us-east5 share at 10,363 completed WARCs is 2,844
+WARCs / 152,963 batches / ~7M kept docs — 7x the sample — and reading it there is in-region.
+
+```bash
+# one-off, on the dev machine (gcloud can list; gcsfs cannot TLS from here)
+gcloud storage ls --long --recursive \
+  "gs://marin-us-east5/documents/baseline_llm_extraction/llm_pipeline_v1_1/**" > listings/us-east5.txt
+gcloud storage ls \
+  gs://marin-us-central1/documents/baseline_llm_extraction/llm_pipeline_v1_1/_completed/ > listings/registry.txt
+uv run python -m experiments.baseline_collection.grid_projection_manifest \
+  --listings listings --only-region us-east5 --out-dir manifest
+gcloud storage cp manifest/'*' gs://marin-us-east5/metadata/lpv1_1_topic_sample/
+
+# 8 chunks, us-east5 v6e-4, native read (Corpus.group_manifest); then merge --dataset ... (native)
+uv run iris --cluster marin job run --region us-east5 --tpu v6e-4 --enable-extra-resources --extra tpu \
+  --memory 64GB --priority interactive --no-wait --job-name wo-label-lpv11-000 -e HF_TOKEN "$HF_TOKEN" -- \
+  python -m experiments.baseline_collection.weborganizer_topic_label chunk \
+    --dataset llm_pipeline_v1_1_10k --target-docs 1000000 --num-chunks 8 --chunk-idx 0
+```
+
+Each chunk reads 21 docs from the head of each of 6,000 random batches (`MAX_SHARDS_PER_CHUNK`), so
+the sample spans ~48k batches across essentially all 2,844 WARCs. Caveats carried into the viewer:
+lpv11 is PRE-dedup (like dclm/nemotron/fineweb_edu/resiliparse; unlike high_quality), and
+`CORPUS_TOTAL_TOKENS` for it is the 2026-07-31 projection (137.8B llama3), not a tokenized ledger.

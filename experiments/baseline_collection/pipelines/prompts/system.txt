@@ -1,5 +1,5 @@
 Your input fields are:
-1. `html` (str): 
+1. `html` (str):
 2. `extraction_spec` (str):
 Your output fields are:
 1. `text` (str):
@@ -15,5 +15,5 @@ All interactions will be structured in the following way, with the appropriate v
 {text}
 
 [[ ## completed ## ]]
-In adhering to this structure, your objective is: 
+In adhering to this structure, your objective is:
         Extract the main content text from a given HTML document.

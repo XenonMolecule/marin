@@ -196,12 +196,17 @@ def prewarm_tokenizer(name: str) -> None:
 def _cached_tokenizer(name: str):
     """One BatchTokenizer per worker process, built the way training builds it."""
     if name not in _TOKENIZER_CACHE:
-        from levanter.data.text import BatchTokenizer
-        from transformers import AutoTokenizer
+        # Post-merge levanter moved BatchTokenizer out of the `levanter.data.text` namespace and
+        # narrowed its input to a MarinTokenizer: __call__ drives `encode_batch`, which a raw HF
+        # `PreTrainedTokenizerFast` does not implement. `load_tokenizer` on the already-staged local
+        # directory returns that protocol without re-fetching anything, so the GCS mirror still does
+        # the thundering-herd work.
+        from levanter.data.text._batch_tokenizer import BatchTokenizer
+        from levanter.tokenizers import load_tokenizer
 
         local_dir = _local_tokenizer_files(name)
-        hf = AutoTokenizer.from_pretrained(local_dir)
-        _TOKENIZER_CACHE[name] = BatchTokenizer(hf, text_field="text", enforce_bos=True, enforce_eos=True)
+        tokenizer = load_tokenizer(local_dir)
+        _TOKENIZER_CACHE[name] = BatchTokenizer(tokenizer, text_field="text", enforce_bos=True, enforce_eos=True)
         logger.info("tokenizer ready: %s", name)
     return _TOKENIZER_CACHE[name]
 
@@ -253,9 +258,9 @@ def tokenize_shard(dataset: str, path: str, corpus, batcher) -> dict:
     table = pa.Table.from_pydict({"id": ids, "input_ids": token_arrays}, schema=_SCHEMA)
     with fsspec.open(tokenize_output(dataset, path), "wb") as fh:
         pq.write_table(table, fh, compression="zstd")
-    counters.increment("grid_tokenize/shards", 1)
-    counters.increment("grid_tokenize/docs", len(ids))
-    counters.increment("grid_tokenize/tokens", sum(len(a) for a in token_arrays))
+    counters.pipeline.update_counter("grid_tokenize/shards", 1)
+    counters.pipeline.update_counter("grid_tokenize/docs", len(ids))
+    counters.pipeline.update_counter("grid_tokenize/tokens", sum(len(a) for a in token_arrays))
     return {"shard": output_stem(path), "n_docs": len(ids)}
 
 

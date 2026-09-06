@@ -43,9 +43,9 @@ RECENT_WALLS = 20  # rolling window of per-WARC wall times for instantaneous-rat
 
 def _bucket_to_region() -> dict[str, str]:
     """Canonical ``gs://bucket`` -> region (so europe-west4's ``marin-eu-west4`` maps correctly)."""
-    from rigging.filesystem import REGION_TO_DATA_BUCKET
+    from rigging.filesystem import data_config
 
-    return {f"gs://{b}": r for r, b in REGION_TO_DATA_BUCKET.items()}
+    return {f"gs://{s.name}": r for r, s in data_config().region_buckets.items()}
 
 
 def region_from_bucket(bucket: str) -> str:

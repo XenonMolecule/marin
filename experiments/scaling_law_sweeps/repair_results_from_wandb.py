@@ -48,7 +48,7 @@ import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from experiments.scaling_law_sweeps.audit_results_vs_wandb import (
     DEFAULT_METRICS,
@@ -119,7 +119,7 @@ def build_plan(data: dict, json_path: str, run, audit_diagnosis: str, tol: float
 def apply_plan(data: dict, plan: RepairPlan, gs_path: str, local_dir: str, backup: bool) -> None:
     """Write the repaired JSON back to GCS, backing up the original first."""
     if backup:
-        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
         bak = f"{gs_path}.bak-{stamp}"
         _gcloud("cp", gs_path, bak)
         print(f"        backed up -> {bak}")
@@ -132,7 +132,7 @@ def apply_plan(data: dict, plan: RepairPlan, gs_path: str, local_dir: str, backu
         new_eval["step"] = plan.final_step
     new["eval"] = new_eval
     run_meta = dict(new.get("run", {}))
-    run_meta["repaired_at"] = datetime.now(timezone.utc).isoformat()
+    run_meta["repaired_at"] = datetime.now(UTC).isoformat()
     run_meta["repaired_from_wandb_step"] = plan.final_step
     new["run"] = run_meta
 

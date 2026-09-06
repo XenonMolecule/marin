@@ -179,7 +179,7 @@ async def send_request(
                             first_tok_time = now
                         token_times.append(now)
                         chunks.append(content)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             error = "timeout"
         except Exception as e:
             error = str(e)[:100]

@@ -12,6 +12,15 @@ A fast classifier+extractor cascade that approximates the slow LLM extractor:
 
 A doc is **kept** iff it passes fastText (`>= 0.0368`) **and** ModernBERT (`>= 0.1974`).
 
+The **TEXT line** (`lpv11_fastpipe_v2`, `spec.is_text_line`) inverts the shape: Phase A extracts
+every decoded doc with resiliparse-rs and gates on fastText-TEXT; Phase B runs a pooled early-exit
+band then ettin68@2048 on the uncertain band and writes the final `kept/` directly — no Phase C.
+
+```
+(CPU A) decode → resiliparse-rs extract → fastText-TEXT gate → tokenize → a_presurvivors/
+(TPU B) pooled-90M band (accept ≥ hi / drop < lo) → ettin68@2048 on the band → kept/ + tombstones
+```
+
 ## Versioning
 
 `spec.py :: SPECS` is the authoritative definition of each `fastpipe_vN`; `VERSIONS.md` is the

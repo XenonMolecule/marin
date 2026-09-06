@@ -1,3 +1,6 @@
+# Copyright The Marin Authors
+# SPDX-License-Identifier: Apache-2.0
+
 """Dump the operating curve (precision / recall / F1 / coverage vs threshold) for the
 trained jusText extractability-router fastText model, on dev and test.
 
@@ -7,12 +10,13 @@ the share of the corpus you keep off the expensive 1.7B path.
 Outputs {out_root}/operating_curve.csv and prints, for target precisions, the threshold +
 the resulting recall and coverage (on dev, with the test numbers at that same threshold).
 """
+
 import argparse
 import gzip
 import io
 
-import fsspec
 import fasttext
+import fsspec
 
 POS = "__label__extractable"
 
@@ -72,8 +76,14 @@ def main() -> None:
         d.write(buf.getvalue())
 
     # For target precisions, find the lowest dev threshold achieving it (max recall at that precision).
-    print("\n== DEV: lowest threshold reaching each precision target (recall + coverage there) | TEST at same thr ==", flush=True)
-    print(f"{'targetP':>7} {'thr':>6} {'devP':>6} {'devR':>6} {'devCov':>7} | {'testP':>6} {'testR':>6} {'testCov':>7}", flush=True)
+    print(
+        "\n== DEV: lowest threshold reaching each precision target (recall + coverage there) | TEST at same thr ==",
+        flush=True,
+    )
+    print(
+        f"{'targetP':>7} {'thr':>6} {'devP':>6} {'devR':>6} {'devCov':>7} | {'testP':>6} {'testR':>6} {'testCov':>7}",
+        flush=True,
+    )
     for target in (0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99):
         pick = None
         for t in grid:
@@ -86,7 +96,9 @@ def main() -> None:
             continue
         t, dp, dr, dc = pick
         tp, tr, tf, tc = pr_at(test, t)
-        print(f"{target:>7.2f} {t:>6.3f} {dp:>6.3f} {dr:>6.3f} {dc:>7.3f} | {tp:>6.3f} {tr:>6.3f} {tc:>7.3f}", flush=True)
+        print(
+            f"{target:>7.2f} {t:>6.3f} {dp:>6.3f} {dr:>6.3f} {dc:>7.3f} | {tp:>6.3f} {tr:>6.3f} {tc:>7.3f}", flush=True
+        )
     print(f"\nsaved -> {args.out_root}/operating_curve.csv", flush=True)
 
 

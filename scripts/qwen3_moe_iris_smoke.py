@@ -6,10 +6,11 @@ import time
 
 import jax
 import jmp
-import levanter
 from levanter.main.perplexity_gap import GapFinderModelConfig, _load_model_runner, _resolved_model_spec
 from levanter.tracker import NoopConfig
 from levanter.trainer import TrainerConfig
+
+import levanter
 
 MODEL_ID = "Qwen/Qwen3-30B-A3B"
 

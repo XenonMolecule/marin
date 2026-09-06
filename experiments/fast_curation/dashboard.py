@@ -162,8 +162,9 @@ def _counts(run: str, regions: list[str]) -> dict[str, dict[str, int]]:
     but counted by multiple heartbeat slots, so the heartbeat sum overcounts — these listings don't.
     O(WARCs); fine at 10k, will move to sharded counters for the 7M run.
     """
-    from rigging.filesystem import REGION_TO_DATA_BUCKET
+    from rigging.filesystem import data_config
 
+    region_to_bucket = {r: s.name for r, s in data_config().region_buckets.items()}
     client = _storage_client()
     sub = {"a": "a_presurvivors", "b": "b_keeplist", "c": "kept"}
 
@@ -176,7 +177,7 @@ def _counts(run: str, regions: list[str]) -> dict[str, dict[str, int]]:
 
     tasks = [("global", p, HEARTBEAT_BUCKET, f"{FAST_CURATION_PREFIX}{run}/_completed_{p}/") for p in PHASES]
     for reg in regions:
-        b = REGION_TO_DATA_BUCKET.get(reg)
+        b = region_to_bucket.get(reg)
         if b:
             tasks += [(reg, p, b, f"{FAST_CURATION_PREFIX}{run}/{sub[p]}/") for p in PHASES]
     out: dict[str, dict[str, int]] = defaultdict(dict)

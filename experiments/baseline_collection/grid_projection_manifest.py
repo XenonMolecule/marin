@@ -63,6 +63,17 @@ import fsspec
 logger = logging.getLogger(__name__)
 
 REGIONS: tuple[str, ...] = ("us-central1", "us-east1", "us-east5", "us-west4", "eu-west4")
+# `--num-warcs 0`: take every eligible WARC instead of a fixed-size sample (a full-run inventory).
+ALL_WARCS = 0
+# Iris region label -> the bucket short-name the listings and manifests are keyed by. They differ
+# for europe-west4 only (bucket `marin-eu-west4`).
+REGION_MANIFEST_KEY: dict[str, str] = {
+    "us-central1": "us-central1",
+    "us-east5": "us-east5",
+    "us-east1": "us-east1",
+    "us-west4": "us-west4",
+    "europe-west4": "eu-west4",
+}
 # `gcloud storage ls --long` prefixes each line with size and creation time; plain
 # `ls` gives the URL alone. Accept either so a listing taken without --long still
 # parses, at the cost of losing the duplicate tiebreaker.
@@ -137,6 +148,47 @@ def eligible_warcs(by_warc: dict[str, dict[int, tuple[str, str]]], completed: se
     return sorted(eligible)
 
 
+def build_single_region(listings_dir: str, region: str, out_dir: str) -> None:
+    """Group manifest of ONE region's batches of every completed WARC, for a same-region sample.
+
+    Steal mode spreads a WARC's batches over ~3 regions, and which fleet claimed a WARC has nothing
+    to do with its content, so one region's share of the run is a random subsample of it. Reading it
+    from that region needs no cross-region traffic and no consolidation. Contiguity is not checked:
+    a WARC's other batches are, by construction, in other regions. Only WARCs in the `_completed`
+    registry are kept, so no in-flight WARC contributes a partial view.
+    """
+    found = parse_listing(f"{listings_dir}/{region}.txt")
+    completed = load_completed(f"{listings_dir}/registry.txt")
+    by_warc: dict[str, list[str]] = defaultdict(list)
+    skipped = 0
+    for (warc, _idx), (url, _size) in sorted(found.items()):
+        if warc not in completed:
+            skipped += 1
+            continue
+        by_warc[warc].append(url)
+    path = f"{out_dir}/manifest_{region}.jsonl"
+    with fsspec.open(path, "w") as fh:
+        for warc in sorted(by_warc):
+            fh.write(json.dumps({"warc": warc, "region": region, "shards": by_warc[warc]}) + "\n")
+    total_shards = sum(len(v) for v in by_warc.values())
+    summary = {
+        "region": region,
+        "num_warcs": len(by_warc),
+        "total_shards": total_shards,
+        "batches_of_incomplete_warcs_skipped": skipped,
+    }
+    with fsspec.open(f"{out_dir}/sample.json", "w") as fh:
+        json.dump(summary, fh)
+    logger.info(
+        "%s: %d WARCs, %d batches (%d batches of incomplete WARCs skipped) -> %s",
+        region,
+        len(by_warc),
+        total_shards,
+        skipped,
+        path,
+    )
+
+
 def build(listings_dir: str, num_warcs: int, seed: int, out_dir: str) -> None:
     per_region = {}
     sized = 0
@@ -155,6 +207,8 @@ def build(listings_dir: str, num_warcs: int, seed: int, out_dir: str) -> None:
     logger.info("%d WARCs seen, %d (warc,batch) keys had duplicate copies", len(by_warc), duplicates)
 
     pool = eligible_warcs(by_warc, load_completed(f"{listings_dir}/registry.txt"))
+    if num_warcs == ALL_WARCS:
+        num_warcs = len(pool)
     if len(pool) < num_warcs:
         raise ValueError(f"asked for {num_warcs} WARCs but only {len(pool)} are eligible")
 
@@ -205,12 +259,20 @@ def build(listings_dir: str, num_warcs: int, seed: int, out_dir: str) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--listings", required=True, help="directory of cached {region}.txt listings")
-    parser.add_argument("--num-warcs", type=int, default=1000)
+    parser.add_argument("--num-warcs", type=int, default=1000, help="WARCs to sample; 0 = every eligible WARC.")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--out-dir", required=True, help="where the manifests are written")
+    parser.add_argument(
+        "--only-region",
+        choices=REGIONS,
+        help="Index one region's batches of every completed WARC instead of sampling whole WARCs across regions.",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    if args.only_region:
+        build_single_region(args.listings, args.only_region, args.out_dir.rstrip("/"))
+        return
     build(args.listings, args.num_warcs, args.seed, args.out_dir.rstrip("/"))
 
 

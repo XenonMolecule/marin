@@ -202,6 +202,13 @@ dclm = [
     "uniseg",          # Unicode word segmentation
 ]
 
+# Fork-only: optional Rust BPE tokenizer for fast_curation Phase A (`--tokenizer-impl gigatoken`).
+# Exact-pinned: the token ids ARE the classifier input, so an implementation drift would silently
+# shift every cascade score. Workers self-check parity against the HF tokenizer at startup.
+gigatoken = [
+    "gigatoken==0.10.0",
+]
+
 safety = [
     "detoxify",        # local Perspective-analog classifier for RTP-style toxicity eval
 ]

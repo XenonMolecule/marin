@@ -1,3 +1,6 @@
+# Copyright The Marin Authors
+# SPDX-License-Identifier: Apache-2.0
+
 """Export a fastText-ready useful-vs-no_useful training set from the cascade 350k corpus.
 
 Independent of jusText/gold: label is the row's `source` (useful / no_useful), text is the
@@ -7,6 +10,7 @@ split (`__label__<source> <text>` lines), preserving the frozen train/dev/test s
 
 Output: {out_root}/fasttext_useful/{train,dev,test}.txt.gz  (gunzip before `fasttext supervised`).
 """
+
 import argparse
 import gzip
 import json
@@ -44,7 +48,9 @@ def iter_jsonl_gz(path: str):
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--final-root", required=True, help="gs://.../high_quality_3000_distill_chat_bal350k_cascade/final")
-    ap.add_argument("--out-root", required=True, help="gs://.../high_quality_3000_distill_chat_bal350k_cascade/fasttext_useful")
+    ap.add_argument(
+        "--out-root", required=True, help="gs://.../high_quality_3000_distill_chat_bal350k_cascade/fasttext_useful"
+    )
     args = ap.parse_args()
 
     for in_split, out_name in SPLITS.items():
@@ -74,7 +80,10 @@ def main() -> None:
         with open(tmp, "rb") as src_f, fsspec.open(out_path, "wb") as dst:
             dst.write(src_f.read())
         os.remove(tmp)
-        print(f"{out_name}: wrote {n} lines (useful={useful} no_useful={nouse}, skipped_empty={empty}) -> {out_path}", flush=True)
+        print(
+            f"{out_name}: wrote {n} lines (useful={useful} no_useful={nouse}, skipped_empty={empty}) -> {out_path}",
+            flush=True,
+        )
 
 
 if __name__ == "__main__":

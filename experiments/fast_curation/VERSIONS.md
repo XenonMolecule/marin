@@ -25,7 +25,46 @@ Recompute any hash with
 
 ---
 
-## lpv11_fastpipe_v1  (ACTIVE, lpv11 line)
+## lpv11_fastpipe_v2_1  (ACTIVE, lpv11 TEXT line — 8M-scale storage contract)
+
+- **Status**: identical cascade semantics to v2 (same models, thresholds, band, ettin@2048 — same
+  corpus content); new namespace for the scale contract.
+- **Hash**: `944ca6bc38` (`storage_version=3` is namespace-defining).
+- **Changed vs v2 (storage/orchestration only)**: sharded work-list + shard claims + per-shard
+  catalog (`shard_worklist.py`; O(shards) GCS traffic instead of O(WARCs x fleet)); presurvivors/
+  kept carry NO `input_ids` (Phase B re-tokenizes from `text` via gigatoken, parity-gated);
+  text parquets at zstd level 12; `n_tokens` computed in Phase B. First run: the 100k shakeout.
+
+## lpv11_fastpipe_v2  (lpv11 TEXT line — proven at 10,364 WARCs)
+
+- **Status**: new line — the TEXTONLY-7d config from the planner's optimal-cascade search
+  (`.agents/projects/planner_text_classifier_stages.md`, 2026-08-23). Equal F1 to config-3 within the
+  0.015 noise floor at ~5x less TPU time, via early exit + short eval context.
+- **Hash**: `32b74664f1` → namespace `gs://marin-<region>/documents/fast_curation/lpv11_fastpipe_v2-32b74664f1/`.
+- **Naming**: briefly launched as `lpv11_textpipe_v1` (same hash — `spec_id` is path-only, not hashed);
+  the 300-WARC pilot's outputs started under that prefix and are renamed in-region to this one.
+- **Shape**: 2-phase. Extraction runs FIRST (Phase A, every decoded doc); every classifier consumes
+  `lower(collapse(resiliparse-rs(raw_html)))` — the `*_textraw_*` deployment representation the
+  thresholds were tuned on. Phase B (TPU) is terminal and writes `kept/` directly; there is no Phase C.
+- **Cascade**: `decode → resiliparse_rs → clf_text → fastText → tokenize → pooled_band → ettin68@2048`
+  | stage | model | operating point |
+  |---|---|---|
+  | fastText TEXT | `resiliparse_scale_w640_sub0p22_strat_prep_mc500_TEXT` (w640) | ≥ 0.0048 |
+  | pooled 90M TEXT (band) | `mb-clf-lpv11-text-pooled-90M` | accept ≥ 0.8883, drop < 0.079 |
+  | ettin68 10M TEXT @2048 | `mb-clf-lpv11-text-ettin68-10M` | ≥ 0.4378 (band docs only) |
+  | extract | resiliparse-rs @ `850891b` (in Phase A) | — |
+- **Early-exit band**: pooled ≥ hi is kept outright (NO terminal prob is ever stored for it), < lo is
+  dropped, the middle goes to ettin68. Hence **`pooled_hi` and `pooled_threshold` are BOTH
+  namespace-defining**; `modernbert_threshold` stays late-bound but only over BAND docs.
+- **Short eval context**: `modernbert_max_length=2048` (namespace-defining). Phase A tokenizes once at
+  8192 (the pooled model's calibrated ctx); Phase B derives the 2048 ids via `truncate_ids`
+  (slice + re-append `[SEP]`), exactly reproducing `tokenize(max_length=2048)` — parity-tested.
+- **fastText model canonical path is us-east5** (mirrored from its us-central2 training home) so the
+  region rebucketing convention holds.
+
+---
+
+## lpv11_fastpipe_v1  (lpv11 line)
 
 - **Status**: new line — the first cascade targeting `llm_pipeline_v1_1` instead of the 8B `high_quality` run.
 - **Hash**: `2224e3e476` → namespace `gs://marin-<region>/documents/fast_curation/lpv11_fastpipe_v1-2224e3e476/`.

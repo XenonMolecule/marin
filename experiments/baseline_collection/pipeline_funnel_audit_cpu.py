@@ -1,3 +1,6 @@
+# Copyright The Marin Authors
+# SPDX-License-Identifier: Apache-2.0
+
 """CPU-only slice of the pipeline funnel (stages 0,1,3,4 — everything except BERT).
 
 Same raw sample as pipeline_funnel_audit.py, but skips the TPU ModernBERT gate so it
@@ -11,6 +14,7 @@ schedules instantly and finishes in minutes. Produces:
 Records one row per ft-survivor {source, ft_prob, router_prob, tok_len} so the post-BERT
 view can be reconstructed once BERT scores exist. BERT (stage 2) comes from the TPU job.
 """
+
 import argparse
 import gzip
 import json
@@ -203,7 +207,12 @@ def main():
                         if tok_len > t:
                             ctx_over[str(t)] += 1
                     n_1p7b_tok += 1
-                surv_f.write(json.dumps({"source": src, "ft_prob": round(ftp, 5), "router_prob": round(rp, 5), "tok_len": tok_len}) + "\n")
+                surv_f.write(
+                    json.dumps(
+                        {"source": src, "ft_prob": round(ftp, 5), "router_prob": round(rp, 5), "tok_len": tok_len}
+                    )
+                    + "\n"
+                )
         logging.info(f"WARC {warc:05d} ({wi+1}/{len(warcs)}) totals all={counts['all']}")
 
     surv_f.close()
@@ -212,15 +221,25 @@ def main():
     os.remove(surv_tmp)
 
     summary = {
-        "split": args.split, "warcs": warcs, "subsample_stride": args.subsample_stride,
+        "split": args.split,
+        "warcs": warcs,
+        "subsample_stride": args.subsample_stride,
         "thresholds": {"ft": args.ft_threshold, "router": args.router_threshold},
-        "counts": counts, "n_justext": n_justext, "n_1p7b": n_1p7b,
-        "router_hist": router_hist, "tok_hist_bin": TOK_HIST_BIN, "tok_hist": tok_hist,
-        "ctx_over": ctx_over, "n_1p7b_tok": n_1p7b_tok, "note": "CPU-only: BERT (stage 2) NOT applied; router/context on ft-survivors",
+        "counts": counts,
+        "n_justext": n_justext,
+        "n_1p7b": n_1p7b,
+        "router_hist": router_hist,
+        "tok_hist_bin": TOK_HIST_BIN,
+        "tok_hist": tok_hist,
+        "ctx_over": ctx_over,
+        "n_1p7b_tok": n_1p7b_tok,
+        "note": "CPU-only: BERT (stage 2) NOT applied; router/context on ft-survivors",
     }
     with fsspec.open(f"{args.out_root}/funnel_cpu.json", "wt", encoding="utf-8") as f:
         json.dump(summary, f, indent=2)
-    logging.info(f"DONE: {json.dumps(counts['all'])} justext={n_justext['all']} 1.7b={n_1p7b['all']} over_ctx={ctx_over}")
+    logging.info(
+        f"DONE: {json.dumps(counts['all'])} justext={n_justext['all']} 1.7b={n_1p7b['all']} over_ctx={ctx_over}"
+    )
 
 
 if __name__ == "__main__":

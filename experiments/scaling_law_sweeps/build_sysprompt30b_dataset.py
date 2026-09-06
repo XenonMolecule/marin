@@ -3,11 +3,17 @@
 
 """Materialize JSONL sources for system-prompt ablations on the DCLM-30B corpus.
 
-Three arms per scale, differing only in what reaches the tokenizer:
+Four arms per scale, differing only in what reaches the tokenizer:
 
     A  sysprompt      docs with [S] prepended       -> tokenize conditioned_text
     C  doc-matched    the SAME docs, no [S]         -> tokenize text
     B  token-matched  A's docs + extra docs, no [S] -> tokenize text
+    D  mix50          the SAME docs, [S] on a       -> tokenize mixed_text
+                      deterministic half of them
+
+Arm D's half is a per-document coin flip keyed on ``doc_id`` (see
+``mix_conditioned``), so the assignment is reproducible from the doc alone and
+every ``ab`` record also stores it as the ``mix_conditioned`` field.
 
 SCALE-GENERIC BY DESIGN. Nothing here hardcodes a token budget. Give it a FLOP
 budget and a width and it derives the token target from ``completed_adamh`` — the
@@ -36,8 +42,9 @@ of GB of document text to give B its own copy would be wasteful::
     A, C  ->  build/{tag}/train/ab-*.jsonl.gz
     B     ->  build/{tag}/train/*.jsonl.gz
 
-Each ``ab`` record carries BOTH ``text`` and ``conditioned_text``, so A and C are
-the same documents by construction rather than by a matching step that could drift.
+Each ``ab`` record carries ``text``, ``conditioned_text``, ``mixed_text`` and
+``mix_conditioned``, so A, C and D are the same documents by construction rather
+than by a matching step that could drift.
 
 Token accounting uses the corpus's per-doc ``n_tokens``, verified to be the llama3
 count exactly (300-doc sample, ratio 1.0000). Estimates here are for SELECTION
@@ -60,6 +67,7 @@ from __future__ import annotations
 
 import argparse
 import gzip
+import hashlib
 import io
 import json
 import logging
@@ -68,6 +76,8 @@ import re
 
 import fsspec
 import zstandard
+
+from experiments.scaling_law_sweeps.fixed_model_plan import _candidate_for_fixed_model
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +99,20 @@ S_PREFIX = "<|start_header_id|>system<|end_header_id|>\n\n"
 S_SUFFIX = "<|eot_id|>"
 # Measured on this corpus: 16.0 tokens of prompt + 5 of wrapper.
 SYS_TOKENS = 21
+
+# Arm D (mix50): which docs get [S]. Keyed on the content-derived doc_id, never on
+# position, so the same document gets the same answer in any future emit, scale
+# or corpus ordering. Changing the salt or the modulus changes the experiment —
+# bump the tag if you do.
+MIX_SALT = "sysprompt30b-mix50-v1"
+MIX_MODULUS = 2
+MIX_RULE = f"sha1('{MIX_SALT}:' + doc_id) first 8 hex as int, % {MIX_MODULUS} == 0 -> [S] prepended"
+
+
+def mix_conditioned(doc_id: str) -> bool:
+    """Deterministic per-document coin flip for arm D. True -> [S] prepended."""
+    h = hashlib.sha1(f"{MIX_SALT}:{doc_id}".encode()).hexdigest()
+    return int(h[:8], 16) % MIX_MODULUS == 0
 
 
 def _fs():
@@ -237,8 +261,6 @@ def cmd_index(a) -> None:
 def target_tokens_for(budget: float, hidden_dim: int) -> tuple[float, int, int]:
     """(tokens, batch_size, train_steps) for a FLOP budget — the SAME source of
     truth the trainer uses, so dataset and run can never disagree."""
-    from experiments.scaling_law_sweeps.fixed_model_plan import _candidate_for_fixed_model
-
     cand = _candidate_for_fixed_model(hidden_dim, budget, seq_len=SEQ_LEN)
     if cand is None:
         raise SystemExit(f"no candidate config for hidden_dim={hidden_dim} at budget={budget:.3g}")
@@ -288,6 +310,8 @@ def select_blocks(index: dict, target_tokens: float) -> dict:
         "extra_blocks": extra,
         "extra_docs": extra_docs,
         "arm_B_tokens_est": ab_doc_tok + extra_tok,
+        # Half the docs carry [S]; exact count comes from the cache after tokenizing.
+        "arm_D_tokens_est": ab_doc_tok + (ab_cond_tok - ab_doc_tok) / MIX_MODULUS,
         "shortfall": max(0.0, target_tokens - ab_cond_tok),
         "b_shortfall": b_shortfall,
     }
@@ -332,16 +356,16 @@ def _check_feasible(index: dict, sel: dict, target_tokens: float, tag: str) -> N
         raise SystemExit(f"\nCANNOT BUILD {tag} — not enough data:\n\n  " + "\n\n  ".join(problems) + "\n")
 
 
-def emit_part(args: tuple[int, str, list[int], list[int]]) -> tuple[int, int, int]:
+def emit_part(args: tuple[int, str, list[int], list[int]]) -> tuple[int, int, int, int]:
     part, out_dir, ab_blocks, extra_blocks = args
     fs = _fs()
     want_ab, want_extra = set(ab_blocks), set(extra_blocks)
     if not (want_ab | want_extra):
-        return (part, 0, 0)
+        return (part, 0, 0, 0)
     prompts = _prompts_for_part(fs, part)
     ab_buf: dict[int, list[str]] = {}
     ex_buf: dict[int, list[str]] = {}
-    n_ab = n_ex = 0
+    n_ab = n_ex = n_mix = 0
 
     for idx, d in _iter_part(fs, part):
         b = idx // BLOCK_DOCS
@@ -354,10 +378,17 @@ def emit_part(args: tuple[int, str, list[int], list[int]]) -> tuple[int, int, in
             raise SystemExit(f"doc_id mismatch part={part} idx={idx}: corpus={d.get('doc_id')} gen={hit[1]}")
         rec = {"doc_id": d.get("doc_id"), "idx": idx, "n_tokens": d.get("n_tokens"), "text": d["text"]}
         if b in want_ab and hit:
+            if not d.get("doc_id"):
+                raise SystemExit(f"part={part} idx={idx}: corpus record has no doc_id; arm D's coin flip needs it")
+            conditioned = f"{S_PREFIX}{hit[0]}{S_SUFFIX}{d['text']}"
+            mixed = mix_conditioned(d["doc_id"])
             rec["system_prompt"] = hit[0]
-            rec["conditioned_text"] = f"{S_PREFIX}{hit[0]}{S_SUFFIX}{d['text']}"
+            rec["conditioned_text"] = conditioned
+            rec["mix_conditioned"] = mixed
+            rec["mixed_text"] = conditioned if mixed else d["text"]
             ab_buf.setdefault(b, []).append(json.dumps(rec))
             n_ab += 1
+            n_mix += int(mixed)
         elif b in want_extra:
             ex_buf.setdefault(b, []).append(json.dumps(rec))
             n_ex += 1
@@ -367,7 +398,7 @@ def emit_part(args: tuple[int, str, list[int], list[int]]) -> tuple[int, int, in
             with fs.open(f"{out_dir}/{prefix}-{b:06d}.jsonl.gz", "wb") as f:
                 with gzip.GzipFile(fileobj=f, mode="wb") as gz:
                     gz.write(("\n".join(rows) + "\n").encode())
-    return (part, n_ab, n_ex)
+    return (part, n_ab, n_ex, n_mix)
 
 
 def cmd_emit(a) -> None:
@@ -386,12 +417,13 @@ def cmd_emit(a) -> None:
 
     if a.dry_run:
         logger.info(
-            "DRY RUN ok — %s is feasible: A=%.3fB B=%.3fB C=%.3fB tokens "
+            "DRY RUN ok — %s is feasible: A=%.3fB B=%.3fB C=%.3fB D=%.3fB tokens "
             "(%d ab blocks + %d extra blocks). Nothing written.",
             a.tag,
             sel["arm_A_tokens_est"] / 1e9,
             sel["arm_B_tokens_est"] / 1e9,
             sel["arm_C_tokens_est"] / 1e9,
+            sel["arm_D_tokens_est"] / 1e9,
             len(sel["ab_blocks"]),
             len(sel["extra_blocks"]),
         )
@@ -423,11 +455,14 @@ def cmd_emit(a) -> None:
         "canonical_steps": steps,
         "emitted_ab_docs": sum(r[1] for r in results),
         "emitted_extra_docs": sum(r[2] for r in results),
+        "emitted_mix_conditioned_docs": sum(r[3] for r in results),
         "globs": {
             "A_sysprompt": f"{out_dir}/ab-*.jsonl.gz  (text_key=conditioned_text)",
             "C_doc_matched": f"{out_dir}/ab-*.jsonl.gz  (text_key=text)",
             "B_token_matched": f"{out_dir}/*.jsonl.gz  (text_key=text)",
+            "D_mix50": f"{out_dir}/ab-*.jsonl.gz  (text_key=mixed_text)",
         },
+        "mix_rule": MIX_RULE,
         "estimates": {
             "A_tokens": sel["arm_A_tokens_est"],
             "A_steps": _steps(sel["arm_A_tokens_est"]),
@@ -435,6 +470,8 @@ def cmd_emit(a) -> None:
             "B_steps": _steps(sel["arm_B_tokens_est"]),
             "C_tokens": sel["arm_C_tokens_est"],
             "C_steps": _steps(sel["arm_C_tokens_est"]),
+            "D_tokens": sel["arm_D_tokens_est"],
+            "D_steps": _steps(sel["arm_D_tokens_est"]),
         },
         "ab_blocks": len(sel["ab_blocks"]),
         "extra_blocks": len(sel["extra_blocks"]),
@@ -445,7 +482,11 @@ def cmd_emit(a) -> None:
     with fs.open(f"{BUILD}/{a.tag}/manifest.json", "w") as f:
         json.dump(manifest, f, indent=2)
     logger.info(
-        "emitted ab_docs=%d extra_docs=%d -> %s", manifest["emitted_ab_docs"], manifest["emitted_extra_docs"], out_dir
+        "emitted ab_docs=%d (mix_conditioned=%d) extra_docs=%d -> %s",
+        manifest["emitted_ab_docs"],
+        manifest["emitted_mix_conditioned_docs"],
+        manifest["emitted_extra_docs"],
+        out_dir,
     )
 
 

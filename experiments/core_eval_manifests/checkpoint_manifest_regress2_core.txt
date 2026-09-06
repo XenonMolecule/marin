@@ -1,0 +1,2 @@
+run_name,region,output_path,hf_dir
+REGRESS2-postmerge-curation-dclm_10k-expFM_natural-3e+18-d512-L6-B32,us-east5,gs://marin-us-east5/checkpoints/isoflop-curation/curation-dclm_10k-expFM_natural-3e+18-d512-L6-B32,gs://marin-us-east5/checkpoints/isoflop-curation/curation-dclm_10k-expFM_natural-3e+18-d512-L6-B32/hf/

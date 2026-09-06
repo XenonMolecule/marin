@@ -81,8 +81,25 @@
   }
 
   // ---- rendering ----
+  // A pipeline can be momentarily invalid — e.g. TEXT classifiers left over after switching to an
+  // extractor they were not trained on. Say why on the flow strip instead of throwing out of render().
+  function showPipelineError(e) {
+    const flow = $("flow");
+    flow.innerHTML = "";
+    const d = el("div", "stage-card");
+    d.style.borderColor = "var(--red)";
+    d.appendChild(el("div", "title", "⚠ pipeline can't run"));
+    d.appendChild(el("div", "muted", e.message));
+    flow.appendChild(d);
+  }
+
   function render() {
-    const r = Engine.evaluate(MATRIX.columns, N, PIPE, STAGES_BY_ID, TARGET);
+    let r;
+    try {
+      r = Engine.evaluate(MATRIX.columns, N, PIPE, STAGES_BY_ID, TARGET);
+    } catch (e) {
+      showPipelineError(e); renderConfig(); syncHash(); return;
+    }
     LAST_R = r;
     renderFlow(r); renderMetrics(r); renderCompute(r); renderCapacity(); renderConfig();
     syncHash();
@@ -94,7 +111,12 @@
   const DEBOUNCE_MS = 2000;
   let _renderTimer = null;
   function recomputeKeepConfig() {
-    const r = Engine.evaluate(MATRIX.columns, N, PIPE, STAGES_BY_ID, TARGET);
+    let r;
+    try {
+      r = Engine.evaluate(MATRIX.columns, N, PIPE, STAGES_BY_ID, TARGET);
+    } catch (e) {
+      showPipelineError(e); syncHash(); return;
+    }
     LAST_R = r;
     renderFlow(r); renderMetrics(r); renderCompute(r); renderCapacity();
     syncHash();
@@ -107,16 +129,62 @@
   function renderFlow(r) {
     const flow = $("flow"); flow.innerHTML = "";
     const TOTAL = r.totalDocs;
-    // input node
     flow.appendChild(connector(TOTAL, TOTAL, "raw input"));
-    PIPE.filters.forEach((f, i) => {
-      const st = STAGES_BY_ID[f.stageId], sr = r.stages[i];
-      flow.appendChild(card(f, st, sr, i));
-      const outProj = sr.docsOut * r.scale;
-      flow.appendChild(connector(outProj, TOTAL, sr.skipped ? "(disabled)" : null));
+    const emit = (rows) => rows.forEach((sr) => {
+      const f = PIPE.filters[sr.filterIdx];
+      flow.appendChild(card(f, STAGES_BY_ID[f.stageId], sr, sr.filterIdx, r));
+      flow.appendChild(connector(sr.docsOut * r.scale, TOTAL, sr.skipped ? "(disabled)" : null));
     });
-    flow.appendChild(extractorCard(r));
+    emit(r.stages);                       // HTML classifiers: they read markup
+    flow.appendChild(extractorCard(r));   // THE extractor: required, exactly one
+    flow.appendChild(connector(r.extractor.docsOut * r.scale, TOTAL, r.extractor.docsOut < r.extractor.docsIn ? "extracted" : null));
+    emit(r.postStages);                   // TEXT classifiers: they read its output
+    flow.appendChild(outputCard(r));
   }
+
+  function outputCard(r) {
+    const c = el("div", "stage-card");
+    c.appendChild(el("div", "title", "✓ kept"));
+    c.appendChild(el("div", "muted", fmtCount(r.summary.keptSample * r.scale) + " docs"));
+    return c;
+  }
+
+  // Which side of the extractor a filter lives on is a property of the stage, not a user choice.
+  const readsText = (f) => !!(STAGES_BY_ID[f.stageId] || {}).requires_text;
+  const textSourceLabel = (st) => (STAGES_BY_ID["extract_" + st.requires_text] || { label: st.requires_text }).label;
+
+  function moveFilter(idx, dir) {
+    const same = readsText(PIPE.filters[idx]);
+    for (let j = idx + dir; j >= 0 && j < PIPE.filters.length; j += dir) {
+      if (readsText(PIPE.filters[j]) === same) {
+        [PIPE.filters[idx], PIPE.filters[j]] = [PIPE.filters[j], PIPE.filters[idx]];
+        SELECTED = "f" + j;
+        break;
+      }
+    }
+    render();
+  }
+
+  // Older links/saved configs may carry stages this build no longer accepts as filters (an extractor
+  // added as a step, a since-removed model). Drop them rather than dying on load.
+  function normalizePipeline() {
+    const extKey = PIPE.extractor.stageId.replace(/^extract_/, "");
+    const before = PIPE.filters.length;
+    PIPE.filters = PIPE.filters.filter((f) => {
+      const st = STAGES_BY_ID[f.stageId];
+      // Keep only classifiers, and only TEXT ones scored against the extractor now selected — a TEXT
+      // model has no scores for another extractor's output, so keeping it would strand the pipeline.
+      return st && st.kind === "classifier" && (!st.requires_text || st.requires_text === extKey);
+    });
+    return before - PIPE.filters.length;
+  }
+
+  // A filter's computed row lives in `stages` (before the extractor) or `postStages` (after it), so a
+  // raw PIPE.filters index does NOT index either array — look it up by the row's own filterIdx.
+  const rowFor = (r, filterIdx) =>
+    r.stages.find((s) => s.filterIdx === filterIdx) || r.postStages.find((s) => s.filterIdx === filterIdx);
+  // Every filter row in execution order: HTML filters, then TEXT filters.
+  const rowsInOrder = (r) => r.stages.concat(r.postStages);
 
   function connector(countProj, total, note) {
     const c = el("div", "connector");
@@ -126,20 +194,37 @@
     return c;
   }
 
-  function card(f, st, sr, idx) {
+  function card(f, st, sr, idx, r) {
     const c = el("div", "stage-card" + (f.enabled ? "" : " disabled") + (SELECTED === "f" + idx ? " selected" : ""));
     c.onclick = () => { SELECTED = "f" + idx; render(); };
     const title = el("div", "title");
     title.appendChild(el("span", null, st.label));
     title.appendChild(el("span", "badge " + st.device, st.device));
+    if (st.requires_text) {
+      const b = el("span", "badge", "📄 text");
+      b.title = `reads the text ${textSourceLabel(st)} produces, so it runs after extraction`;
+      title.appendChild(b);
+    }
+    if (f.mode === "band") {
+      const b = el("span", "badge", "⑂ early exit");
+      b.title = "decides the confident tails itself; only the uncertain band reaches the stages after it";
+      title.appendChild(b);
+    }
     c.appendChild(title);
-    const thr = f.mode === "recall" ? "recall " + f.recall : "thr " + (sr.threshold == null ? "—" : (+sr.threshold).toFixed(2));
+    const thr = f.mode === "band" ? `keep\u2265${(+f.hi).toFixed(2)} · drop<${(+f.lo).toFixed(2)}`
+      : f.mode === "recall" ? "recall " + f.recall
+      : "thr " + (sr.threshold == null ? "—" : (+sr.threshold).toFixed(2));
     c.appendChild(el("div", "muted", thr + (st.throughput_assumed ? " ⚠" : "")));
+    if (f.mode === "band" && sr.accepted != null) {
+      c.appendChild(el("div", "muted", `✓ ${fmtCount(sr.accepted * r.scale)} kept here · ${fmtCount(sr.band * r.scale)} onward`));
+    }
     const ctr = el("div", "ctrls");
     const mk = (label, fn) => { const b = el("button", null, label); b.onclick = (e) => { e.stopPropagation(); fn(); }; return b; };
     ctr.appendChild(mk(f.enabled ? "⊙ on" : "○ off", () => { f.enabled = !f.enabled; render(); }));
-    ctr.appendChild(mk("◀", () => { if (idx > 0) { [PIPE.filters[idx - 1], PIPE.filters[idx]] = [PIPE.filters[idx], PIPE.filters[idx - 1]]; render(); } }));
-    ctr.appendChild(mk("▶", () => { if (idx < PIPE.filters.length - 1) { [PIPE.filters[idx + 1], PIPE.filters[idx]] = [PIPE.filters[idx], PIPE.filters[idx + 1]]; render(); } }));
+    // Reordering only makes sense within a side of the extractor: an HTML filter can never follow it,
+    // and a TEXT filter can never precede it. Swap with the nearest neighbour that reads the same thing.
+    ctr.appendChild(mk("◀", () => moveFilter(idx, -1)));
+    ctr.appendChild(mk("▶", () => moveFilter(idx, +1)));
     const x = mk("✕", () => { PIPE.filters.splice(idx, 1); SELECTED = null; render(); }); x.style.color = "var(--red)";
     ctr.appendChild(x);
     c.appendChild(ctr);
@@ -154,7 +239,10 @@
     title.appendChild(el("span", null, "▶ " + ext.label));
     title.appendChild(el("span", "badge " + ext.device, ext.device));
     c.appendChild(title);
-    c.appendChild(el("div", "muted", "kept: " + fmtCount(r.extractor.kept * r.scale) + (ext.throughput_assumed ? " ⚠" : "")));
+    const div = ext.device === "tpu" ? PIPE.capacity.nChips : PIPE.capacity.nCores;
+    c.appendChild(el("div", "muted", "extracts " + fmtCount(r.extractor.docsIn * r.scale) + " · "
+      + fmtYears(r.extractor.unitSec / div / Engine.SEC_PER_YEAR) + (ext.throughput_assumed ? " ⚠" : "")));
+    c.appendChild(el("div", "muted", "required · text classifiers run after this"));
     return c;
   }
 
@@ -230,11 +318,19 @@
     if (SELECTED === "ext") {
       const sel = el("select");
       REG.stages.filter((s) => s.kind === "extractor").forEach((s) => { const o = el("option", null, s.label); o.value = s.id; if (s.id === PIPE.extractor.stageId) o.selected = true; sel.appendChild(o); });
-      sel.onchange = () => { PIPE.extractor.stageId = sel.value; render(); };
+      sel.onchange = () => {
+        PIPE.extractor.stageId = sel.value;
+        const dropped = normalizePipeline();  // TEXT stages trained on the old extractor cannot follow this one
+        if (dropped) flash(`removed ${dropped} TEXT filter${dropped > 1 ? "s" : ""} — not trained on this extractor`);
+        SELECTED = "ext";
+        renderPalette(); render();
+      };
       const g = el("div", "cfg-grid"); g.appendChild(el("label", null, "extractor")); g.appendChild(sel); box.appendChild(g);
       const st = STAGES_BY_ID[PIPE.extractor.stageId];
       box.appendChild(el("div", "muted", st.oracle ? "FREE · hypothetical, contributes no compute"
       : `${st.device.toUpperCase()} · ${st.throughput} ${st.device === "tpu" ? "docs/chip/s" : "docs/s/core"}` + (st.throughput_assumed ? " ⚠ provisional" : "")));
+      box.appendChild(el("div", "muted", "required — every pipeline extracts exactly once. HTML classifiers "
+        + "run before it; TEXT classifiers read its output and run after."));
       box.appendChild(el("div", "muted", st.throughput_source || ""));
       return;
     }
@@ -254,9 +350,28 @@
     }
     // mode
     g.appendChild(el("label", null, "mode"));
-    const modeSel = el("select"); ["threshold", "recall"].forEach((mo) => { const o = el("option", null, mo); o.value = mo; if (f.mode === mo) o.selected = true; modeSel.appendChild(o); });
-    modeSel.onchange = () => { f.mode = modeSel.value; render(); }; g.appendChild(modeSel);
-    if (f.mode === "threshold") {
+    const modeSel = el("select");
+    [["threshold", "threshold"], ["recall", "recall"], ["band", "band (early exit)"]].forEach(([v, lbl]) => { const o = el("option", null, lbl); o.value = v; if (f.mode === v) o.selected = true; modeSel.appendChild(o); });
+    modeSel.onchange = () => {
+      f.mode = modeSel.value;
+      // Seed a sane band around the current threshold the first time early exit is selected.
+      if (f.mode === "band" && (f.hi == null || f.lo == null)) { f.hi = Math.min(0.95, (+f.threshold) + 0.25); f.lo = Math.max(0.02, (+f.threshold) - 0.25); }
+      render();
+    };
+    g.appendChild(modeSel);
+    if (f.mode === "band") {
+      for (const [field, label, help] of [["hi", "keep at/above", "docs at or above this are kept outright and skip every later stage"],
+                                          ["lo", "drop below", "docs below this are dropped here"]]) {
+        const lab = el("label", null, label); lab.title = help; g.appendChild(lab);
+        const inp = el("input"); inp.type = "number"; inp.step = 0.01; inp.min = 0; inp.max = 1; inp.value = (+f[field]).toFixed(3);
+        const apply = (imm) => { if (inp.value === "" || isNaN(+inp.value)) return; f[field] = +inp.value; imm ? render() : debouncedRender(); };
+        inp.oninput = () => apply(false); inp.onchange = () => apply(true);
+        g.appendChild(inp);
+      }
+    }
+    if (f.mode === "band") {
+      // no single threshold in band mode: the two edges above are the controls
+    } else if (f.mode === "threshold") {
       g.appendChild(el("label", null, "threshold"));
       const wrap = el("div", "thr-wrap");
       const lo = st.direction === "low_useful" ? -8 : 0, hi = st.direction === "low_useful" ? 2 : 1;
@@ -285,19 +400,31 @@
     box.appendChild(g);
     box.appendChild(el("div", "muted", st.oracle ? "FREE · hypothetical: passes exactly the target's keeps, no compute"
       : `${st.throughput} ${st.device === "tpu" ? "docs/chip/s" : "docs/s/core"}` + (st.throughput_assumed ? " ⚠ assumed" : "") + ` · ${st.direction}`));
+    if (st.requires_text) {
+      const d = el("div", "muted", `📄 reads ${textSourceLabel(st)} text, so it runs after extraction — the extractor's own cost is on its card`);
+      d.style.color = "var(--accent, #7cc)";
+      box.appendChild(d);
+    }
     box.appendChild(el("div", "muted", st.throughput_source || ""));
     const bb = el("button", null, "⊙ show borderline docs"); bb.style.marginTop = "8px";
     bb.onclick = () => showBorderline(idx); box.appendChild(bb);
   }
 
   const FAM_LABEL = { fasttext: "fastText (high_quality)", fasttext_lpv11: "fastText (lpv11)",
-                      modernbert: "ModernBERT", oracle: "Oracle (hypothetical)", pooled: "Pooled transformer", llm: "LLM logprob" };
+                      modernbert: "ModernBERT", oracle: "Oracle (hypothetical)", pooled: "Pooled transformer", llm: "LLM logprob",
+                      arch_sweep: "Arch sweep 1M (HTML) — speed/accuracy curve",
+                      text: "📄 TEXT — runs AFTER extraction", fasttext_text: "📄 fastText TEXT — runs AFTER extraction" };
   function renderPalette() {
     const p = $("palette"); p.innerHTML = "<span class='muted'>add filter:</span>";
     const sel = el("select");
     sel.appendChild(el("option", null, "＋ choose a filter to add…"));
+    // A TEXT classifier only has scores for the extractor it was trained on, so offer it only when THAT
+    // extractor is selected; picking a different one would be a train/serve mismatch, not a knob.
+    const extKey = PIPE.extractor.stageId.replace(/^extract_/, "");
     const fams = {};
-    REG.stages.filter((s) => s.kind === "classifier").forEach((s) => { (fams[s.family] = fams[s.family] || []).push(s); });
+    REG.stages
+      .filter((s) => s.kind === "classifier" && (!s.requires_text || s.requires_text === extKey))
+      .forEach((s) => { (fams[s.family] = fams[s.family] || []).push(s); });
     for (const fam of Object.keys(fams)) {
       const og = document.createElement("optgroup"); og.label = FAM_LABEL[fam] || fam;
       fams[fam].forEach((s) => { const o = el("option", null, s.label); o.value = s.id; og.appendChild(o); });
@@ -306,7 +433,7 @@
     sel.onchange = () => {
       const s = STAGES_BY_ID[sel.value]; if (!s) return;
       PIPE.filters.push({ stageId: s.id, enabled: true, mode: "threshold", threshold: defaultThreshold(s), recall: 0.97 });
-      SELECTED = "f" + (PIPE.filters.length - 1); render();
+      SELECTED = "f" + (PIPE.filters.length - 1); render();  // it lands before/after the extractor by what it reads
     };
     p.appendChild(sel);
   }
@@ -320,13 +447,32 @@
     if (m) {
       try {
         const p = decodeCfg(m[1]);
-        if (p && p.filters && p.extractor && p.capacity) { PIPE = p; if (p.targetId) setTarget(p.targetId); }
+        if (p && p.filters && p.extractor && p.capacity) { PIPE = p; if (p.targetId) setTarget(p.targetId); normalizePipeline(); }
       } catch (e) {}
     }
   }
   const LS_KEY = "cascade_planner_configs";
   const savedConfigs = () => { try { return JSON.parse(localStorage.getItem(LS_KEY) || "{}"); } catch (e) { return {}; } };
   function flash(msg) { const f = $("flash"); if (f) { f.textContent = "  " + msg; setTimeout(() => { if ($("flash")) $("flash").textContent = ""; }, 1500); } }
+  // Adopt a pipeline from a file or the saved library: validate it, drop anything this build cannot run,
+  // and refresh everything downstream — the palette's TEXT options depend on the extractor, so a plain
+  // render() is not enough. `flash` last: renderToolbar rebuilds the element it writes into.
+  function loadPipeline(p, source) {
+    if (!p || !Array.isArray(p.filters) || !p.extractor || !p.capacity) {
+      showPipelineError(new Error(`${source}: not a pipeline config (needs filters[], extractor, capacity)`)); return false;
+    }
+    if (!STAGES_BY_ID[p.extractor.stageId]) {
+      showPipelineError(new Error(`${source}: unknown extractor "${p.extractor.stageId}"`)); return false;
+    }
+    PIPE = p;
+    if (p.targetId) setTarget(p.targetId);
+    const dropped = normalizePipeline();
+    SELECTED = null;
+    renderPalette(); renderToolbar(); render();
+    flash(dropped ? `${source} — dropped ${dropped} stage${dropped > 1 ? "s" : ""} this build can't run` : source);
+    return true;
+  }
+
   function renderToolbar() {
     const t = $("toolbar"); t.innerHTML = "";
     const mk = (label, fn) => { const b = el("button", null, label); b.onclick = fn; return b; };
@@ -342,11 +488,35 @@
     if (Object.keys(cfgs).length) {
       const sel = el("select"); sel.appendChild(el("option", null, "load saved…"));
       Object.keys(cfgs).forEach((k) => { const o = el("option", null, k); o.value = k; sel.appendChild(o); });
-      sel.onchange = () => { if (cfgs[sel.value]) { PIPE = JSON.parse(JSON.stringify(cfgs[sel.value])); SELECTED = null; render(); } };
+      sel.onchange = () => { if (cfgs[sel.value]) loadPipeline(JSON.parse(JSON.stringify(cfgs[sel.value])), `loaded "${sel.value}"`); };
       t.appendChild(sel);
     }
     t.appendChild(mk("🎲 random survivors", showRandomSample));
     t.appendChild(mk("🎲 dropped good docs", showRandomLosses));
+    t.appendChild(mk("⬆ import", () => {
+      // The input MUST be in the document before .click(): Safari (and some Chrome setups) silently
+      // refuse to open the picker for a detached file input, which looks exactly like "import is broken".
+      const inp = document.createElement("input");
+      inp.type = "file"; inp.accept = "application/json,.json";
+      inp.style.position = "fixed"; inp.style.left = "-9999px";
+      document.body.appendChild(inp);
+      const cleanup = () => { if (inp.parentNode) inp.parentNode.removeChild(inp); };
+      inp.onchange = () => {
+        const file = inp.files && inp.files[0];
+        if (!file) { cleanup(); return; }
+        const rd = new FileReader();
+        rd.onerror = () => { showPipelineError(new Error(`could not read ${file.name}`)); cleanup(); };
+        rd.onload = () => {
+          cleanup();
+          let p;
+          try { p = JSON.parse(rd.result); }
+          catch (e) { showPipelineError(new Error(`${file.name} is not valid JSON: ${e.message}`)); return; }
+          if (loadPipeline(p, `imported ${file.name}`)) syncHash();  // shareable link for what was imported
+        };
+        rd.readAsText(file);
+      };
+      inp.click();
+    }));
     t.appendChild(mk("⬇ export", () => { const b = new Blob([JSON.stringify(PIPE, null, 2)], { type: "application/json" }); const a = document.createElement("a"); a.href = URL.createObjectURL(b); a.download = "pipeline_config.json"; a.click(); }));
     t.appendChild(el("span", "muted", "")).id = "flash";
   }
@@ -423,7 +593,7 @@
   }
   function showBorderline(idx) {
     $("borderline-panel").classList.remove("collapsed");
-    const r = LAST_R, f = PIPE.filters[idx], st = STAGES_BY_ID[f.stageId], sr = r.stages[idx];
+    const r = LAST_R, f = PIPE.filters[idx], st = STAGES_BY_ID[f.stageId], sr = rowFor(r, idx);
     if (sr.skipped) { $("borderline").innerHTML = "<span class='muted'>stage is disabled — enable it to inspect.</span>"; return; }
     const scores = MATRIX.columns[st.score_col], gcol = MATRIX.columns[TARGET.gold_col], sc = r.scale;
     const T = sr.threshold, vT = st.direction === "low_useful" ? -T : T;
@@ -457,12 +627,45 @@
     sampleNear(fpL, true, `⚠️ FP — junk LEAKING through (${TARGET.label} drops, this filter keeps)`);
   }
 
+  // Every stage's score for one doc, in execution order, with what each stage decided. Shown for ALL
+  // survivors (not just leaks): when a doc is kept you usually want to know WHICH stage kept it and how
+  // close the call was. An early-exit stage that accepts ends the chain, so later stages are marked
+  // skipped — they genuinely never ran on this document.
+  function scoresHtml(pos) {
+    const r = LAST_R; if (!r) return "";
+    const parts = [];
+    let accepted = false;
+    for (const row of rowsInOrder(r)) {
+      const f = PIPE.filters[row.filterIdx], st = STAGES_BY_ID[f.stageId];
+      const col = MATRIX.columns[st.score_col];
+      const raw = col ? col[pos] : null;
+      const sc = raw == null ? "null" : (+raw).toFixed(3);
+      if (accepted) { parts.push(`<span class="muted">${st.label} ${sc} <i>(never ran)</i></span>`); continue; }
+      if (!f.enabled) { parts.push(`<span class="muted">${st.label} ${sc} (off)</span>`); continue; }
+      const v = Engine.vOf(raw, st.direction);
+      if (f.mode === "band") {
+        const vHi = st.direction === "low_useful" ? -f.hi : f.hi;
+        const vLo = st.direction === "low_useful" ? -f.lo : f.lo;
+        if (v >= vHi) { accepted = true; parts.push(`<b>${st.label}</b> ${sc} ≥ ${(+f.hi).toFixed(3)} → <span style="color:var(--green)">kept here</span>`); }
+        else if (v < vLo) parts.push(`<b>${st.label}</b> ${sc} &lt; ${(+f.lo).toFixed(3)} → <span style="color:var(--red)">dropped</span>`);
+        else parts.push(`<b>${st.label}</b> ${sc} → in band, passed on`);
+      } else {
+        const T = row.threshold, vT = st.direction === "low_useful" ? -T : T;
+        const pass = v >= vT;
+        parts.push(`<b>${st.label}</b> ${sc} ${pass ? "≥" : "&lt;"} ${T == null ? "—" : (+T).toFixed(3)} → ${pass ? "pass" : `<span style="color:var(--red)">drop</span>`}`);
+      }
+    }
+    if (!parts.length) return "";
+    return `<div class="muted" style="margin:4px 0;border-top:1px dashed var(--line);padding-top:4px">${parts.join(" &nbsp;·&nbsp; ")}</div>`;
+  }
+
   // For a doc that survived, show — per enabled filter — the threshold move that WOULD have dropped it.
   // (It passed every filter, so each is on the keep side; tightening any one past its score drops it.)
   function catchItHtml(pos) {
-    const rows = PIPE.filters.map((f, i) => {
+    const rows = rowsInOrder(LAST_R).map((row) => {
+      const f = PIPE.filters[row.filterIdx];
       if (!f.enabled) return null;
-      const st = STAGES_BY_ID[f.stageId], score = MATRIX.columns[st.score_col][pos], T = LAST_R.stages[i].threshold;
+      const st = STAGES_BY_ID[f.stageId], score = MATRIX.columns[st.score_col][pos], T = row.threshold;
       const now = T == null || !isFinite(T) ? "—" : (+T).toFixed(3);
       let how;
       if (score == null) how = `<span class="muted">can't drop here (null logprob = model very confident useful)</span>`;
@@ -496,7 +699,7 @@
         ? `<span class="badge" style="background:rgba(78,204,163,.18);color:var(--green);border:1px solid var(--green)">${TARGET.label} keeps ✓</span>`
         : `<span class="badge" style="background:rgba(240,106,106,.18);color:var(--red);border:1px solid var(--red)">${TARGET.label} would drop ✗</span>`;
       const d = el("div", "panel"); d.style.margin = "6px 0"; d.style.borderLeft = "3px solid " + (gold ? "var(--green)" : "var(--red)");
-      d.innerHTML = `${badge} <span class="muted">${id}</span>` + (gold ? "" : catchItHtml(pos)) + `<div class="muted" id="surv-${pos}">loading doc…</div>`;
+      d.innerHTML = `${badge} <span class="muted">${id}</span>` + scoresHtml(pos) + (gold ? "" : catchItHtml(pos)) + `<div class="muted" id="surv-${pos}">loading doc…</div>`;
       box.appendChild(d);
       fetchDoc(pos, id).then((doc) => {
         const t = $("surv-" + pos); if (!t) return;
@@ -532,15 +735,22 @@
   }
 
   // ---- view docs the pipeline DROPS that the target keeps (recall cost) ----
+  // What killed this doc, walking the pipeline in EXECUTION order: HTML filters, then the extractor's
+  // own abstain, then TEXT filters. Returns null only if nothing dropped it (it survived).
   function deathStage(pos, r) {
-    // first enabled filter that fails this doc (it passed everything before it).
-    for (let i = 0; i < PIPE.filters.length; i++) {
-      const f = PIPE.filters[i]; if (!f.enabled) continue;
-      const st = STAGES_BY_ID[f.stageId], score = MATRIX.columns[st.score_col][pos], T = r.stages[i].threshold;
+    const failedAt = (row) => {
+      const f = PIPE.filters[row.filterIdx];
+      if (!f.enabled) return null;
+      const st = STAGES_BY_ID[f.stageId], score = MATRIX.columns[st.score_col][pos], T = row.threshold;
       const vT = st.direction === "low_useful" ? -T : T;
-      if (Engine.vOf(score, st.direction) < vT) return { st, score, T };
-    }
-    return null; // passed all filters → the terminal extractor abstained
+      return Engine.vOf(score, st.direction) < vT ? { st, score, T } : null;
+    };
+    for (const row of r.stages) { const d = failedAt(row); if (d) return d; }
+    const ext = STAGES_BY_ID[r.extractor.id];
+    const keepCol = ext.oracle ? TARGET.gold_col : ext.label_col ? ext.label_col + "_useful" : null;
+    if (keepCol && MATRIX.columns[keepCol][pos] !== 1) return { st: ext, abstained: true };
+    for (const row of r.postStages) { const d = failedAt(row); if (d) return d; }
+    return null;
   }
   function showRandomLosses() {
     const r = LAST_R; if (!r || !r.finalKept) return;
@@ -557,15 +767,17 @@
       const id = ids[pos], death = deathStage(pos, r);
       const d = el("div", "panel"); d.style.margin = "6px 0"; d.style.borderLeft = "3px solid var(--red)";
       let why;
-      if (death) {
+      if (death && death.abstained) {
+        why = `<div class="muted" style="margin:4px 0">reached <b>${death.st.label}</b>, which abstained on it — no threshold recovers this one; only a different extractor would.</div>`;
+      } else if (death) {
         const snow = death.T == null || !isFinite(death.T) ? "—" : (+death.T).toFixed(3);
         const sc = death.score == null ? "null" : (+death.score).toFixed(3);
         const move = death.st.direction === "low_useful" ? `raise threshold above <b>${sc}</b>` : `lower threshold below <b>${sc}</b>`;
         why = `<div style="margin:4px 0;border-top:1px dashed var(--line);padding-top:4px"><span style="color:var(--amber)">dropped at <b>${death.st.label}</b> (score ${sc} vs thr ${snow}) — to recover: ${move} <span class="muted">(may still be dropped by a later filter)</span></span></div>`;
       } else {
-        why = `<div class="muted" style="margin:4px 0">passed all filters; the extractor (${r.extractor.label}) abstained on it.</div>`;
+        why = `<div class="muted" style="margin:4px 0">nothing in this pipeline dropped it.</div>`;
       }
-      d.innerHTML = `<span class="badge" style="background:rgba(240,106,106,.18);color:var(--red);border:1px solid var(--red)">FN · ${TARGET.label} keeps, dropped</span> <span class="muted">${id}</span>${why}<div class="muted" id="loss-${pos}">loading doc…</div>`;
+      d.innerHTML = `<span class="badge" style="background:rgba(240,106,106,.18);color:var(--red);border:1px solid var(--red)">FN · ${TARGET.label} keeps, dropped</span> <span class="muted">${id}</span>${scoresHtml(pos)}${why}<div class="muted" id="loss-${pos}">loading doc…</div>`;
       box.appendChild(d);
       fetchDoc(pos, id).then((doc) => {
         const t = $("loss-" + pos); if (!t) return;

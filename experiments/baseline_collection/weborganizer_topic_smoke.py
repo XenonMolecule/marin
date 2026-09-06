@@ -46,6 +46,8 @@ from dataclasses import dataclass
 
 import fsspec
 import numpy as np
+import pyarrow as pa
+import pyarrow.parquet as pq
 import torch
 from transformers import AutoConfig, AutoModelForSequenceClassification, AutoTokenizer
 
@@ -67,6 +69,8 @@ EXAMPLE_MIN_PROB = 0.5  # sample only above this predicted probability (stay out
 # and the manifest index beside it. Everything is in us-central1 by construction.
 LLM_ARCHIVE = "gs://marin-us-central1/documents/baseline_llm_extraction_consolidated/by_region"
 LLM_RESOLVED = "gs://marin-us-central1/documents/baseline_llm_extraction_consolidated/resolved"
+# Group manifest of the llm_pipeline_v1_1 10k run's us-east5 batches at 10,363 completed WARCs (2026-09-03).
+LPV11_TOPIC_MANIFESTS = "gs://marin-us-east5/metadata/lpv1_1_topic_sample"
 
 
 class Format(enum.StrEnum):
@@ -90,6 +94,10 @@ class Corpus:
     # for `low_quality`, which predates the registry and writes to the UNPREFIXED legacy path.
     manifest: str | None = None
     spec: str | None = None
+    # An UN-consolidated extraction run: a group manifest (rows {warc, region, shards}) written by
+    # `grid_projection_manifest.py --only-region`, whose fully-qualified shard URLs all live in
+    # `region`. `path` is informational.
+    group_manifest: str | None = None
 
 
 # The 10,364-WARC (`dclm_400m_1x_10k`) pool at its DOCUMENT layer — all URL-bearing, verified 2026-07-17.
@@ -150,6 +158,19 @@ CORPORA: dict[str, Corpus] = {
         manifest=f"{LLM_RESOLVED}/resolved.jsonl.gz",
         spec=None,
     ),
+    # --- llm_pipeline_v1_1 over the 10k pool (the Qwen3-8B twin pipeline), NOT consolidated --------
+    # The run's raw output is `data-{warc_hash}/batch_NNNN.jsonl.gz` across five regional buckets
+    # (steal mode splits a WARC's batches across regions), and the 2026-08-12 consolidated archive
+    # covers only 6,943 of the 10,363 completed WARCs — and only partly. Which fleet claimed a WARC
+    # is unrelated to its content, so the us-east5 share (152,963 batches of 2,844 completed WARCs,
+    # ~7M docs, listed 2026-09-03) is a random subsample of the run and is read natively there.
+    # Pre-dedup, URL native, kept docs only.
+    "llm_pipeline_v1_1_10k": Corpus(
+        "gs://marin-us-east5/documents/baseline_llm_extraction/llm_pipeline_v1_1",
+        "us-east5",
+        Format.JSONL_GZ,
+        group_manifest=f"{LPV11_TOPIC_MANIFESTS}/manifest_us-east5.jsonl",
+    ),
 }
 
 
@@ -171,7 +192,6 @@ def _iter_jsonl_gz(path: str, text_field: str, url_field: str | None) -> Iterato
 
 
 def _iter_parquet(path: str, text_field: str, url_field: str | None) -> Iterator[Doc]:
-    import pyarrow.parquet as pq
 
     columns = [text_field] + ([url_field] if url_field else [])
     with fsspec.open(path, "rb") as fh:
@@ -205,8 +225,34 @@ def load_model(model_name: str):
     config.unpad_inputs = False
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     model = AutoModelForSequenceClassification.from_pretrained(model_name, config=config, trust_remote_code=True)
+    _materialize_rope_buffers(model.new.embeddings, config.max_position_embeddings)
     model.eval()
     return config, tokenizer, model
+
+
+def _materialize_rope_buffers(embeddings, max_position_embeddings: int) -> None:
+    """Rebuild the non-persistent buffers the remote code computes in ``__init__``.
+
+    transformers >= 5 initializes remote-code modules on the meta device and only restores tensors
+    that exist in the checkpoint, so ``position_ids``, ``inv_freq``, ``cos_cached`` and ``sin_cached``
+    come back uninitialized (zeros or garbage). Zero rope silently yields finite-but-wrong logits;
+    garbage yields NaN — the 2026-08-16 lpv11 topic run produced both. Recompute them exactly as
+    ``__init__`` would, then refuse to continue if they still look degenerate.
+    """
+    embeddings.register_buffer("position_ids", torch.arange(max_position_embeddings), persistent=False)
+    rotary = embeddings.rotary_emb
+    inv_freq = 1.0 / (rotary.base ** (torch.arange(0, rotary.dim, 2).float() / rotary.dim))
+    rotary.register_buffer("inv_freq", inv_freq, persistent=False)
+    # NTKScalingRotaryEmbedding re-derives inv_freq for seq_len > max_position_embeddings from
+    # (base, scaling_factor, dim) alone, so this reproduces the NTK cache; the plain class reuses
+    # the inv_freq set above.
+    rotary._set_cos_sin_cache(int(rotary.max_seq_len_cached), rotary.inv_freq.device, torch.float32)
+    for name in ("inv_freq", "cos_cached", "sin_cached"):
+        buf = getattr(rotary, name)
+        if not torch.isfinite(buf).all() or float(buf.abs().max()) == 0.0:
+            raise RuntimeError(f"rope buffer {name} is degenerate after materialization")
+    if int(embeddings.position_ids[-1]) != max_position_embeddings - 1:
+        raise RuntimeError("position_ids buffer is not arange after materialization")
 
 
 def _render(docs: list[Doc], use_url: bool) -> list[str]:
@@ -325,8 +371,6 @@ def run_probe(
     examples_per_label: int,
     example_min_prob: float,
 ) -> None:
-    import pyarrow as pa
-    import pyarrow.parquet as pq
 
     corpus = CORPORA[dataset]
     if use_url and corpus.url_field is None:

@@ -110,14 +110,14 @@ def _score_shards(dataset: str, source: str, model_dir: str):
                 buckets = np.array([], dtype=np.int8)
             grid_label.write_quality_shard(dataset, path, docs, scores, buckets)
             write_done(dataset, Stage.QUALITY, path, len(docs))
-            # Local zephyr exposes counters.increment(name, value); upstream's
-            # counters.pipeline.update_counter does not exist here. Getting this
+            # Post-merge zephyr exposes counters.pipeline.update_counter; the older
+            # counters.increment this used is gone. Getting this
             # wrong raised AttributeError *after* each shard's outputs and done
             # marker were already written, so the data still completed while every
             # worker died and retried — correct results, wasted compute, and a
             # coordinator that reported failure on a finished corpus.
-            counters.increment("grid_quality/shards", 1)
-            counters.increment("grid_quality/docs", len(docs))
+            counters.pipeline.update_counter("grid_quality/shards", 1)
+            counters.pipeline.update_counter("grid_quality/docs", len(docs))
             yield {"shard": output_stem(path), "n_docs": len(docs)}
 
     return score_shard

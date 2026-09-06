@@ -1,3 +1,6 @@
+# Copyright The Marin Authors
+# SPDX-License-Identifier: Apache-2.0
+
 """Preshard cascade-survivor parts into ``{prefix}_{rank:02d}.txt.gz`` fastText-line shards
 for ModernBERT-on-survivors training. MEMORY-BOUNDED (O(1)): single streaming pass, each kept
 line is assigned a random shard and written straight to a GCS gzip stream (no in-RAM list, no
@@ -8,6 +11,7 @@ prefix of the concatenated glob) is a uniform random sample of the parts — the
 dataset size via --train-rows and shuffles. To keep ALL survivors, set ``--n`` above the part total
 (p_keep clamps to 1.0 and the kept>=N stop never fires).
 """
+
 import argparse
 import contextlib
 import random

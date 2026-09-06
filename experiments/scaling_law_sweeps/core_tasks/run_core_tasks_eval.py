@@ -102,8 +102,12 @@ def _prepare_offline_dataset_cache(gcs_cache: str, local_dir: str = "/tmp/core_t
 def main():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     p = argparse.ArgumentParser()
-    p.add_argument("--hf-checkpoint", required=True, help="HF checkpoint dir (gs://...); contains config.json + safetensors.")
-    p.add_argument("--output-dir", required=True, help="GCS dir to write results.json into (the levanter evaluator's output_path).")
+    p.add_argument(
+        "--hf-checkpoint", required=True, help="HF checkpoint dir (gs://...); contains config.json + safetensors."
+    )
+    p.add_argument(
+        "--output-dir", required=True, help="GCS dir to write results.json into (the levanter evaluator's output_path)."
+    )
     p.add_argument("--run-name", default=None, help="Run name for wandb / imputed model name.")
     p.add_argument(
         "--dataset-cache-gcs",
@@ -138,8 +142,10 @@ def main():
     checkpoint = args.hf_checkpoint.rstrip("/")
     logger.info("CORE_TASKS eval: checkpoint=%s tasks=%d", checkpoint, len(CORE_TASKS_RUNNABLE))
 
-    hf_env = {k: os.environ.get(k) for k in
-              ("TRANSFORMERS_OFFLINE", "HF_HUB_OFFLINE", "HF_DATASETS_OFFLINE", "HF_DATASETS_CACHE", "HF_TOKEN")}
+    hf_env = {
+        k: os.environ.get(k)
+        for k in ("TRANSFORMERS_OFFLINE", "HF_HUB_OFFLINE", "HF_DATASETS_OFFLINE", "HF_DATASETS_CACHE", "HF_TOKEN")
+    }
     hf_env["HF_TOKEN"] = "set" if hf_env["HF_TOKEN"] else None
     logger.info("HF offline env: %s", hf_env)
 

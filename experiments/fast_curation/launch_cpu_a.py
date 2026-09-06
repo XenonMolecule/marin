@@ -58,7 +58,8 @@ def build_command(args: argparse.Namespace, seed: int) -> list[str]:
         "HF_TOKEN",
         HF_TOKEN,
     ]
-    for extra in CPU_A_EXTRAS:
+    extras = [*CPU_A_EXTRAS, "gigatoken"] if args.tokenizer_impl == "gigatoken" else CPU_A_EXTRAS
+    for extra in extras:
         cmd += ["--extra", extra]
     cmd += [
         "--",
@@ -84,6 +85,14 @@ def build_command(args: argparse.Namespace, seed: int) -> list[str]:
         cmd += ["--start", str(args.start)]
     if args.rescue:
         cmd += ["--rescue", "--rescue-stale-minutes", str(args.rescue_stale_minutes)]
+    # TEXT-line workers extract in Phase A; point them at a same-region artifact mirror and size
+    # the extraction pool to the worker's cores (these flags are ignored by html-line specs).
+    if args.resiliparse_artifact:
+        cmd += ["--resiliparse-artifact", args.resiliparse_artifact]
+    cmd += ["--extract-procs", str(args.extract_procs)]
+    cmd += ["--tokenizer-impl", args.tokenizer_impl]
+    if args.max_shard is not None:
+        cmd += ["--max-shard", str(args.max_shard)]
     return cmd
 
 
@@ -110,8 +119,25 @@ def main() -> None:
     ap.add_argument("--max-idle-passes", type=int, default=5)
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--start", type=int, default=0)
-    ap.add_argument("--rescue", action="store_true", help="Rescue mode: re-decode B-stuck WARCs into this region from S3.")
+    ap.add_argument(
+        "--rescue", action="store_true", help="Rescue mode: re-decode B-stuck WARCs into this region from S3."
+    )
     ap.add_argument("--rescue-stale-minutes", type=float, default=20.0)
+    ap.add_argument(
+        "--resiliparse-artifact",
+        default=None,
+        help="TEXT line: prebuilt resiliparse-rs artifact prefix (same-region mirror outside us-east5). "
+        "Default: the worker's canonical us-east5 artifact.",
+    )
+    ap.add_argument("--extract-procs", type=int, default=4, help="TEXT line: extraction ProcessPool size.")
+    ap.add_argument(
+        "--tokenizer-impl",
+        default="hf",
+        choices=["hf", "gigatoken"],
+        help="TEXT line tokenizer implementation (ids byte-identical; gigatoken adds its extra and "
+        "parity-asserts at worker startup). Launch part of a fleet with each to A/B tokenize_s.",
+    )
+    ap.add_argument("--max-shard", type=int, default=None, help="V3 ladder cap (shards < N).")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 

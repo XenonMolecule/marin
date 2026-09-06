@@ -1,8 +1,15 @@
+# Copyright The Marin Authors
+# SPDX-License-Identifier: Apache-2.0
+
 """Phase 3: score the 7000-doc frozen test with the stage-2 survivor fastText,
 in the SAME order as modernbert_tpu_smoke.read_test (so it aligns to
 fasttext_probs_on_bert_test.json and mb-1M-final-e5w4.json). Writes {s2_probs,labels}."""
-import json, os, random, sys
-import fsspec, fasttext
+
+import json
+import random
+
+import fasttext
+import fsspec
 
 LABEL_USEFUL = "__label__useful"
 S2_MODEL = "gs://marin-us-central2/classifiers/useful_fasttext/cascade_stage2_survivors/model.bin"

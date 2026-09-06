@@ -1,3 +1,6 @@
+# Copyright The Marin Authors
+# SPDX-License-Identifier: Apache-2.0
+
 """Assemble the cascade chunk parts into final train/dev/test jsonl.gz, in-region.
 
 The cascade jobs write per-(WARC, rank, chunk) parts under {out_root}/{split}/. This
@@ -10,6 +13,7 @@ concatenates them into one file per split under {out_root}/final/:
 Runs as a us-central2 CPU job so all reads/writes stay in-region (no egress). Prints row
 counts and the source (useful / no_useful) breakdown per split — the BERT-filter distribution.
 """
+
 import argparse
 import gzip
 import io

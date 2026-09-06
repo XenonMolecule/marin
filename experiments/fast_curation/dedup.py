@@ -1,25 +1,30 @@
 # Copyright The Marin Authors
 # SPDX-License-Identifier: Apache-2.0
 
-"""Marin fuzzy dedup over the fast-curation KEPT corpus, PRESERVING ``modernbert_prob``.
+"""Marin fuzzy dedup over the fast-curation KEPT corpus, PRESERVING every provenance column.
 
 Dedup stage of the downstream curation path. It mirrors the step DAG of ``dedup_extracted.py`` (the
 canonical reference) and reuses the SAME shared ``lib/marin`` engine (``normalize_step`` +
 ``compute_minhash_attrs_step`` + ``compute_fuzzy_dups_attrs_step``) with IDENTICAL params (286 perms
 / 26 bands / 5-char ngram / seed 42 / Jaccard ~0.75 — same as every other curation method).
 
-Two differences from the reference, both to keep the per-doc ModernBERT score alive so the corpus can
-later be re-thresholded into quality bands (keep top X% by score):
-  1. Reads the CONSOLIDATED ``kept_text/`` parquet (text + ``modernbert_prob``), not ``kept/`` (which
-     in any single region holds only that region's WARCs).
-  2. The reshape and apply steps carry ``modernbert_prob`` through. ``normalize_to_parquet`` keeps
-     non id/text columns as passthrough, so the score survives normalize -> apply untouched.
+Two differences from the reference:
+  1. Reads the CONSOLIDATED ``kept_text/`` parquet, not ``kept/`` (which in any single region holds
+     only that region's WARCs).
+  2. The reshape and apply steps carry EVERY non-text column of ``kept_text`` through — ``url``,
+     ``doc_id``, ``warc_hash``, ``snapshot``, ``fasttext_score``, ``modernbert_prob`` — via
+     :func:`_carry_provenance`. ``normalize_to_parquet`` keeps non id/text columns as passthrough,
+     so they survive normalize -> apply untouched. Earlier versions projected to
+     ``{text, modernbert_prob}``, which made every deduped tree URL-less and forced a hash-join
+     recovery (``recover_lpv11_urls.py``) before WebOrganizer could label it. ``modernbert_prob`` is
+     what lets the corpus be re-thresholded into quality bands; ``url`` is what WebOrganizer needs;
+     ``warc_hash`` is what an N-of-pool subset needs.
 
 Stages::
 
-    reshape (kept_text/*.parquet -> {text, modernbert_prob} 200-shard tree)
-      -> normalize (parquet + exact-doc dedup; modernbert_prob passthrough)
-        -> minhash -> fuzzy CC -> apply (drop non-canonical near-dups, re-emit {text, modernbert_prob})
+    reshape (kept_text/*.parquet -> {text, <provenance>} 200-shard tree)
+      -> normalize (parquet + exact-doc dedup; provenance passthrough)
+        -> minhash -> fuzzy CC -> apply (drop non-canonical near-dups, re-emit {text, <provenance>})
           -> deduped/data-*.jsonl.gz   <- decon (preserves columns) then the percentile split read here
 
 Output::
@@ -47,7 +52,7 @@ from collections.abc import Iterator
 import fsspec
 from fray.types import ResourceConfig
 from marin.datakit.normalize import NormalizedData, normalize_step
-from marin.execution.artifact import Artifact
+from marin.execution.artifact import read_artifact
 from marin.execution.step_runner import StepRunner
 from marin.execution.step_spec import StepSpec
 from marin.processing.classification.deduplication.fuzzy_dups import (
@@ -67,8 +72,10 @@ logger = logging.getLogger(__name__)
 
 _REGION_TO_BUCKET: dict[str, str] = {
     "us-east5": "gs://marin-us-east5",
+    "us-east1": "gs://marin-us-east1",
     "us-central1": "gs://marin-us-central1",
     "us-central2": "gs://marin-us-central2",
+    "us-west4": "gs://marin-us-west4",
     "eu-west4": "gs://marin-eu-west4",
 }
 
@@ -101,24 +108,38 @@ def _kept_text_shard_paths(spec_id: str, region: str, warc_hashes: set[str] | No
     return kept
 
 
+# datakit injects these onto the normalized parquet (``id`` = content hash; ``source_id`` = original
+# id when an ``id_field`` was present). Neither is provenance, so they must not leak into the output.
+_DATAKIT_INTERNAL_FIELDS = ("id", "source_id")
+
+
+def _carry_provenance(record: dict) -> dict:
+    """Project ``record`` to ``{text, <every other column>}`` minus datakit-internal ids.
+
+    ``modernbert_prob`` is coerced to float so the reshape and apply outputs agree on its type
+    regardless of how the source parquet stored it. Everything else is carried verbatim.
+    """
+    out = {k: v for k, v in record.items() if k not in _DATAKIT_INTERNAL_FIELDS}
+    out["modernbert_prob"] = float(record["modernbert_prob"])
+    return out
+
+
 def _reshape_records(path: str) -> Iterator[dict]:
-    """Yield ``{text, modernbert_prob}`` for one kept_text PARQUET shard (skip empty-text rows)."""
+    """Yield ``{text, <provenance>}`` for one kept_text PARQUET shard (skip empty-text rows)."""
     for record in load_parquet(path):
-        text = record.get("text")
-        if not text:
+        if not record.get("text"):
             continue
-        yield {"text": text, "modernbert_prob": float(record["modernbert_prob"])}
+        yield _carry_provenance(record)
 
 
 def _reshape_bucket(bucket: list[str]) -> Iterator[dict]:
-    """Yield ``{text, modernbert_prob}`` for every kept_text shard in one output shard's bucket."""
+    """Yield ``{text, <provenance>}`` for every kept_text shard in one output shard's bucket."""
     for path in bucket:
         yield from _reshape_records(path)
 
 
-def _reshape(files: list[str], output_path: str) -> dict:
-    logger.info("Reshape input: %d kept_text parquet shards", len(files))
-    n_out = NUM_RESHAPE_SHARDS
+def _reshape(files: list[str], output_path: str, n_out: int = NUM_RESHAPE_SHARDS) -> dict:
+    logger.info("Reshape input: %d kept_text parquet shards -> %d output shards", len(files), n_out)
     # Per-shard checkpointing: pre-bucket inputs by output shard (round-robin over the sorted
     # kept_text ordering) so each Zephyr task reads its own bucket and writes exactly one output
     # shard via write_jsonl(skip_existing=True). Each shard is durable in GCS the moment its task
@@ -145,9 +166,11 @@ def _reshape(files: list[str], output_path: str) -> dict:
 
 def _apply_fuzzy_dups(normalize_step_obj: StepSpec, fuzzy_step_obj: StepSpec, output_path: str) -> dict:
     """Join NormalizedData with fuzzy markers, drop non-canonical near-dups, re-emit
-    ``{text, modernbert_prob}`` (the score-preserving change vs dedup_extracted.py)."""
-    norm = Artifact.load(normalize_step_obj, NormalizedData)
-    fuzzy = Artifact.load(fuzzy_step_obj, FuzzyDupsAttrData)
+    ``{text, <provenance>}`` (every passthrough column of the normalized parquet)."""
+    # Post-merge artifact API: the typed payload is read off the step's record via read_artifact
+    # (Artifact.load no longer exists).
+    norm = read_artifact(normalize_step_obj.output_path, NormalizedData)
+    fuzzy = read_artifact(fuzzy_step_obj.output_path, FuzzyDupsAttrData)
 
     if len(fuzzy.sources) != 1:
         raise RuntimeError(f"expected 1 source in FuzzyDupsAttrData, got {len(fuzzy.sources)}")
@@ -165,23 +188,23 @@ def _apply_fuzzy_dups(normalize_step_obj: StepSpec, fuzzy_step_obj: StepSpec, ou
     logger.info("apply: %d source shards under %s, joining attrs under %s", len(shard_pairs), main_dir, attr_dir)
 
     def _process_one(item: dict) -> Iterator[dict]:
+        # Post-merge attr schema is FLAT: {id, dup_cluster_id, is_cluster_canonical} — one row per
+        # doc that is in a dup cluster. The old nested r["attributes"] form read as {} on every row
+        # here, which silently marked every doc canonical (dropped=0 across the whole corpus, no
+        # error) before this was caught in the apply logs. No FileNotFoundError guard: the fuzzy
+        # step co-partitions attrs 1:1 with the normalize shards, so a missing attr shard is
+        # corruption and must raise, not quietly dedup nothing.
         non_canonical_ids: set[str] = set()
-        try:
-            for r in load_parquet(item["attr_shard"]):
-                attrs = r.get("attributes") or {}
-                if attrs.get("is_cluster_canonical") is False:
-                    non_canonical_ids.add(r["id"])
-        except FileNotFoundError:
-            pass
+        for r in load_parquet(item["attr_shard"]):
+            if r.get("is_cluster_canonical") is False:
+                non_canonical_ids.add(r["id"])
         kept = dropped = 0
         for r in load_parquet(item["source_shard"]):
             if r["id"] in non_canonical_ids:
                 dropped += 1
                 continue
             kept += 1
-            # PRESERVE the ModernBERT score (passthrough column on the normalized parquet) so the
-            # deduped corpus can be re-thresholded into quality bands downstream.
-            yield {"text": r["text"], "modernbert_prob": float(r["modernbert_prob"])}
+            yield _carry_provenance(r)
         logger.info("  %s: kept=%d dropped=%d", item["basename"], kept, dropped)
 
     pipeline = (
@@ -203,7 +226,11 @@ def _write_stats(stats_path: str, payload: dict) -> dict:
 
 
 def build_steps(
-    spec_id: str, region: str, target_partition_bytes: int, warc_hashes: set[str] | None = None
+    spec_id: str,
+    region: str,
+    target_partition_bytes: int,
+    warc_hashes: set[str] | None = None,
+    reshape_shards: int = NUM_RESHAPE_SHARDS,
 ) -> list[StepSpec]:
     kept_files = _kept_text_shard_paths(spec_id, region, warc_hashes)
     n = len(kept_files)
@@ -216,14 +243,18 @@ def build_steps(
         name="reshape",
         override_output_path=f"{bucket}/reshape",
         deps=[],
-        fn=lambda op: _reshape(kept_files, op),
+        fn=lambda op: _reshape(kept_files, op, reshape_shards),
     )
     normalize = normalize_step(
         name="normalize",
         download=reshape,
         text_field="text",
         target_partition_bytes=target_partition_bytes,
-        worker_resources=ResourceConfig(cpu=1, ram="14g", disk="10g"),
+        # 48g: normalize's reduce side sorts a full output partition and Zephyr's external sort
+        # spills to tmpfs (=RAM), so a worker pays ~2x the decompressed partition against its
+        # cgroup. 14g and 28g both OOM-killed at 154k-WARC scale (2026-09-04); pair this with
+        # --target-partition-bytes <= 256MB so partitions stay comfortably under the ceiling.
+        worker_resources=ResourceConfig(cpu=1, ram="48g", disk="10g"),
         override_output_path=f"{bucket}/normalize",
     )
     minhash = compute_minhash_attrs_step(
@@ -273,7 +304,9 @@ def build_steps(
                 "region": region,
                 "kept_text_glob": f"{get_spec(spec_id).namespace(_REGION_TO_BUCKET[region])}/kept_text/data-*.parquet",
                 "deduped_path": deduped.output_path,
-                "preserved_columns": ["text", "modernbert_prob"],
+                "preserved_columns": (
+                    "all kept_text columns (text, url, doc_id, warc_hash, snapshot, " "fasttext_score, modernbert_prob)"
+                ),
                 "fuzzy_params": {
                     "num_perms": 286,
                     "num_bands": 26,
@@ -295,6 +328,13 @@ def main() -> int:
     parser.add_argument("--region", default="us-east5", choices=sorted(_REGION_TO_BUCKET))
     parser.add_argument("--target-partition-bytes", type=int, default=64 * 1024 * 1024)
     parser.add_argument(
+        "--reshape-shards",
+        type=int,
+        default=NUM_RESHAPE_SHARDS,
+        help="Reshape output shard count. Scale with corpus size: 14g normalize workers OOM on "
+        "shards much beyond ~2GB gz (200 was sized for ~10k WARCs; a 154k-WARC corpus needs ~4000).",
+    )
+    parser.add_argument(
         "--warc-manifest",
         default=None,
         help="Optional WARC manifest; subset kept_text to these WARCs (sha256(line)[:12]) for an "
@@ -308,7 +348,7 @@ def main() -> int:
             lines = [ln.strip() for ln in f if ln.strip() and not ln.startswith("#")]
         warc_hashes = {hashlib.sha256(ln.encode()).hexdigest()[:12] for ln in lines}
         logger.info("Subsetting kept_text to %d WARCs from %s", len(warc_hashes), args.warc_manifest)
-    StepRunner().run(build_steps(args.spec, args.region, args.target_partition_bytes, warc_hashes))
+    StepRunner().run(build_steps(args.spec, args.region, args.target_partition_bytes, warc_hashes, args.reshape_shards))
     return 0
 
 

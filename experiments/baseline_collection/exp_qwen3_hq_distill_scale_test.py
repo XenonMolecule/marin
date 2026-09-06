@@ -1,3 +1,6 @@
+# Copyright The Marin Authors
+# SPDX-License-Identifier: Apache-2.0
+
 """Scale-test: distill the high_quality web extractor into Qwen3-1.7B / 4B on a
 ~35k-example proxy (1/10 epoch of bal350k, ~0.9B tokens) for fast scale-vs-data
 signal before committing the multi-day 350k runs.
@@ -26,17 +29,17 @@ from levanter.layers.rotary import DefaultRotaryEmbeddingsConfig
 from marin.execution.executor import executor_main
 from marin.processing.tokenize import lm_data_config
 
-from experiments.defaults import default_sft
-from experiments.qwen3 import qwen3_0_6b_hd128, qwen3_1_7b, qwen3_4b_hd128
-from experiments.simple_sft_config import SimpleSFTConfig
 from experiments.baseline_collection.exp_qwen3_0_6b_hq_distill_sft import (
+    _TOK,
     MANIFEST_TRAIN_TOTAL,
     MAX_EVAL_BATCHES,
     MAX_SEQ_LEN,
     QWEN3_TOKENIZER,
     SURVIVAL,
-    _TOK,
 )
+from experiments.defaults import default_sft
+from experiments.qwen3 import qwen3_0_6b_hd128, qwen3_1_7b, qwen3_4b_hd128
+from experiments.simple_sft_config import SimpleSFTConfig
 
 TAG = "bal350k"
 
@@ -104,8 +107,10 @@ def _build_step(model: str, lr: float, bs: int, tpu: str, proxy_frac: float, pre
     # redundant safety run on different hardware that must NOT collide with the primary).
     suffix = os.environ.get("SCALE_NAME_SUFFIX", "")
     name = f"qwen3-{model}-hq-distill-{TAG}-proxy{int(proxy_frac * 100)}pct-lr{lr_str}-bs{bs}{suffix}"
-    print(f"[scale-test] {name}: model={model} hf={hf_ckpt} lr={lr} bs={bs} "
-          f"steps={num_train_steps} (of {full_epoch_steps} full-epoch) tpu={tpu} preempt={preemptible}")
+    print(
+        f"[scale-test] {name}: model={model} hf={hf_ckpt} lr={lr} bs={bs} "
+        f"steps={num_train_steps} (of {full_epoch_steps} full-epoch) tpu={tpu} preempt={preemptible}"
+    )
     return default_sft(
         name=name,
         tokenized=data_config,

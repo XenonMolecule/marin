@@ -20,7 +20,6 @@ from dataclasses import dataclass, field, replace
 import haliax as hax
 import jax
 import jmp
-import levanter
 import levanter.tracker
 import numpy as np
 from fray.current_client import current_client
@@ -37,6 +36,7 @@ from levanter.trainer import TrainerConfig
 from levanter.utils.tree_utils import inference_mode
 from rigging.filesystem import open_url
 
+import levanter
 from marin.evaluation.model_loading import load_eval_model
 from marin.processing.tokenize.data_configs import with_pack
 from marin.training.run_environment import extras_for_resources

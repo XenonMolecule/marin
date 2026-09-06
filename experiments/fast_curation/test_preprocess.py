@@ -5,8 +5,12 @@
 
 from __future__ import annotations
 
+import pyarrow as pa
+import pytest
+
 from experiments.baseline_collection.fasttext_useful_classifier import to_fasttext_text
-from experiments.fast_curation import preprocess
+from experiments.fast_curation import batch_format, preprocess
+from experiments.fast_curation.spec import MODERNBERT_CLS_TOKEN_ID, MODERNBERT_SEP_TOKEN_ID
 
 SAMPLE_HTML = (
     "<html><head><title>T</title>"
@@ -106,3 +110,55 @@ def test_tokenize_trunc_batch_byte_identical_to_per_doc():
 def test_tokenize_trunc_batch_empty_list():
     tok = preprocess.load_tokenizer("answerdotai/ModernBERT-base")
     assert preprocess.tokenize_trunc_batch(tok, [], 128) == []
+
+
+def test_gigatoken_arrow_batch_matches_hf_exactly():
+    """The gigatoken columnar tokenize path must be byte-identical to the HF path — it exists only
+    as a faster implementation of the SAME function, and the cascade thresholds are calibrated on
+    these ids. Skipped when the optional gigatoken extra is not installed."""
+
+    pytest.importorskip("gigatoken")
+
+    tok = preprocess.load_tokenizer("answerdotai/ModernBERT-base")
+    gt = preprocess.load_gigatoken("answerdotai/ModernBERT-base")
+    special = {"cls_id": MODERNBERT_CLS_TOKEN_ID, "sep_id": MODERNBERT_SEP_TOKEN_ID}
+    texts = list(preprocess._PARITY_TEXTS)
+    for max_length in (128, 8192):
+        ref, ref_n = preprocess.tokenize_trunc_batch_arrow(tok, texts, max_length)
+        cand, cand_n = preprocess.tokenize_trunc_batch_gigatoken(gt, texts, max_length, **special)
+        assert cand.type == pa.list_(pa.int32())  # the exact parquet schema type, no cast at write
+        assert cand.to_pylist() == ref.to_pylist()
+        assert list(cand_n) == list(ref_n)
+    assert tok.cls_token_id == MODERNBERT_CLS_TOKEN_ID  # the constant really is this tokenizer's [CLS]
+    preprocess.assert_gigatoken_parity(tok, gt, 8192, **special)  # the worker-startup gate passes
+
+    # Wrong special tokens = divergent ids: the startup gate must refuse, not run "close enough".
+    with pytest.raises(RuntimeError, match="diverges"):
+        preprocess.assert_gigatoken_parity(tok, gt, 128, cls_id=MODERNBERT_SEP_TOKEN_ID, sep_id=MODERNBERT_SEP_TOKEN_ID)
+
+    # Empty batch: the columnar contract still yields typed, zero-length outputs.
+    empty_ids, empty_n = preprocess.tokenize_trunc_batch_gigatoken(gt, [], 128, **special)
+    assert len(empty_ids) == 0 and len(empty_n) == 0
+
+
+def test_truncate_ids_matches_short_context_tokenization():
+    """The TEXT line stores ONE tokenization at ``max_length`` and derives the terminal model's
+    shorter-context ids from it (batch_format.truncate_ids). Those derived ids must be EXACTLY what
+    tokenizing at the shorter max_length would produce — the ettin68@2048 threshold was calibrated
+    on the latter. Covers under-target, exactly-at-target, and over-target docs."""
+    tok = preprocess.load_tokenizer("answerdotai/ModernBERT-base")
+    long_len, short_len = 512, 128
+    texts = [
+        "",
+        "short doc",
+        " ".join(f"tok{i}word{i * 7 % 13}" for i in range(4000)),  # far over both contexts
+        " ".join(f"w{i}" for i in range(80)),  # between short and long after tokenization
+        "Some UTF-8: café π 漢字 emoji 🚀 mixed in. " * 30,
+    ]
+    long_ids = preprocess.tokenize_trunc_batch(tok, texts, long_len)
+    short_ids = preprocess.tokenize_trunc_batch(tok, texts, short_len)
+    derived = [batch_format.truncate_ids(ids, short_len, MODERNBERT_SEP_TOKEN_ID) for ids in long_ids]
+    assert derived == short_ids
+
+    # And the constant really is this tokenizer's [SEP].
+    assert tok.sep_token_id == MODERNBERT_SEP_TOKEN_ID

@@ -35,18 +35,21 @@ import logging
 import os
 import time
 from collections.abc import Sequence
+from concurrent.futures import ThreadPoolExecutor
 
 import fsspec
 import numpy as np
 from levanter.data.sharded_datasource import TextUrlDataSource
 from levanter.main.train_classifier import ClassificationLineProcessor, _expand_globs, _parse_line
 from levanter.store.cache import (
+    CacheLedger,
     CacheMetadata,
     CacheOptions,
     SerialCacheWriter,
     build_or_load_cache,
     consolidate_shard_caches,
 )
+from levanter.store.tree_store import TreeStore
 from transformers import AutoTokenizer
 
 logger = logging.getLogger(__name__)
@@ -138,10 +141,18 @@ def run_build(args) -> None:
     processor = _processor(args.tokenizer, args.useful_label, args.max_length)
     for index in range(args.shard_start, end):
         part = _part_path(args.cache_dir, index)
-        fs = fsspec.core.url_to_fs(part)[0]
+        fs, rpart = fsspec.core.url_to_fs(part)
         if fs.exists(f"{part}/shard_ledger.json"):
             logger.info("[%d] already built -> %s", index, part)
             continue
+        if fs.exists(rpart):
+            # A part with no ledger is the debris of a preempted builder. SerialCacheWriter APPENDS
+            # to existing zarr arrays, so rebuilding on top of it silently doubles the rows while the
+            # new ledger records only this run's count — which shifts every row offset downstream and
+            # corrupts the consolidated cache (6 of 96 parts, ~900k phantom rows each, on the 90M
+            # HTML build). Incomplete means discard.
+            logger.warning("[%d] discarding ledger-less partial part -> %s", index, part)
+            fs.rm(rpart, recursive=True)
         started = time.time()
         if args.inline:
             rows = _build_one_inline(paths[index], part, processor, args.batch_lines)
@@ -152,6 +163,32 @@ def run_build(args) -> None:
             )
             logger.info("[%d] done finished=%s rows=%d -> %s", index, cache.is_finished, len(cache), part)
     logger.info("BUILD RANGE DONE [%d,%d)", args.shard_start, end)
+
+
+def _corrupt_parts(parts: list[str], processor) -> list[tuple[str, int, int]]:
+    """Parts whose data holds more rows than their ledger claims — one label per row is the invariant.
+
+    A preempted builder leaves partial zarr arrays; the relaunch appends to them, so the data grows
+    while the fresh ledger counts only the second run. Consolidation trusts the ledgers for row
+    offsets, so a single bad part silently misaligns every part after it.
+    """
+    metadata = CacheMetadata(preprocessor_metadata=processor.metadata)
+
+    def check(part: str) -> tuple[str, int, int] | None:
+        # A part can also be STRUCTURALLY broken — e.g. `input_ids/offsets/zarr.json` missing because
+        # a delete raced a live writer — and then opening it raises instead of returning a count. That
+        # is still a bad part, so report it as one (-1 rows) rather than aborting the whole scan.
+        try:
+            ledger = CacheLedger.load(part, metadata)
+            store = TreeStore.open(processor.output_exemplar, part, mode="r", cache_metadata=True)
+            data_rows = int(store.tree["label"].data_size)
+        except Exception as e:
+            logger.warning("part unreadable: %s (%s)", part, type(e).__name__)
+            return (part, -1, -1)
+        return None if data_rows == ledger.total_num_rows else (part, ledger.total_num_rows, data_rows)
+
+    with ThreadPoolExecutor(16) as pool:
+        return [bad for bad in pool.map(check, parts) if bad is not None]
 
 
 def _consolidate_inline(parts: list[str], output_path: str, exemplar, metadata) -> int:
@@ -172,17 +209,22 @@ def _consolidate_inline(parts: list[str], output_path: str, exemplar, metadata) 
         _consolidate_metadata,
         _expose_cache_rows,
         _extend_cache_with_other_cache,
-        _merge_ledgers,
+        _field_counts_from_store,
+        _merge_materialized_ledgers,
     )
     from levanter.store.tree_store import TreeStore
 
     first = TreeStore.open(exemplar, parts[0], mode="r", cache_metadata=True)
     data_offset_tree = jax.tree.map(lambda x: 0, first.tree)
     shard_info: list[dict] = []
+    field_counts: list[dict] = []
     total_rows = 0
     for path in parts:
         ledger = CacheLedger.load(path, metadata)
         store = TreeStore.open(exemplar, path, mode="r", cache_metadata=True)
+        # A part written by SerialCacheWriter may leave field_counts empty; recover them from the
+        # store, since _merge_materialized_ledgers sums them into the final ledger.
+        field_counts.append(ledger.field_counts or _field_counts_from_store(store))
         sizes = jax.tree.map(lambda x: x.data_size, store.tree)
         shard_info.append(
             {
@@ -206,7 +248,7 @@ def _consolidate_inline(parts: list[str], output_path: str, exemplar, metadata) 
         )
         logger.info("copied %d/%d (%s)", i + 1, len(shard_info), info["shard_name"])
     asyncio.run(_consolidate_metadata(output_path, exemplar, shard_info))
-    ledger = _merge_ledgers(output_path, parts, [s["ledger"] for s in shard_info], metadata)
+    ledger = _merge_materialized_ledgers(output_path, parts, [s["ledger"] for s in shard_info], field_counts, metadata)
     _expose_cache_rows(output_path, exemplar, ledger.total_num_rows)
     return ledger.total_num_rows
 
@@ -217,6 +259,16 @@ def run_consolidate(args) -> None:
     missing = [p for p in parts if not fsspec.core.url_to_fs(p)[0].exists(f"{p}/shard_ledger.json")]
     if missing:
         raise SystemExit(f"{len(missing)} of {len(parts)} parts missing; first: {missing[0]}")
+
+    processor_for_check = _processor(args.tokenizer, args.useful_label, args.max_length)
+    corrupt = _corrupt_parts(parts, processor_for_check)
+    if corrupt:
+        detail = "\n".join(f"  {p}: ledger_rows={r} label_rows={d} (+{d - r})" for p, r, d in corrupt)
+        raise SystemExit(
+            f"{len(corrupt)} of {len(parts)} parts have more data rows than their ledger claims — "
+            f"consolidating them would shift every downstream row offset and produce a cache whose "
+            f"rows read back EMPTY. Delete and rebuild these parts first:\n{detail}"
+        )
 
     processor = _processor(args.tokenizer, args.useful_label, args.max_length)
     logger.info("consolidating %d parts -> %s (inline=%s)", len(parts), args.cache_dir, args.inline)

@@ -54,6 +54,7 @@ from experiments.scaling_law_sweeps.curation_plan import (
     METHODS,
     PlannedRun,
 )
+from experiments.scaling_law_sweeps.data_curation_math import GridMixCurationMethod
 
 logger = logging.getLogger(__name__)
 
@@ -175,7 +176,7 @@ def _detect_local_tpu_type(override: str | None = None) -> str:
     runtime sets `IRIS_DEVICE_VARIANT` (e.g., 'v5p-8' or 'v4-32') on the
     worker; that's the canonical source.
     """
-    import os
+    import os  # noqa: PLC0415
 
     if override:
         return override
@@ -205,7 +206,7 @@ def _build_model_config(plan: PlannedRun) -> Qwen3Config:
 
 def _build_optimizer_config(plan: PlannedRun) -> AdamHConfig:
     """Build the AdamH optimizer config from the plan's primitive args."""
-    from experiments.scaling_law_sweeps.completed_adamh import completed_adamh_heuristic
+    from experiments.scaling_law_sweeps.completed_adamh import completed_adamh_heuristic  # noqa: PLC0415
 
     h = completed_adamh_heuristic
     return AdamHConfig(
@@ -219,7 +220,6 @@ def _build_optimizer_config(plan: PlannedRun) -> AdamHConfig:
         max_grad_norm=h.max_grad_norm,
         lr_schedule=h.lr_schedule,
         decay=h.decay,
-        nesterov=h.nesterov,
     )
 
 
@@ -921,6 +921,13 @@ def main(argv: list[str] | None = None) -> None:
             target_budget=int(plan.t_target / method.s),
             experiment_budget=int(plan.t_exp),
         )
+        if isinstance(method, GridMixCurationMethod):
+            tokenized = method.drop_subslice_cells(
+                tokenized,
+                region=region,
+                slice_ratio=tokenized.experiment_budget / tokenized.target_budget,
+                seq_len=plan.seq_len,
+            )
         logger.info(
             "Mixture: train=%s (weight 1.0), validation=%d datasets (weight 0.0); "
             "%s slicing: target_budget=%d (= T_target %.2e / s %.1f), experiment_budget=%d",
@@ -977,7 +984,7 @@ def main(argv: list[str] | None = None) -> None:
     #    worker -- wasteful, and capacity-prone). Instead we apply the env vars
     #    `_prepare_training_run` would have set, then invoke `train_lm.main`
     #    directly in this process.
-    _prepared_config, train_config_ready, env, _extras = _prepare_training_run(pod_config)
+    _prepared_config, train_config_ready, env = _prepare_training_run(pod_config)
     for k, v in env.items():
         os.environ[k] = v
 

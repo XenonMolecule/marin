@@ -37,7 +37,7 @@ from levanter.models.lm_model import LmConfig, LmHeadModel
 from levanter.utils.activation import ActivationFunctionEnum
 from levanter.utils.flop_utils import lm_flops_per_token
 from levanter.utils.logging import silence_transformer_nag
-from levanter.utils.types import BlockFoldable
+from haliax.nn.scan import BlockFoldable  # moved out of levanter.utils.types upstream
 
 silence_transformer_nag()
 from transformers import PretrainedConfig as HfConfig  # noqa: E402

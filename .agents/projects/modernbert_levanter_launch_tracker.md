@@ -378,7 +378,7 @@ data-scaling curve, bigger model). Base @8192 baseline: 0.564(50k)/0.645(200k)/~
 - mb-clf-1M-surv-f: state=finished, step 3905, **best_f1=0.6969 @ thr=0.36**.
 - PARITY vs torch 0.705: Δ=0.008 (~1%) → **AT PARITY** (within F1 noise on 516-pos test).
 - HF checkpoint saved: gs://marin-us-east5/checkpoints/modernbert-useful/mb-clf-1M-surv-f/hf/
-  (config.json + model.safetensors + tokenizer). 
+  (config.json + model.safetensors + tokenizer).
 - => Levanter/JAX ModernBERT classifier REPRODUCES torch_xla. M1-M5 done; base migration validated.
   Data-scaling @8192 (Levanter, survivor): 50k 0.564 / 200k 0.645 / 1M 0.697(≈0.705).
 - Throughput: ~9.2 s/it @ pdp=2 (base, v6e-4); preempt→auto-resume worked all run (was the torch pain point).
@@ -437,7 +437,7 @@ WATCH: short-ctx 10M (c1024/c2048/c4096) for data-loader starvation (>30s/it). i
 
 ## 2026-06-25 08:56 — 10M OOM round 2 (autonomous)
 - v4 (4): advancing — base-1M-rand s=199, large-{50k s=125,200k s=121,1M s=109}. large-50k ~64%, F1 ~09:45.
-- v5p 5M (large+base): running at 400g (fit). 
+- v5p 5M (large+base): running at 400g (fit).
 - v5p 10M c1024/c2048 (base+large, 4 runs): running at 400g, loading (may survive — smaller buffers).
 - v5p 10M c4096/c8192 (base+large, 4 runs): OOM'd at 400g (text load ~400GB > 400g). Stopped lingering
   coords, RELAUNCHED at --memory-gb 440 (max on 448GB host). ONE shot — 440g is marginal for c8192.
@@ -481,7 +481,7 @@ RESULTS TABLE (best_f1 @8192, random pool unless noted):
 | 5M   | running s=274 | running s=255 |
 | 10M  | BLOCKED (OOM/streaming) | BLOCKED |
 - large-50k 0.616 vs base-50k 0.564 (+0.052) → bigger model helps at 50k (CAVEAT: large=random pool,
-  0.564=old time-sorted pool; clean base-vs-large lands at 1M/5M both random). 
+  0.564=old time-sorted pool; clean base-vs-large lands at 1M/5M both random).
 - All 6 reliable runs healthy/stepping. All 8 10M crashed (blocked on morning streaming fix). No action.
 
 ## 2026-06-25 12:19 — base-1M-rand v4 node-migration freeze (watching)
@@ -501,7 +501,7 @@ v4 runs slow but advancing (large-1M +14/tick, large-200k s=477 ~61%); v5p 5M he
   large-200k (was s=499), large-1M (s=464), base-1M-rand (s=752). v5p 5M UNAFFECTED (us-east5).
 - Checkpoints in ttl-temp path (gs://marin-us-central2/tmp/ttl=14d/checkpoints-temp/.../<rid>/checkpoints/):
   large-200k step-476, large-1M step-451, base-1M-rand step-727. RELAUNCHED all 3 (v4-8 us-central2);
-  auto-resume from those steps (~15-25 steps lost each). 
+  auto-resume from those steps (~15-25 steps lost each).
 - NOTE: v4 "reserved" got preempted → if it recurs (preempt-loop), v4 capacity is contended; runs will
   resume each time from ckpt (slow but progress). Watching. v5p (large-5M s=826, base-5M s=1141) healthy.
 
@@ -654,7 +654,7 @@ INFRA STATE:
 - 5M (base-5M s=1729, large-5M s=936) FROZEN ~5.5h on v5p reconcile flakiness (bouncing crashed/running,
   never advancing). NOT migrating now: v6e full (1M -e5 there) → migration would just pend. PLAN: migrate
   5M → v6e (in-memory 400g, v6e host=720GB) WHEN 1M -e5 finish + free v6e. Leave for now (no thrash).
-- Cache 10M still blocked (33/40, no ledger). 
+- Cache 10M still blocked (33/40, no ledger).
 
 ## 2026-06-25 22:35 — cluster healing; base-1M-e5 relaunched off stuck node
 - large-1M-surv-e5 advancing (s=1850, 47%). 5M BOTH recovered+advancing (base-5M 1962/10%, large-5M 1078/5.5%).

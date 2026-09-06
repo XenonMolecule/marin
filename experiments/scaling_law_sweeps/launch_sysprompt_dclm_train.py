@@ -124,7 +124,13 @@ def main(argv: list[str] | None = None) -> None:
         plan.epsilon,
         plan.experiment_tag,
     )
-    logger.info("TPU variants: v4=%s v5p=%s v6e=%s | tensor_parallel=%d", plan.v4_tpu, plan.v5p_tpu, plan.v6e_tpu, plan.tensor_parallel)
+    logger.info(
+        "TPU variants: v4=%s v5p=%s v6e=%s | tensor_parallel=%d",
+        plan.v4_tpu,
+        plan.v5p_tpu,
+        plan.v6e_tpu,
+        plan.tensor_parallel,
+    )
 
     if args.dry_run:
         logger.info("--dry-run: not submitting.")

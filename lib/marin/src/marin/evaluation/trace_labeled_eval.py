@@ -15,7 +15,6 @@ from typing import Any, TypeVar
 import fsspec
 import jax
 import jmp
-import levanter
 import levanter.tracker
 from fray.current_client import current_client
 from fray.types import Entrypoint, JobRequest, ResourceConfig, create_environment
@@ -34,6 +33,7 @@ from levanter.models.lm_model import LmConfig
 from levanter.tokenizers import load_tokenizer as load_marin_tokenizer
 from levanter.trainer import TrainerConfig
 
+import levanter
 from marin.evaluation.model_loading import load_eval_model
 from marin.training.run_environment import extras_for_resources
 

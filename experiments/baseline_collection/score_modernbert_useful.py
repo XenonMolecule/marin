@@ -33,7 +33,6 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import logging
-import re
 import time
 
 import fsspec
@@ -46,6 +45,14 @@ from levanter.layers.attention import AttentionMask
 from levanter.models.modernbert import ModernBertConfig, load_hf_sequence_classifier
 from transformers import AutoTokenizer
 
+from experiments.baseline_collection.comparison_sample import (
+    SCORED_OUT,
+    SCORES_DIR,
+    ClassifierInput,
+    read_sample,
+    sample_dir,
+)
+from experiments.baseline_collection.extract_text_shards import EMPTY_PLACEHOLDER
 from experiments.fsspec_paths import fsspec_glob
 
 logger = logging.getLogger(__name__)
@@ -54,67 +61,62 @@ logger = logging.getLogger(__name__)
 
 # Output always lands in us-east5 (where the sample + join run); INPUTS (checkpoints + sample) are
 # read from --input-bucket so v5litepod spillover in another region reads a local mirror.
-OUT_ROOT = "gs://marin-us-east5/documents/extractor_compare/high_quality_200warc"
-SCORES_DIR = f"{OUT_ROOT}/model_scores"  # {col}/part-i-of-N.parquet (BERT + fastText + future classifiers)
-SCORED_OUT = f"{OUT_ROOT}/sample_100k_scored"
-SAMPLE_NS = "documents/extractor_compare/high_quality_200warc/sample_100k"
 CKPT_NS = "checkpoints/modernbert-useful"
 
 TOKENIZER_REF = "answerdotai/ModernBERT-base"  # identical tokenizer for every survivor checkpoint
 PAD_TOKEN_ID = 50283
-MAX_TEXT_CHARS = 1_000_000  # cap pathological multi-MB markup (matches cascade_survivor_filter)
 
-# col -> (checkpoint run-id, training/eval context length). 1M@8192 FIRST (run it first).
-# base/large entries derive their architecture from the checkpoint's own config.json (see run_score),
-# so a `large` checkpoint loads correctly despite the base default dims.
-MODELS: dict[str, tuple[str, int]] = {
-    "bert_useful_prob_1M_ctx8192": ("mb-clf-1M-surv-f", 8192),
-    "bert_useful_prob_200k_ctx8192": ("mb-clf-200k-surv-f", 8192),
-    "bert_useful_prob_200k_ctx4096": ("mb-clf-200k-ctx4096-surv-f", 4096),
-    "bert_useful_prob_200k_ctx2048": ("mb-clf-200k-ctx2048-surv-f", 2048),
-    "bert_useful_prob_200k_ctx1024": ("mb-clf-200k-ctx1024-surv-f", 1024),
-    "bert_useful_prob_base_1M_rand": ("mb-clf-base-1M-rand-e5", 8192),
-    "bert_useful_prob_large_1M_surv": ("mb-clf-large-1M-surv-e5", 8192),
-    "bert_useful_prob_base_10M": ("mb-clf-base-10M-c8192", 8192),
-    "bert_useful_prob_large_10M": ("mb-clf-large-10M-c8192", 8192),
+# col -> (checkpoint run-id, training/eval context length, classifier input representation).
+# Architecture (hidden/layers/heads, classifier_pooling) is derived from the checkpoint's own config.json
+# (see run_score), so base, large AND Ettin-geometry checkpoints all load through this one path.
+# TEXT models consume the resiliparse-rs main-content text of the same HTML (comparison_sample).
+MODELS: dict[str, tuple[str, int, ClassifierInput]] = {
+    "bert_useful_prob_1M_ctx8192": ("mb-clf-1M-surv-f", 8192, ClassifierInput.HTML),
+    "bert_useful_prob_200k_ctx8192": ("mb-clf-200k-surv-f", 8192, ClassifierInput.HTML),
+    "bert_useful_prob_200k_ctx4096": ("mb-clf-200k-ctx4096-surv-f", 4096, ClassifierInput.HTML),
+    "bert_useful_prob_200k_ctx2048": ("mb-clf-200k-ctx2048-surv-f", 2048, ClassifierInput.HTML),
+    "bert_useful_prob_200k_ctx1024": ("mb-clf-200k-ctx1024-surv-f", 1024, ClassifierInput.HTML),
+    "bert_useful_prob_base_1M_rand": ("mb-clf-base-1M-rand-e5", 8192, ClassifierInput.HTML),
+    "bert_useful_prob_large_1M_surv": ("mb-clf-large-1M-surv-e5", 8192, ClassifierInput.HTML),
+    "bert_useful_prob_base_10M": ("mb-clf-base-10M-c8192", 8192, ClassifierInput.HTML),
+    "bert_useful_prob_large_10M": ("mb-clf-large-10M-c8192", 8192, ClassifierInput.HTML),
     # lpv11-trained survivors (target = llm_pipeline_v1_1, not the 8B high_quality run).
-    "bert_lpv11_prob_base_1M_c8192": ("mb-clf-lpv11-base-1M-c8192", 8192),
-    "bert_lpv11_prob_base_10M_c8192": ("mb-clf-lpv11-base-10M-c8192", 8192),
-    # Ettin-68m geometry (h512 L19) — ModernBERT architecture at 68M params, so it loads through this
-    # same path; run_score reads the dims (and `classifier_pooling="mean"`) from its own config.json.
-    "bert_lpv11_prob_ettin68_10M": ("mb-clf-lpv11-ettin68-10M", 8192),
+    "bert_lpv11_prob_base_1M_c8192": ("mb-clf-lpv11-base-1M-c8192", 8192, ClassifierInput.HTML),
+    "bert_lpv11_prob_base_10M_c8192": ("mb-clf-lpv11-base-10M-c8192", 8192, ClassifierInput.HTML),
+    "bert_lpv11_prob_ettin68_10M": ("mb-clf-lpv11-ettin68-10M", 8192, ClassifierInput.HTML),
+    # Arch-sweep 1M survivors (HTML): the speed/accuracy curve. All ModernBERT-config geometries.
+    "bert_lpv11_prob_ettin68_1M": ("mb-clf-lpv11-ettin68-1M", 8192, ClassifierInput.HTML),
+    "bert_lpv11_prob_ettin32_1M": ("mb-clf-lpv11-ettin32-1M", 8192, ClassifierInput.HTML),
+    "bert_lpv11_prob_ettin17_1M": ("mb-clf-lpv11-ettin17-1M", 8192, ClassifierInput.HTML),
+    "bert_lpv11_prob_pruned8_1M": ("mb-clf-lpv11-pruned8-1M", 8192, ClassifierInput.HTML),
+    "bert_lpv11_prob_tiny4_1M": ("mb-clf-lpv11-tiny4-1M", 8192, ClassifierInput.HTML),
+    "bert_lpv11_prob_tiny2_1M": ("mb-clf-lpv11-tiny2-1M", 8192, ClassifierInput.HTML),
+    # TEXT-trained (input = resiliparse-rs main content of the body_strip HTML).
+    "bert_lpv11_text_prob_ettin68_10M": ("mb-clf-lpv11-text-ettin68-10M", 8192, ClassifierInput.TEXT),
+    "bert_lpv11_text_prob_base_1M": ("mb-clf-lpv11-text-base-1M", 8192, ClassifierInput.TEXT),
+    "bert_lpv11_text_prob_ettin68_1M": ("mb-clf-lpv11-text-ettin68-1M", 8192, ClassifierInput.TEXT),
+    "bert_lpv11_text_prob_base_10M": ("mb-clf-lpv11-text-base-10M", 8192, ClassifierInput.TEXT),
+    # The SAME TEXT checkpoints on the ONE-EXTRACTION deployment input, lower(collapse(extract(raw_html))).
+    # This is what production feeds them (one resiliparse-rs pass on raw HTML, normalize after), and it is
+    # what the planner prices. Verified 2026-08-18 against the *_text_prob_* twins: dF1 within +-0.002 on
+    # 99,996 docs (compare_text_input_scores.py); the as-trained columns stay as the diagnostic.
+    "bert_lpv11_textraw_prob_ettin68_10M": ("mb-clf-lpv11-text-ettin68-10M", 8192, ClassifierInput.TEXT_FROM_RAW),
+    "bert_lpv11_textraw_prob_base_1M": ("mb-clf-lpv11-text-base-1M", 8192, ClassifierInput.TEXT_FROM_RAW),
+    "bert_lpv11_textraw_prob_ettin68_1M": ("mb-clf-lpv11-text-ettin68-1M", 8192, ClassifierInput.TEXT_FROM_RAW),
+    "bert_lpv11_textraw_prob_base_10M": ("mb-clf-lpv11-text-base-10M", 8192, ClassifierInput.TEXT_FROM_RAW),
+    # SHORTER EVAL CONTEXT on the same checkpoints. Extracted text averages ~926 tokens (median ~334), so a
+    # 8192-token forward is mostly padding: ettin68 measures 36.4 docs/chip/s at 8192 but 141.5 at 2048 and
+    # 244.4 at 1024 (v6e-4-ettin68-precise.json), i.e. up to 6.7x the throughput for 9-20% of docs truncated.
+    # Whether the accuracy survives is an empirical question — these columns answer it.
+    "bert_lpv11_textraw_prob_ettin68_10M_c4096": ("mb-clf-lpv11-text-ettin68-10M", 4096, ClassifierInput.TEXT_FROM_RAW),
+    "bert_lpv11_textraw_prob_ettin68_10M_c2048": ("mb-clf-lpv11-text-ettin68-10M", 2048, ClassifierInput.TEXT_FROM_RAW),
+    "bert_lpv11_textraw_prob_ettin68_10M_c1024": ("mb-clf-lpv11-text-ettin68-10M", 1024, ClassifierInput.TEXT_FROM_RAW),
+    "bert_lpv11_textraw_prob_base_10M_c2048": ("mb-clf-lpv11-text-base-10M", 2048, ClassifierInput.TEXT_FROM_RAW),
 }
-
-
-def _sample_dir(input_bucket: str) -> str:
-    return f"gs://{input_bucket}/{SAMPLE_NS}"
 
 
 def _hf_ref(input_bucket: str, run_id: str) -> str:
     return f"gs://{input_bucket}/{CKPT_NS}/{run_id}/hf"
-
-
-_WS_RE = re.compile(r"\s+")
-
-
-def _preprocess(stripped_html: str | None) -> str:
-    """body_strip HTML -> classifier input (whitespace-collapse + lowercase), matching to_fasttext_text."""
-    return _WS_RE.sub(" ", (stripped_html or "")[:MAX_TEXT_CHARS]).strip().lower()
-
-
-def _read_sample(input_bucket: str) -> tuple[list[str], list[str]]:
-    """Return (warc_record_ids, preprocessed_texts) for the 100k sample, in shard+row order."""
-    import pyarrow.parquet as pq
-
-    ids: list[str] = []
-    texts: list[str] = []
-    for path in sorted(fsspec_glob(f"{_sample_dir(input_bucket)}/*.parquet")):
-        with fsspec.open(path, "rb") as fh:
-            t = pq.ParquetFile(fh).read(columns=["warc_record_id", "stripped_html"])
-        ids.extend(t.column("warc_record_id").to_pylist())
-        texts.extend(_preprocess(h) for h in t.column("stripped_html").to_pylist())
-    logger.info("sample: %d docs", len(ids))
-    return ids, texts
 
 
 # --- Scoring (data-parallel, splash@8192) ----------------------------------
@@ -164,11 +166,12 @@ def run_score(col: str, batch_size: int, limit: int | None, num_shards: int, sha
         raise ValueError(f"unknown --model {col!r}; choices: {list(MODELS)}")
     if not 0 <= shard_idx < num_shards:
         raise ValueError(f"--shard-idx {shard_idx} out of range for --num-shards {num_shards}")
-    run_id, max_seq_len = MODELS[col]
+    run_id, max_seq_len, kind = MODELS[col]
     hf_ref = _hf_ref(input_bucket, run_id)
-    logger.info("scoring col=%s ref=%s ctx=%d on devices=%s", col, hf_ref, max_seq_len, jax.devices())
+    logger.info("scoring col=%s ref=%s ctx=%d input=%s on devices=%s", col, hf_ref, max_seq_len, kind, jax.devices())
 
-    ids, texts = _read_sample(input_bucket)
+    # Neural TEXT corpora carry EMPTY_PLACEHOLDER for empty extractions; feed the same at inference.
+    ids, texts = read_sample(input_bucket, kind, empty_text=EMPTY_PLACEHOLDER)
     if limit is not None:
         ids, texts = ids[:limit], texts[:limit]
         logger.info("LIMIT: scoring only first %d docs (smoke)", len(ids))
@@ -259,9 +262,9 @@ def run_join() -> None:
     if staged:
         logger.info("re-applying jusText staging: %d clean raw_html + text_justext", len(staged))
 
-    sample_dir = _sample_dir("marin-us-east5")  # join always reads the canonical us-east5 sample
-    n_shards = len(fsspec_glob(f"{sample_dir}/*.parquet"))
-    for i, path in enumerate(sorted(fsspec_glob(f"{sample_dir}/*.parquet"))):
+    src = sample_dir("marin-us-east5")  # join always reads the canonical us-east5 sample
+    n_shards = len(fsspec_glob(f"{src}/*.parquet"))
+    for i, path in enumerate(sorted(fsspec_glob(f"{src}/*.parquet"))):
         with fsspec.open(path, "rb") as fh:
             t = pq.ParquetFile(fh).read()
         rids = t.column("warc_record_id").to_pylist()

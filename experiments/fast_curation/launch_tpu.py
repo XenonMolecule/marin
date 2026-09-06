@@ -48,6 +48,9 @@ def build_command(args: argparse.Namespace, seed: int) -> list[str]:
         "--enable-extra-resources",
         "--extra",
         "tpu",
+        # V3 (storage_version=3) B workers tokenize-on-read and need gigatoken; harmless otherwise.
+        "--extra",
+        "gigatoken",
         "--memory",
         args.memory,
         "--priority",
@@ -88,6 +91,8 @@ def build_command(args: argparse.Namespace, seed: int) -> list[str]:
         cmd.append("--no-bucket-tokens")
     if args.limit is not None:
         cmd += ["--limit", str(args.limit)]
+    if args.max_shard is not None:
+        cmd += ["--max-shard", str(args.max_shard)]
     return cmd
 
 
@@ -112,13 +117,19 @@ def main() -> None:
     ap.add_argument("--poll-seconds", type=float, default=30.0)
     ap.add_argument("--max-idle-passes", type=int, default=5)
     ap.add_argument("--limit", type=int, default=None)
-    ap.add_argument("--mode", default="v2b", choices=["v1", "v2b"], help="v2b scores a_presurvivors -> b_keeplist.")
+    ap.add_argument(
+        "--mode",
+        default="v2b",
+        choices=["v1", "v2b", "textb"],
+        help="v2b scores a_presurvivors -> b_keeplist; textb (TEXT line) writes the final kept/ directly.",
+    )
     ap.add_argument(
         "--claim-stale-hours",
         type=float,
         default=3.0,
         help="Reclaim WARCs whose claim has gone unrefreshed this long; lower it for a finisher fleet.",
     )
+    ap.add_argument("--max-shard", type=int, default=None, help="V3 ladder cap (shards < N).")
     ap.add_argument("--dry-run", action="store_true", help="Print commands without submitting.")
     args = ap.parse_args()
 

@@ -229,12 +229,19 @@ def ensure_vcpkg(work_dir: Path) -> Path:
     return vcpkg_root
 
 
-def clone_fork(work_dir: Path) -> Path:
-    """Clone the fork at ``FORK_BRANCH`` and return the checkout path."""
+def clone_fork(work_dir: Path, commit: str | None = None) -> Path:
+    """Clone the fork at ``FORK_BRANCH`` (optionally checking out ``commit``) and return the path.
+
+    ``commit`` exists so an artifact can be REBUILT for a new CPython minor at the exact commit a
+    live spec pins — master may have moved on, and the extracted text is the training text, so a
+    rebuild from a different commit would be a different corpus under the same spec hash.
+    """
     repo = work_dir / "chatnoir-resiliparse"
     if repo.exists():
         shutil.rmtree(repo)
     run(["git", "clone", "--quiet", "--branch", FORK_BRANCH, FORK_URL, str(repo)])
+    if commit:
+        run(["git", "checkout", "--quiet", commit], cwd=repo)
     return repo
 
 
@@ -405,7 +412,7 @@ def build_command(args: argparse.Namespace) -> None:
     cargo_bin, cargo_overrides = ensure_rust(work_dir)
     tool_bins, libclang_dir = ensure_native_build_tools(work_dir)
     vcpkg_root = ensure_vcpkg(work_dir)
-    repo = clone_fork(work_dir)
+    repo = clone_fork(work_dir, commit=args.commit)
     trim_vcpkg_manifest(repo)
 
     commit_sha = capture(["git", "rev-parse", "HEAD"], cwd=repo).strip()
@@ -510,6 +517,7 @@ def main() -> None:
 
     build_parser = subparsers.add_parser("build", help="build the extension and publish it to GCS")
     build_parser.add_argument("--release", default=datetime.datetime.now(datetime.UTC).strftime("%Y%m%d"))
+    build_parser.add_argument("--commit", default=None, help="Build this fork commit instead of the branch head.")
     build_parser.add_argument("--log-file", default=None, help="driver log to publish as build_log.txt")
     build_parser.set_defaults(func=build_command)
 

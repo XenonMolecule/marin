@@ -13,7 +13,7 @@ import pathlib
 from dataclasses import dataclass, replace
 
 import fsspec
-from levanter.data.text import (
+from levanter.data.text.datasets import (
     DatasetComponent,
     LMMixtureDatasetConfig,
     TextLmDatasetFormat,
@@ -177,7 +177,7 @@ class CurationMethod:
 
         Data must be pre-copied there. No cross-region egress at read time.
         """
-        from experiments.scaling_law_sweeps.region_tracker import REGION_TO_BUCKET
+        from experiments.scaling_law_sweeps.region_tracker import REGION_TO_BUCKET  # noqa: PLC0415
 
         bucket = REGION_TO_BUCKET[region]  # e.g. "gs://marin-eu-west4"
         return f"{bucket}/{self.tokenized_rel_path.rstrip('/')}/"
@@ -504,6 +504,60 @@ class GridMixCurationMethod(CurationMethod):
             train_weights=train_weights,
             mixture_block_size=self.mixture_block_size,
         )
+
+    def drop_subslice_cells(
+        self,
+        config: LMMixtureDatasetConfig,
+        region: str,
+        slice_ratio: float,
+        seq_len: int,
+    ) -> LMMixtureDatasetConfig:
+        """Drop grid cells whose Levanter budget slice would be empty, renormalising the rest.
+
+        Levanter's simulated-epoching slices every train component to
+        ``int(num_sequences * slice_ratio)`` sequences, and a cell small enough to slice to
+        zero crashes the mixture at startup (``RESTART_STRATEGY ... empty finite dataset``).
+        Sequence counts are estimated as ``cell_tokens // seq_len``; the estimate can be off
+        by the odd packed sequence, so cells whose slice estimate lands below 2 are dropped
+        (the margin absorbs the estimation error). Like the block-size floor in
+        `load_weights`, drops are explicit: the removed mass is logged and the surviving
+        weights renormalised, so the executed mixture is exactly what the config says.
+        """
+        from experiments.data_mixing.olmix_domains import load_grid_domains
+
+        if not 0 < slice_ratio <= 1:
+            raise ValueError(f"{self.name}: slice_ratio must be in (0, 1], got {slice_ratio}")
+        tokens_by_cell = {d.name: d.tokens for d in load_grid_domains(self.grid_corpus, region)}
+        prefix = f"{self.name}__"
+        dropped = [
+            key
+            for key, weight in config.train_weights.items()
+            if key.startswith(prefix)
+            and weight > 0
+            and int((tokens_by_cell[key[len(prefix) :]] // seq_len) * slice_ratio) < 2
+        ]
+        if not dropped:
+            return config
+        kept = {k: v for k, v in config.train_weights.items() if k.startswith(prefix) and k not in dropped}
+        if not kept:
+            raise ValueError(f"{self.name}: every grid cell slices empty at ratio {slice_ratio:.3e}")
+        dropped_mass = sum(config.train_weights[k] for k in dropped)
+        logger.info(
+            "%s: dropped %d/%d cells whose budget slice would be empty "
+            "(ratio=%.3e, seq_len=%d), holding %.4f%% of mass; renormalised the rest",
+            self.name,
+            len(dropped),
+            len(dropped) + len(kept),
+            slice_ratio,
+            seq_len,
+            100.0 * dropped_mass,
+        )
+        total = sum(kept.values())
+        components = {k: v for k, v in config.components.items() if k not in dropped}
+        train_weights = {k: v for k, v in config.train_weights.items() if k not in dropped}
+        for k in kept:
+            train_weights[k] = kept[k] / total
+        return replace(config, components=components, train_weights=train_weights)
 
 
 def load_d_obs_from_stats(tokenized_path: str) -> int:

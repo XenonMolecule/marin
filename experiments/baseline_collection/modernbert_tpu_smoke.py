@@ -185,7 +185,9 @@ def pr_sweep(probs: list[float], truth: list[int]) -> list[dict]:
     return rows
 
 
-CKPT_EVERY_OPT_STEPS = 5  # every 5 opt-steps — banks fast enough for ~20min preempt windows, less GCS-write hang exposure than 2
+CKPT_EVERY_OPT_STEPS = (
+    5  # every 5 opt-steps — banks fast enough for ~20min preempt windows, less GCS-write hang exposure than 2
+)
 
 
 def save_checkpoint(ckpt_dir: str, model, scheduler, epoch: int, micro_done: int, is_main: bool) -> None:

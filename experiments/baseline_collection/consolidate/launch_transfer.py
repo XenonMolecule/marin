@@ -63,13 +63,18 @@ def submit_one(
     max_workers: int,
     dry_run_child: bool,
     spec: str,
+    child_preemptible: bool,
 ) -> str:
     cmd = ["python", SCRIPT, "--region", region, "--spec", spec, "--max-workers", str(max_workers)]
     if dry_run_child:
         cmd.append("--dry-run")
     # Constraint.create wraps raw strings; bare Constraint(values=(...)) regressed.
+    # A big region's transfer needs hours of UNINTERRUPTED work: a preempted child
+    # restarts from scratch and must re-list/re-skip everything already copied
+    # (~1h for europe-west4's 3.9M objects), so it nets only ~1h of real progress
+    # per preemption cycle. Pass child_preemptible=False for those.
     constraints = [
-        preemptible_constraint(True),
+        preemptible_constraint(child_preemptible),
         Constraint.create(key=WellKnownAttribute.REGION, op=ConstraintOp.IN, values=(region,)),
     ]
     suffix = "" if spec == "low_quality" else f"-{spec}"
@@ -94,6 +99,13 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--cpu", type=float, default=2.0, help="Per-child CPU (GCS IO is the bottleneck).")
     p.add_argument("--memory", default="8GB")
     p.add_argument("--disk", default="20GB")
+    p.add_argument(
+        "--child-preemptible",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Run children on preemptible workers (default). Use --no-child-preemptible for "
+        "large regions where a restart costs an hour of re-listing.",
+    )
     p.add_argument(
         "--max-workers",
         type=int,
@@ -142,6 +154,7 @@ def main() -> None:
                 max_workers=args.max_workers,
                 dry_run_child=args.dry_run_child,
                 spec=args.spec,
+                child_preemptible=args.child_preemptible,
             )
             submitted.append((region, jid))
             logger.info("submitted %s -> %s", region, jid)

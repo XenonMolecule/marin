@@ -37,7 +37,9 @@ N_BY_DL = {
     (3584, 35): 9.169166e09,
 }
 
-RUN_RE = re.compile(r"curation-(?P<method>.+?)-expFM_natural-(?P<budget>[0-9]+e\+[0-9]+)-d(?P<d>[0-9]+)-L(?P<L>[0-9]+)-B(?P<B>[0-9]+)")
+RUN_RE = re.compile(
+    r"curation-(?P<method>.+?)-expFM_natural-(?P<budget>[0-9]+e\+[0-9]+)-d(?P<d>[0-9]+)-L(?P<L>[0-9]+)-B(?P<B>[0-9]+)"
+)
 
 
 def norm_method(raw: str) -> str:
@@ -64,8 +66,11 @@ def tokens_for(budget: str, d: int, L: int) -> float | None:
 def main():
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     ap = argparse.ArgumentParser()
-    ap.add_argument("--out", default="gs://marin-us-central1/metadata/core_tasks_summary.csv",
-                    help="Single consolidated CSV to write.")
+    ap.add_argument(
+        "--out",
+        default="gs://marin-us-central1/metadata/core_tasks_summary.csv",
+        help="Single consolidated CSV to write.",
+    )
     args = ap.parse_args()
 
     fs = marin_filesystem("gcs")
@@ -83,12 +88,23 @@ def main():
                 continue
             d, L = int(m["d"]), int(m["L"])
             tok = tokens_for(m["budget"], d, L)
-            rows.append(dict(run_stem=run, method=norm_method(m["method"]), hidden_dim=d,
-                             num_layers=L, budget=m["budget"], tokens=tok, mean_core=mc))
+            rows.append(
+                dict(
+                    run_stem=run,
+                    method=norm_method(m["method"]),
+                    hidden_dim=d,
+                    num_layers=L,
+                    budget=m["budget"],
+                    tokens=tok,
+                    mean_core=mc,
+                )
+            )
     logger.info("consolidated %d runs", len(rows))
 
     buf = io.StringIO()
-    w = csv.DictWriter(buf, fieldnames=["run_stem", "method", "hidden_dim", "num_layers", "budget", "tokens", "mean_core"])
+    w = csv.DictWriter(
+        buf, fieldnames=["run_stem", "method", "hidden_dim", "num_layers", "budget", "tokens", "mean_core"]
+    )
     w.writeheader()
     w.writerows(sorted(rows, key=lambda r: (r["method"], r["hidden_dim"], r["tokens"] or 0)))
     with fs.open(args.out, "w") as f:
@@ -97,6 +113,7 @@ def main():
 
     # coverage summary to logs
     from collections import defaultdict
+
     cnt = defaultdict(int)
     for r in rows:
         cnt[(r["hidden_dim"], r["method"])] += 1

@@ -20,7 +20,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import fsspec
 
@@ -61,7 +61,7 @@ def _count(prefix: str) -> int:
 
 
 def _fmt_epoch(e: float) -> str:
-    return datetime.fromtimestamp(e, tz=timezone.utc).isoformat(timespec="seconds")
+    return datetime.fromtimestamp(e, tz=UTC).isoformat(timespec="seconds")
 
 
 def _deep_aggregate(spec: PipelineSpec, bucket: str) -> dict:

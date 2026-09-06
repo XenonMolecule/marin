@@ -18,6 +18,7 @@ import logging
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import UTC
 from pathlib import Path
 
 from flask import Flask, jsonify, request, send_file
@@ -121,7 +122,9 @@ def _load_legacy_num_batches() -> dict[str, int]:
     from concurrent.futures import ThreadPoolExecutor
 
     from google.cloud import storage as gcs_storage
-    from rigging.filesystem import REGION_TO_DATA_BUCKET
+    from rigging.filesystem import data_config
+
+    REGION_TO_DATA_BUCKET = {r: s.name for r, s in data_config().region_buckets.items()}
 
     client = gcs_storage.Client()
     targets: list[tuple[str, str, str]] = []  # (bucket_name, blob_path, hash)
@@ -212,7 +215,9 @@ def _load_spec_num_batches(spec_id: str) -> dict[str, int]:
     from concurrent.futures import ThreadPoolExecutor
 
     from google.cloud import storage as gcs_storage
-    from rigging.filesystem import REGION_TO_DATA_BUCKET
+    from rigging.filesystem import data_config
+
+    REGION_TO_DATA_BUCKET = {r: s.name for r, s in data_config().region_buckets.items()}
 
     cache = _spec_num_batches_cache.get(spec_id)
     if cache is None:
@@ -578,7 +583,9 @@ def _scan_progress_quick(spec_id: str) -> dict:
     Does NOT check _done markers (too expensive per-WARC). Use deep scan for done counts.
     """
     from google.cloud import storage as gcs_storage
-    from rigging.filesystem import REGION_TO_DATA_BUCKET
+    from rigging.filesystem import data_config
+
+    REGION_TO_DATA_BUCKET = {r: s.name for r, s in data_config().region_buckets.items()}
 
     client = gcs_storage.Client()
     manifest = _load_manifest(spec_id)
@@ -713,7 +720,9 @@ def _scan_progress_quick(spec_id: str) -> dict:
 def _scan_progress_deep(spec_id: str) -> dict:
     """Deep scan: list ALL blobs to get batch counts, done markers, and activity. ~60s+."""
     from google.cloud import storage as gcs_storage
-    from rigging.filesystem import REGION_TO_DATA_BUCKET
+    from rigging.filesystem import data_config
+
+    REGION_TO_DATA_BUCKET = {r: s.name for r, s in data_config().region_buckets.items()}
 
     client = gcs_storage.Client()
     manifest = _load_manifest(spec_id)
@@ -1133,11 +1142,9 @@ def _format_job(j, enrich_resources: bool = False) -> dict:
 
     submitted = ""
     if j.submitted_at.epoch_ms:
-        from datetime import datetime, timezone
+        from datetime import datetime
 
-        submitted = datetime.fromtimestamp(j.submitted_at.epoch_ms / 1000, tz=timezone.utc).strftime(
-            "%Y-%m-%d %H:%M:%S UTC"
-        )
+        submitted = datetime.fromtimestamp(j.submitted_at.epoch_ms / 1000, tz=UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
 
     reason = j.error or j.pending_reason or ""
 
@@ -1197,9 +1204,9 @@ def _list_tasks_for_job(job_id: str, tpu_type_hint: str = "") -> list:
         except Exception:
             ts = 0
         if ts:
-            from datetime import datetime, timezone
+            from datetime import datetime
 
-            submitted = datetime.fromtimestamp(ts / 1000, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+            submitted = datetime.fromtimestamp(ts / 1000, tz=UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
         # Best-effort attempt count (UI prefers preemption_count semantically).
         attempt = t.current_attempt_id or 0
         rows.append(

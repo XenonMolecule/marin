@@ -313,10 +313,22 @@ training documents were truncated mid-page and the model mostly read tags. Extra
 | **docs truncated @8192** | **67.0%** | **2.8%** |
 | dataset | 89.0 GB | 13.4 GB |
 
-**FIRST RESULT — `mb-clf-lpv11-text-pooled-1M` = 0.8207 vs 0.7925 on HTML: +2.8 pts**, far above the
-0.015 noise floor. pooled-1M-TEXT (0.8207) ≈ pooled-10M-HTML (0.8237): **changing the representation
-bought nearly as much as 10x the data**, and it clears the fastText incumbent (0.8110) at 1M docs.
-⇒ Re-examine whether the 90M HTML push is the right investment vs text-at-10M.
+**RESULTS (frozen-7k, same 6477 docs, text-extracted the same way):**
+| model | HTML | TEXT | gain |
+|---|---|---|---|
+| pooled-1M | 0.7925 | **0.8207** | **+0.0282** |
+| pooled-10M | 0.8237 | **0.8413** | **+0.0176** |
+| ettin68-1M | 0.8367 | **0.8647** | **+0.0280** |
+| base-1M / base-10M / ettin68-10M | 0.8424 / 0.8684 / 0.8670 | training | — |
+
+**THE HEADLINE: `ettin68-1M-TEXT` = 0.8647 ties the base-10M-HTML champion (0.8684, Δ0.0037 ≪ the
+0.015 noise floor) using 1/10th the data, a 2.2x smaller model, and 1.7x the throughput.**
+The +2.8 gain is identical for a from-scratch 26M model (pooled) and a pretrained 68M encoder
+(ettin68), so it is the REPRESENTATION, not an architecture quirk. Fixing the input bought what 10x
+more data bought. Gain shrinks with scale (+2.8 @1M → +1.8 @10M): data partially compensates for a
+lossy representation but does not replace it.
+⇒ The 90M HTML cache is worth finishing for pooled-90M, but **text-90M is the stronger follow-up**
+(~13x smaller to build, and stacks data gain on top of representation gain).
 Data: `…/presharded_survivor_w640_10M_text/` (10,002,709 docs, verified line-for-line, labels
 identical, empty extractions kept as placeholders so index alignment holds) + matching
 `full_prep_body_strip_test7k_text/`. Remaining 5 retrains in flight.
@@ -466,3 +478,358 @@ on the frozen 7k — `score_frozen_eval.py` is ModernBERT/HF-shaped; pooled save
   Scored over the 100k sample: 99,996 rows, 0 nulls, mean P=0.2135, 19.9% >= 0.5 (lpv11 keeps ~21%).
   No new scorer was needed — the checkpoint is ModernBERT-`model_type`, so `score_modernbert_useful`
   reads its geometry and `classifier_pooling="mean"` straight from `config.json`.
+
+## 2026-08-13 night: 90M consolidation, the "error becomes 0" class of bug, fastText TEXT track
+
+- **90M HTML cache parts COMPLETE**: 96/96 parts, 612 GB, no gaps, under
+  `presharded_survivor_w640_90M/_clf_token_cache_parts/`. Verified by listing the part dirs and
+  probing each `shard_ledger.json`, not by trusting a monitor.
+- **The overnight orchestrator never triggered consolidation.** It logged `90M 0/96 parts` six
+  times while the data was in fact complete. Its `count_parts` wrapped a `find` in both an internal
+  `except: print(0)` and an outer `|| echo 0`, so a listing failure and a genuine zero are the same
+  string. The script file was NOT edited after the process started (mtime 08:17:11 < start
+  08:17:44), so stale-variable drift is ruled out; the count was failing inside that process while
+  the identical command returned 96 from a fresh shell in 3.3s.
+  **Fix: `scratch/count_cache_parts.py` returns -1 for a failed listing, 0 only for a genuinely
+  absent directory**, and lists part dirs + probes ledgers instead of `find`-ing 5k+ files.
+  This is the THIRD instance tonight of an error being encoded as zero (the false "0/40 parts"
+  TEXT alarm and the swallowed GCS listing error were the first two). Never encode failure as a
+  count.
+- **Consolidation crashed on a bad import**, one minute in, invisible until the job was inspected:
+  `ImportError: cannot import name '_merge_ledgers' from 'levanter.store.cache'`. No such function
+  exists; the materialized (copy-into-one-TreeStore) path wants
+  `_merge_materialized_ledgers(output_path, paths, ledgers, per_shard_field_counts, metadata)`.
+  Fixed in `build_clf_cache_sharded.py::_consolidate_inline`, which now also recovers per-part
+  `field_counts` via `_field_counts_from_store` when a `SerialCacheWriter` part leaves them empty.
+  Relaunched as `m90-consol-inline2`; copying at ~4.5 min/part (~27 MB/s, ~6.5 h for 612 GB).
+  Idempotency note: the orchestrator's `job_exists` keys on `mb-clf-lpv11-pooled-90M-coord`, the
+  same job name the manual launch uses, so leaving it running cannot create duplicate writers.
+- **TEXT-5 (fastText w640 on text) STARTED**: 9 batch/preemptible jobs in us-central2 extracting
+  640 train + 89 test prep shards + the frozen-7k twin (`full_prep_resiliparse_rs`). Stage 0 was
+  already done (the Rust extractor is mirrored to us-central2), so no cross-region reads. Gate
+  before training: shard-index equality against the frozen 640 selection and text char fraction
+  ~0.217.
+
+### TEXT vs HTML — the 1M column is now COMPLETE (frozen 7k, 6477 docs)
+
+| model | HTML | TEXT | delta |
+|---|---|---|---|
+| mb-base 1M | 0.8424 | **0.8671** | +0.0247 |
+| ettin68 1M | 0.8367 | **0.8647** | +0.0280 |
+| pooled 1M  | 0.7925 | **0.8207** | +0.0282 |
+| pooled 10M | 0.8237 | **0.8413** | +0.0176 |
+
+**Text at 1M ties the best HTML model trained on 10x the data** (base-10M HTML = 0.8684). The gain
+is ~+0.025 for every architecture, so it is a property of the INPUT REPRESENTATION, not of any
+model: 78.3% of the HTML bytes were markup, and truncation at 8192 tokens dropped from 67% of docs
+to 2.8%. Representation beat both scale and architecture here.
+
+Open: text 10M for base and ettin68 (~39.1k steps at ~5.3 s/it on v6e-4 = ~50-57 h, so these land
+well after the 1M column; that rate is expected for training at ctx 8192, not a stall). NOTE:
+`mb-clf-lpv11-text-ettin68-10M` shows `crashed` in wandb while the iris job is healthy and
+checkpointing (step 5283 at 23:13Z) — wandb state is not a liveness signal, confirming
+feedback_wandb_summary_not_source_of_truth.
+
+### resiliparse-rs failure mode #2: a Rust PANIC that is not an Exception (2026-08-13)
+
+Five of eight fastText-text extraction slices died within 10 minutes on:
+
+    pyo3_runtime.PanicException: end byte index 120 is not a char boundary; it is inside '☆'
+    _pickle.PicklingError: Can't pickle <class 'pyo3_runtime.PanicException'>
+
+The fork slices a Rust `String` at a byte offset landing mid-codepoint, so any document with a
+multibyte char near that offset panics. This is DISTINCT from the known `<frameset>` SEGFAULT and
+needs a different guard: **`PanicException` inherits from `BaseException`**, so worker-side
+`except Exception` does not catch it, and it cannot be pickled back to the parent — one bad
+document killed a 91-shard slice.
+
+Fix in `extract_prep_text_rs.py::html_to_text_line`: catch `BaseException` around the extract call
+(re-raising `KeyboardInterrupt`/`SystemExit`), emit the same empty-text line the frameset guard
+emits, and count it as `n_panic` in the slice summary. Also added `_run_isolated`: after
+`--isolate-after` (default 2) pool restarts, remaining shards run one-per-pool so a SEGFAULT is
+attributable to a named shard, quarantined and skipped, instead of burning all restarts in 20
+seconds on the same poison shard (slice 2's failure mode).
+
+`extract_text_shards.py` (the 90M/10M path) was ALREADY immune: it routes any chunk exception to
+`_isolate`, one doc per process, and records offenders — `PicklingError` is an ordinary Exception,
+so the panic lands there and costs one document. The two scripts converged on the same recovery
+shape independently. No completed output is suspect: without a guard a panic KILLS the job, it
+does not silently corrupt, and the frozen-7k twin succeeded under the old code (so it contained no
+panicking document).
+
+### Stage-2 gate: measured text_char_fraction is 0.071, NOT the runbook's 0.217 — and 0.071 is right
+
+Finished slices agree to within 0.0007, and the frozen-7k twin agrees with them:
+
+    slice 1: 0.0712 (n_panic=1)   slice 4: 0.0713 (n_panic=2)   slice 6: 0.0719
+    frozen-7k twin: 0.0716 (6490 lines, 8 frameset, 106 empty)
+
+Train and eval therefore share one representation, which is the property the comparison actually
+depends on. Cross-checking the compressed sizes against the ALREADY-VALIDATED neural text track:
+
+    10M survivor:  html 89.0 GB gz -> text 13.4 GB gz  = 0.151
+    fastText prep: ~0.401 GB/shard -> ~0.063 GB/shard  = 0.157
+
+The two corpora compress to the same ratio, so this extraction behaves exactly like the one that
+produced the +0.025 F1 text gains. The runbook's 0.217 was a scoping estimate carried from a
+different measurement, not a property of this pipeline; it is the expectation that is wrong.
+Consequences: the projected ~408 GB uncompressed text is really ~135 GB, and stage 3's train.txt
+drops from ~65 GB to ~21 GB — MORE tmpfs headroom, so the v4/us-central2 siting stands.
+
+Panic rate is negligible: 1-2 documents per ~2M lines, each costing exactly one document.
+
+### CACHE CORRUPTION: preempted part builders append, and consolidation trusts the ledger (2026-08-14)
+
+`pooled-90M` failed its first real step with
+
+    TypeError: only length-1 arrays can be converted to Python scalars
+    train_classifier.py:200  [self._encode_one(r["input_ids"], int(r["label"])) for r in rows]
+
+Reading the consolidated cache directly showed EVERY row empty (`input_ids` and `label` both
+`shape=(0,)`) against a known-good cache (10M TEXT) whose rows read `(598,)` / `(1,)`.
+
+**Root cause (builder, not consolidation).** `run_build` skips a part only when
+`{part}/shard_ledger.json` exists. A preempted builder leaves ledger-less partial zarr arrays; the
+relaunch then calls `SerialCacheWriter(part, ...)`, which **APPENDS** to those arrays. The new
+ledger records only the second run's rows, so data rows > ledger rows. Consolidation derives every
+row offset from the ledgers, so one bad part misaligns everything after it.
+
+Invariant that catches it: exactly one label per row, so
+`store.tree["label"].data_size == ledger.total_num_rows`.
+
+Scan of all 96 parts of the 90M HTML cache — **6 corrupt: parts 000, 008, 016, 024, 032, 040**,
+each ~900k phantom rows (2x their shard). Those are the FIRST shard of six builder ranges (stride 8):
+exactly the shard in flight when a preemptible builder was killed. Clean parts total 82,817,951 rows
+vs the ledger's claimed 88,839,133. The consolidated ledger also showed the tell directly:
+`field_counts['label'] = 89,652,951 != total_num_rows = 88,839,133`.
+
+**Fixes (both in `build_clf_cache_sharded.py`):**
+1. `run_build` DELETES a ledger-less part directory before rebuilding — incomplete means discard.
+2. `run_consolidate` runs `_corrupt_parts()` over every part first and REFUSES to consolidate,
+   naming each offender and its row surplus, rather than producing a cache that reads back empty.
+
+The 6 parts were deleted and relaunched (`m90fix-p{0,8,16,24,32,40}`); the corrupt consolidated
+cache must be rebuilt from scratch afterward. The same risk applies to the 90M TEXT parts (also
+built `--preemptible`) — the new gate now blocks that consolidation too if any part is bad.
+
+Separately, `pooled-90M`'s FIRST failure was `AttributeError: module 'levanter' has no attribute
+'initialize'`: post-upstream-sync `levanter/__init__.py` imports nothing, so `train_classifier.py`
+must call `levanter.trainer.initialize(config)` as `train_lm.py` does.
+
+#### CORRECTION: the corruption is DUPLICATE WRITERS, not preemption
+
+The first repair attempt made things WORSE (part_000 ledger 1,012,948 -> 1,963,948 rows), which
+disproved the preemption theory. What was actually happening:
+
+`scratch/cache_supervisor.sh` had been running for **21 hours**, relaunching a builder for any part
+it considered missing (`c90-<HHMM>-p<N>` — two live jobs on part 24 at once: `c90-0228-p24` and
+`c90-0250-p24`). Deleting a part made the supervisor immediately spawn ANOTHER builder for it, which
+then raced the repair job. `SerialCacheWriter` **RESUMES**: it loads an existing ledger and appends,
+so two writers on one part produce ledger = sum of both runs and data = more still. This is the
+known `feedback_iris_autoretry_vs_manual_relaunch` failure mode applied to cache parts.
+
+Consequences for the earlier entry: "6 parts corrupted by preemption" was wrong on cause. The
+`run_build` fix (discard a ledger-less part) is still correct but INSUFFICIENT — it cannot help when
+a second writer appends to a part that has a valid ledger. The `_corrupt_parts` consolidation gate
+is what actually caught this, twice.
+
+Repair protocol that respects the "never kill running jobs" rule:
+  1. STOP the local supervisor/orchestrator loops (own shell processes) so no new builders spawn.
+  2. WAIT for in-flight builders to drain — deleting under a live writer is futile (3 of 6 deletions
+     left objects behind because a builder recreated them mid-delete).
+  3. Delete each affected part with VERIFIED removal (`fs.rm` then re-`find`; a `gsutil rm | tail -1`
+     with an unconditional echo reported success while deleting nothing).
+  4. Rebuild with exactly ONE job per part, then re-verify label-count == ledger-rows.
+
+### fastText w640 on TEXT: 0.8196 (+0.0085) — and the small gain is the point
+
+Frozen 7k, 6477 docs / 1513 useful, best-F1 over a threshold sweep. The HTML baseline recomputed
+from its own per-doc probs with the SAME code gives 0.8111 (published: 0.8110), so the metric is
+validated before reading the delta.
+
+    fastText w640  HTML 0.8111  ->  TEXT 0.8196   (+0.0085)  thr 0.41 -> 0.48, 93 empty-text docs
+    split_counts identical to the HTML run: 1,462,564 useful / 4,170,558 no_useful, 0 missing shards
+
+Every TRANSFORMER gained ~3x more from the same representation change:
+
+    mb-base 1M  0.8424 -> 0.8671  (+0.0247)
+    ettin68 1M  0.8367 -> 0.8647  (+0.0280)
+    pooled  1M  0.7925 -> 0.8207  (+0.0282)
+    pooled 10M  0.8237 -> 0.8413  (+0.0176)
+    fastText    0.8111 -> 0.8196  (+0.0085)   <-- one third of the neural gain
+
+**Interpretation: the text win is mostly a CONTEXT-BUDGET effect, not noise removal.** fastText is
+a bag of n-grams with NO context limit — it already saw every token of every document, markup
+included, and markup n-grams are simply uninformative features it can down-weight. The transformers
+truncate at 8192 tokens, where 78.3% markup meant 67% of documents were cut off; on text that falls
+to 2.8%. Removing markup buys a transformer the REST OF THE DOCUMENT; it buys fastText almost
+nothing. That also predicts the gain should shrink as context grows, and it is consistent with
+pooled-10M gaining less (+0.0176) than pooled-1M (+0.0282) — more data partially substitutes for
+the truncated tail.
+
+Ranking note: pooled-1M-text (0.8207) now edges fastText-text (0.8196), but that is inside the
+0.015 frozen-7k noise floor — a tie. pooled-10M-text (0.8413) is a genuine win over fastText.
+
+### 2026-08-15: 90M HTML cache REPAIRED and pooled-90M launched
+
+Clean rebuild of the 6 damaged parts (one writer each, supervisor stopped, no deletes racing a live
+writer) then consolidation: `CACHE DONE rows=88839133`.
+
+Proof the cache is sound this time — the ledger invariant now HOLDS:
+
+    total_num_rows = 88,839,133   field_counts['label'] = 88,839,133   (corrupt run: 89,652,951)
+    row 0        -> input_ids (8192,)  label (1,)   [corrupt run returned (0,) for every row]
+    row 500000   -> input_ids (5374,)  label (1,)
+    row 88839132 -> input_ids (8192,)  label (1,)
+
+`mb-clf-lpv11-pooled-90M-coord3` launched on it. NOTE: a local network blackout blinded every
+monitor during consolidation, so the automatic chain missed its `CACHE DONE` trigger and I launched
+by hand; when the chain recovered it tried to launch too, and **iris rejected the duplicate by name**
+("already exists and is still running"). Job-name uniqueness is therefore a real duplicate-writer
+guard — but only because both launchers used the SAME name. Any future hand-launch must reuse the
+exact name the automation would use, or two coordinators will write one checkpoint path.
+
+## RESULT: ettin68-10M-TEXT = 0.8805 — the sweep's best model, and it is also 1.7x FASTER than base
+
+Frozen 7k, 6477 docs / 1513 useful.
+
+    ettin68 10M TEXT  0.8805   <-- NEW BEST (beats base-10M-HTML 0.8684 by +0.0121)
+    ettin68 10M HTML  0.8670
+    mb-base 1M  TEXT  0.8671
+    ettin68 1M  TEXT  0.8647
+    pooled  10M TEXT  0.8413
+    pooled  1M  TEXT  0.8207
+    fastText640 TEXT  0.8196
+
+**This satisfies the original brief**: ettin68 is h512xL19 vs base h768xL22 — 68M vs 149M params,
+measured 36.4 vs 21.6 docs/chip/s at ctx 8192 (**1.7x faster**) — and it now also has the best
+accuracy in the sweep. Faster AND more accurate than the tuned ModernBERT-base setup.
+
+**Correction to the earlier "saturation" read.** The per-model TEXT gain does shrink with data
+(ettin68 +0.0280 at 1M -> +0.0135 at 10M; pooled +0.0282 -> +0.0176), which fits the context-budget
+story: more data partially substitutes for the tail that truncation was cutting off. But the
+ABSOLUTE ceiling keeps rising, so "the text advantage saturates" was wrong as stated — what
+saturates is the marginal benefit per doc, not the achievable maximum.
+
+Caveat on the margin: +0.0121 over the old champion is a little under one bootstrap noise-floor
+width (0.015) on this eval, so it is a real but MODEST lead, not a decisive one. The strong claim is
+the joint one (equal-or-better accuracy at 1.7x the speed), not "0.88 >> 0.868".
+
+## RESULT: pooled-90M-TEXT = 0.8483 — the pooled data-scaling curve is FLAT
+
+    pooled TEXT:   1M 0.8207  ->  10M 0.8413  ->  90M 0.8483
+    deltas:              +0.0206 (10x data)      +0.0070 (9x data)
+    pooled HTML:   1M 0.7925  ->  10M 0.8237
+
+9x more data bought +0.0070 — under HALF the 0.015 noise floor. Pooled has saturated; more data
+will not close the gap to the BERT-family models.
+
+**Cascade verdict (the user's fastText -> pooled -> BERT idea).** pooled-90M-TEXT (0.8483) beats
+fastText-TEXT (0.8196) by +0.029, so it IS a real accuracy step above stage 1, and it is ~72x faster
+than mb-base in TRAINING (measured 0.167 vs 12.0 s/it) and ~172x at matched-ctx inference. It works
+as a cheap high-recall mid-filter. But it never approaches ettin68-10M-TEXT (0.8805), so it cannot
+replace the accurate stage — the cascade shape holds, with ettin68 (not base) as the final stage.
+
+## Train/serve skew on the TEXT models: MEASURED, no retrain needed (2026-08-18)
+
+Concern (raised by the cascade-dashboard session): the TEXT classifiers were trained on
+`norm(extract(norm(body_strip(raw))))` — extraction applied to already lowercased/ws-collapsed,
+<head>-stripped HTML — but production runs resiliparse-rs ONCE on raw HTML, so the deployable
+classifier input can only be `lower(collapse(extract(raw)))`.
+
+My proposed fix (run extraction on the `text_body` the pipeline already computes) was WRONG and I
+withdrew it: `extract_clf_text` output is lowercased and ws-collapsed, so it cannot double as the
+pipeline's OUTPUT corpus — using it would force a second extraction, which the single-extraction
+contract rules out.
+
+Measured on 99,996 lpv11-covered docs, as-trained input vs deployment input:
+
+    text-ettin68-10M (champion)  F1@.5 0.8719 -> 0.8719 (0.0000)  best-F1 +0.0005  keep-agree 99.38%
+    text-base-1M                 F1@.5 0.8561 -> 0.8576 (+0.0015) best-F1 +0.0012  keep-agree 99.38%
+    fastText TEXT w640           F1@.5 +0.0008                    best-F1 +0.0010  keep-agree 99.05%
+
+Stratified by char-similarity (champion), n / gold-rate / dF1@.5:
+
+    identical         62,686 / .209 / +0.0000
+    sim>=0.9          20,411 / .265 / -0.0014
+    0.5<=sim<0.9      11,577 / .160 / -0.0126   <- only real cost, precision-side
+    sim<0.5            4,738 / .097 / +0.0561   <- deployment BETTER (dR +.079): raw extraction
+                                                   recovers content body_strip's cap/stripping removed
+    only-deploy-empty    360 / .039 / -0.4828   <- predicted recall hazard is REAL but 96% not-useful
+                                                   => costs 0.07% recall (14 useful docs of 20,900)
+    only-trained-empty   224 / .196 / +0.7955   <- deployment recovers 44 useful docs
+
+The two empty directions NET IN DEPLOYMENT'S FAVOR. The chrome-rejection mechanism predicted for
+only-deploy-empty is confirmed: that bucket is 96% not-useful (boilerplate pages where raw HTML gives
+the main-content heuristic more to reject).
+
+**Production contract confirmed: extract once from raw HTML, then lowercase + whitespace-collapse
+for the classifiers.** Report: gs://marin-us-east5/documents/extractor_compare/high_quality_200warc/
+clf_text_input_score_comparison.json
+
+Forward-looking note: the sim<0.5 stratum favors the deployment input by +0.056, so a future retrain
+on `lower(collapse(extract(raw)))` is a possible small IMPROVEMENT, not a correctness fix.
+
+## RESULT: pooled-90M-HTML = 0.8331 — the full pooled 3x2 grid is complete
+
+                 HTML      TEXT     delta
+    pooled  1M   0.7925   0.8207   +0.0282
+    pooled 10M   0.8229   0.8413   +0.0184
+    pooled 90M   0.8331   0.8483   +0.0152
+
+Two readings, both useful:
+
+1. **The TEXT advantage decays with data but toward a FLOOR, not to zero**: +0.0282 -> +0.0184 ->
+   +0.0152. That is exactly what the context-budget mechanism predicts — more data partially
+   substitutes for the truncated tail — and at 90M the gap still equals the 0.015 noise floor.
+
+2. **Data scaling is nearly exhausted on BOTH arms.** HTML: +0.0304 (1M->10M) then +0.0102
+   (10M->90M). TEXT: +0.0206 then +0.0070. A 9x data increase at the top end buys under half a
+   noise floor on either representation, while switching representation at 1M buys ~2x that for
+   free. **The representation was worth more than an order of magnitude of data.**
+
+Cross-arch: ettin68-10M-TEXT (0.8805) beats pooled-90M-TEXT (0.8483) by +0.032 on 1/9 the documents,
+so architecture x representation dominates data scale in this regime.
+
+## FINAL: base-10M-TEXT = 0.8836 — and it TIES ettin68-10M-TEXT, so the headline needs correcting
+
+    mb-base  10M TEXT  0.8836   (149M params, 21.57 docs/chip/s)
+    ettin68  10M TEXT  0.8805   ( 68M params, 36.40 docs/chip/s)
+    delta 0.0031 — the frozen-7k bootstrap noise floor is 0.015, so this is a TIE.
+
+**Correction.** Earlier in this log I called ettin68-10M-TEXT "the sweep's best model ... faster AND
+more accurate than the tuned ModernBERT-base setup". That was written when the only base-10M number
+was the HTML one (0.8684). With base-10M-TEXT trained, base is nominally the highest score in the
+sweep, so the accurate claim is:
+
+    ettin68 MATCHES mb-base at 1.7x the throughput — it does not beat it.
+
+The original brief ("faster AND more accurate") is therefore met on speed and TIED on accuracy, not
+won on both. Deployment recommendation is unchanged and arguably strengthened — same accuracy for
+59% of the inference cost — but the wording matters and the strong version was wrong.
+
+Full TEXT column (frozen 7k, 6477 docs / 1513 useful):
+
+    mb-base  10M  0.8836      ettin68 10M  0.8805      mb-base 1M  0.8671
+    ettin68   1M  0.8647      pooled  90M  0.8483      pooled 10M  0.8413
+    pooled    1M  0.8207      fastText640  0.8196
+
+TEXT gain at 10M is consistent across both BERT-family archs: base +0.0152 (0.8684 -> 0.8836),
+ettin68 +0.0135 (0.8670 -> 0.8805).
+
+### Tie-breaker on the DEPLOYMENT input: the tie holds, and the gap narrows
+
+Same 99,996 lpv11-covered docs, as-trained -> deployment input `lower(collapse(extract(raw_html)))`:
+
+    base-10M-TEXT     F1@.5 0.8730 -> 0.8729 (-0.0001)   best-F1 +0.0002   P@R.97 -0.0058
+    ettin68-10M-TEXT  F1@.5 0.8719 -> 0.8719 (-0.0000)   best-F1 +0.0005   P@R.97 -0.0044
+
+Neither architecture degrades, and the per-stratum deltas are near-identical (sim>=.9 -0.0017 vs
+-0.0014; [.5,.9) -0.0122 vs -0.0126; sim<.5 +0.0531 vs +0.0561; only-deploy-empty F1->0 on the same
+360 docs for both). **The input skew is a property of the extraction paths, not of model capacity** —
+it hits a 149M-param and a 68M-param encoder identically.
+
+On the production input the two are 0.8729 vs 0.8719 — a 0.0010 gap, tighter than the frozen-7k
+0.0031, and both far inside the 0.015 floor. FINAL CLAIM: **ettin68-10M-TEXT matches
+mb-base-10M-TEXT on the input production will actually serve, at 1.69x throughput (36.4 vs 21.57
+docs/chip/s) — equal accuracy for 59% of the inference cost.** Nothing in the comparison favours base.

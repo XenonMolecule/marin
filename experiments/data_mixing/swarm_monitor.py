@@ -24,7 +24,8 @@ import re
 import subprocess
 import time
 
-CORPORA = ("dclm_10k", "high_quality_10k")
+CORPORA = ("dclm_10k", "high_quality_10k", "resiliparse_10k", "lpv11_fastpipe_v1_10k")
+SHORT = {"dclm_10k": "dclm", "high_quality_10k": "hq", "resiliparse_10k": "resil", "lpv11_fastpipe_v1_10k": "lpv11"}
 BUCKETS = ("marin-us-east5", "marin-us-central1", "marin-eu-west4", "marin-us-west4")
 SWARM_TOTAL = 363
 
@@ -123,15 +124,13 @@ def main() -> None:
                 return
             continue
 
-        d, h = CORPORA
-        line = (
-            f"{stamp} dclm {t[d]}/{SWARM_TOTAL} trained, {e[d]} eval | "
-            f"hq {t[h]}/{SWARM_TOTAL} trained, {e[h]} eval | running={running if running>=0 else '?'}"
-        )
+        per_corpus = " | ".join(f"{SHORT[c]} {t[c]}/{SWARM_TOTAL} trained, {e[c]} eval" for c in CORPORA)
+        line = f"{stamp} {per_corpus} | running={running if running>=0 else '?'}"
         if all(t[c] == SWARM_TOTAL for c in CORPORA) and all(e[c] == SWARM_TOTAL for c in CORPORA):
             if not announced:
+                total = SWARM_TOTAL * len(CORPORA)
                 print(
-                    f"{stamp} *** SWEEP AND EVALS COMPLETE -- 726/726 trained, 726/726 evaluated. "
+                    f"{stamp} *** SWEEP AND EVALS COMPLETE -- {total}/{total} trained, {total}/{total} evaluated. "
                     f"READY FOR THE FINAL FIT. ***",
                     flush=True,
                 )

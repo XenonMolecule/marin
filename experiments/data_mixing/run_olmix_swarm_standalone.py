@@ -284,7 +284,7 @@ def main(argv: list[str] | None = None) -> None:
         output_path=output_path,
         env_vars={"LIBTPU_INIT_ARGS": "--xla_tpu_scoped_vmem_limit_kib=16000"},
     )
-    _prepared, train_config_ready, env, _extras = _prepare_training_run(pod_config)
+    _prepared, train_config_ready, env = _prepare_training_run(pod_config)
     for k, v in env.items():
         os.environ[k] = v
 

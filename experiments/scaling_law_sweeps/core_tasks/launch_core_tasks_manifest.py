@@ -96,8 +96,18 @@ def rows_from_manifest(manifest_path: str) -> list[CheckpointRow]:
     return rows
 
 
-def submit_one(client, row: CheckpointRow, hf_step_dir: str, *, priority_band: int, wandb_api_key: str,
-               hf_token: str, limit: int | None, name_suffix: str, memory_gb: int) -> str:
+def submit_one(
+    client,
+    row: CheckpointRow,
+    hf_step_dir: str,
+    *,
+    priority_band: int,
+    wandb_api_key: str,
+    hf_token: str,
+    limit: int | None,
+    name_suffix: str,
+    memory_gb: int,
+) -> str:
     """Submit one CORE_TASKS eval child, HARD-pinned to the checkpoint's region.
 
     Region pinning + the in-region `core_tasks_hf_cache` keep every read local;
@@ -105,12 +115,19 @@ def submit_one(client, row: CheckpointRow, hf_step_dir: str, *, priority_band: i
     immune to HF-token rate limiting.
     """
     cmd_args = [
-        "python", "-m", "experiments.scaling_law_sweeps.core_tasks.run_core_tasks_eval",
-        "--hf-checkpoint", hf_step_dir,
-        "--output-dir", row.output_dir(),
-        "--run-name", row.run_name,
-        "--dataset-cache-gcs", row.cache_gcs(),
-        "--hub-cache-gcs", row.hub_cache_gcs(),
+        "python",
+        "-m",
+        "experiments.scaling_law_sweeps.core_tasks.run_core_tasks_eval",
+        "--hf-checkpoint",
+        hf_step_dir,
+        "--output-dir",
+        row.output_dir(),
+        "--run-name",
+        row.run_name,
+        "--dataset-cache-gcs",
+        row.cache_gcs(),
+        "--hub-cache-gcs",
+        row.hub_cache_gcs(),
     ]
     if limit is not None:
         cmd_args += ["--limit", str(limit)]
@@ -166,7 +183,12 @@ def main():
     ap.add_argument("--child-priority", default="batch", choices=sorted(PRIORITY_BAND_MAP))
     ap.add_argument("--limit", type=int, default=None, help="Cap each task to N examples (smoke test).")
     ap.add_argument("--name-suffix", default="", help="Suffix on child job names to dodge JobAlreadyExists.")
-    ap.add_argument("--memory-gb", type=int, default=64, help="Child worker memory. 64 is ample for these small-model evals; the DCLM 256GB was for training-pool slotting and needlessly excludes smaller workers.")
+    ap.add_argument(
+        "--memory-gb",
+        type=int,
+        default=64,
+        help="Child worker memory. 64 is ample for these small-model evals; the DCLM 256GB was for training-pool slotting and needlessly excludes smaller workers.",
+    )
     ap.add_argument("--keepalive-timeout", type=float, default=43200.0, help="Max seconds to hold the parent open.")
     ap.add_argument("--keepalive-poll", type=float, default=300.0, help="Seconds between keep-alive GCS polls.")
     args = ap.parse_args()
@@ -206,10 +228,15 @@ def main():
 
         try:
             job_id = submit_one(
-                client, row, hf_step_dir,
+                client,
+                row,
+                hf_step_dir,
                 priority_band=PRIORITY_BAND_MAP[args.child_priority],
-                wandb_api_key=wandb_api_key, hf_token=hf_token,
-                limit=args.limit, name_suffix=args.name_suffix, memory_gb=args.memory_gb,
+                wandb_api_key=wandb_api_key,
+                hf_token=hf_token,
+                limit=args.limit,
+                name_suffix=args.name_suffix,
+                memory_gb=args.memory_gb,
             )
         except Exception as e:
             logger.error("[%3d] SUBMIT FAILED for %s: %s", i, row.run_name, e)
@@ -228,15 +255,24 @@ def main():
     if args.launch and submitted_results:
         start = time.time()
         pending = set(submitted_results)
-        logger.info("Keep-alive: holding parent open for %d children (timeout %.1fh)...",
-                    len(pending), args.keepalive_timeout / 3600.0)
+        logger.info(
+            "Keep-alive: holding parent open for %d children (timeout %.1fh)...",
+            len(pending),
+            args.keepalive_timeout / 3600.0,
+        )
         while pending and (time.time() - start) < args.keepalive_timeout:
             time.sleep(args.keepalive_poll)
             pending = {r for r in pending if not _gcs_exists(r)}
-            logger.info("Keep-alive: %d/%d results present (%.0f min)",
-                        len(submitted_results) - len(pending), len(submitted_results), (time.time() - start) / 60.0)
+            logger.info(
+                "Keep-alive: %d/%d results present (%.0f min)",
+                len(submitted_results) - len(pending),
+                len(submitted_results),
+                (time.time() - start) / 60.0,
+            )
         if pending:
-            logger.warning("Keep-alive timed out; %d children missing results: %s", len(pending), ", ".join(sorted(pending)))
+            logger.warning(
+                "Keep-alive timed out; %d children missing results: %s", len(pending), ", ".join(sorted(pending))
+            )
         else:
             logger.info("Keep-alive: all %d children produced results. Exiting.", len(submitted_results))
 

@@ -305,6 +305,17 @@ DATASETS: dict[str, DatasetSpec] = {
             notes="kept_text per-WARC parquet (url inline). SMALL via --source-warc-manifest hash selection.",
         ),
         DatasetSpec(
+            dataset="lpv11_fastpipe_v2",
+            region="us-east5",
+            # fastText+JustText->ModernBERT cascade re-run over the random-300 WARC
+            # manifest (TEXTONLY-7d spec). One parquet per WARC (data-{warc_hash});
+            # url/doc_id/snapshot inline (doc_id = normalized WARC-Record-ID).
+            small=IndexSource.at(
+                "gs://marin-us-east5/documents/fast_curation/lpv11_fastpipe_v2-32b74664f1/kept/data-*.parquet",
+            ),
+            notes="300/300 WARCs landed 2026-08-27.",
+        ),
+        DatasetSpec(
             dataset="med_quality",
             region=_C1,
             full=IndexSource.at(

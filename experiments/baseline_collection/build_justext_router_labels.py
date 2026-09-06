@@ -1,3 +1,6 @@
+# Copyright The Marin Authors
+# SPDX-License-Identifier: Apache-2.0
+
 """Build the jusText "extractability router" classification dataset from the cascade 350k corpus.
 
 For each cascade-survivor chat row we recover the body-HTML (user turn) and the gold LLM
@@ -16,17 +19,16 @@ one part, concatenate afterward. Output rows:
     {text, label, lev_sim, justext_len, gold_len, source, warc, bert_prob, ft_prob}
 where `text` is the body_strip HTML (case-preserved) — the input for the future router fastText.
 """
+
 import argparse
 import gzip
 import json
 import os
-import re
 import time
 
 import fsspec
-from rapidfuzz.distance import Levenshtein
-
 import justext
+from rapidfuzz.distance import Levenshtein
 
 # Unwrap markers (from extraction_specs.DEFAULT_USER_TEMPLATE_FMT + cascade_chat_filter chat_row).
 HTML_PRE = "[[ ## html ## ]]\n"
@@ -129,8 +131,11 @@ def main() -> None:
             sim_sum += row["lev_sim"]
             if n % args.log_every == 0:
                 rate = n / (time.time() - t0)
-                print(f"shard {args.shard}/{args.num_shards}: {n} rows, label1={pos} "
-                      f"({100*pos/n:.1f}%), mean_sim={sim_sum/n:.3f}, {rate:.0f} rows/s", flush=True)
+                print(
+                    f"shard {args.shard}/{args.num_shards}: {n} rows, label1={pos} "
+                    f"({100*pos/n:.1f}%), mean_sim={sim_sum/n:.3f}, {rate:.0f} rows/s",
+                    flush=True,
+                )
             if args.limit and n >= args.limit:
                 break
 
@@ -138,8 +143,11 @@ def main() -> None:
         dst.write(src.read())
     os.remove(tmp)
     dt = time.time() - t0
-    print(f"DONE shard {args.shard}/{args.num_shards}: {n} rows, label1={pos} ({100*pos/max(n,1):.1f}%), "
-          f"mean_sim={sim_sum/max(n,1):.3f}, {dt:.0f}s ({n/max(dt,1):.0f} rows/s) -> {args.out_file}", flush=True)
+    print(
+        f"DONE shard {args.shard}/{args.num_shards}: {n} rows, label1={pos} ({100*pos/max(n,1):.1f}%), "
+        f"mean_sim={sim_sum/max(n,1):.3f}, {dt:.0f}s ({n/max(dt,1):.0f} rows/s) -> {args.out_file}",
+        flush=True,
+    )
 
 
 if __name__ == "__main__":

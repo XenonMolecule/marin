@@ -1,3 +1,6 @@
+# Copyright The Marin Authors
+# SPDX-License-Identifier: Apache-2.0
+
 """Train the jusText extractability-router fastText classifier (predict Lev sim >= 0.85).
 
 Reads the router fastText files ({ft_root}/{train,dev,test}.txt.gz, lines
@@ -8,21 +11,26 @@ reports test at that dev-chosen threshold and saves the model + metrics.
 Recipe (DCLM, fixed — do not autotune): epoch 5, lr 0.1, dim 100, wordNgrams 2, softmax, minCount.
 Output: {out_root}/router.bin, {out_root}/metrics.json. CPU-only, in-region.
 """
+
 import argparse
 import gzip
 import json
 import os
 import random
 
-import fsspec
 import fasttext
+import fsspec
 
 POS = "__label__extractable"
 NEG = "__label__needs_llm"
 
 
 def download_txt(gs_path: str, local: str) -> None:
-    with fsspec.open(gs_path, "rb") as f, gzip.open(f, "rt", encoding="utf-8") as g, open(local, "w", encoding="utf-8") as o:
+    with (
+        fsspec.open(gs_path, "rb") as f,
+        gzip.open(f, "rt", encoding="utf-8") as g,
+        open(local, "w", encoding="utf-8") as o,
+    ):
         for line in g:
             o.write(line)
 
@@ -130,8 +138,11 @@ def main() -> None:
     tr_pos, tr_neg = count_labels("/app/train.txt")
     dev_lines = read_lines("/app/dev.txt")
     test_lines = read_lines("/app/test.txt")
-    print(f"train {tr_pos+tr_neg} ({tr_pos} extractable / {tr_neg} needs_llm), "
-          f"dev {len(dev_lines)}, test {len(test_lines)}", flush=True)
+    print(
+        f"train {tr_pos+tr_neg} ({tr_pos} extractable / {tr_neg} needs_llm), "
+        f"dev {len(dev_lines)}, test {len(test_lines)}",
+        flush=True,
+    )
 
     ratios = [None if r == "natural" else float(r) for r in args.ratios.split(",")]
     runs = []
@@ -141,16 +152,34 @@ def main() -> None:
     for r in ratios:
         train_input, npos, nneg = make_ratio_train("/app/train.txt", r, tr_pos, tr_neg, args.seed, "/app/_train_r.txt")
         m = fasttext.train_supervised(
-            input=train_input, epoch=args.epoch, lr=args.lr, dim=args.dim,
-            wordNgrams=args.ngrams, loss="softmax", minCount=args.min_count, thread=os.cpu_count() or 4,
+            input=train_input,
+            epoch=args.epoch,
+            lr=args.lr,
+            dim=args.dim,
+            wordNgrams=args.ngrams,
+            loss="softmax",
+            minCount=args.min_count,
+            thread=os.cpu_count() or 4,
         )
         dev_scored = eval_split(m, dev_lines)
         bf1, thr, prec, rec = best_f1(dev_scored)
         rlabel = "natural" if r is None else str(r)
-        print(f"ratio={rlabel}: train_pos={npos} train_neg={nneg} | dev best_f1={bf1:.4f} "
-              f"@thr={thr:.3f} (P={prec:.3f} R={rec:.3f})", flush=True)
-        runs.append({"ratio": rlabel, "train_pos": npos, "train_neg": nneg,
-                     "dev_best_f1": bf1, "dev_threshold": thr, "dev_precision": prec, "dev_recall": rec})
+        print(
+            f"ratio={rlabel}: train_pos={npos} train_neg={nneg} | dev best_f1={bf1:.4f} "
+            f"@thr={thr:.3f} (P={prec:.3f} R={rec:.3f})",
+            flush=True,
+        )
+        runs.append(
+            {
+                "ratio": rlabel,
+                "train_pos": npos,
+                "train_neg": nneg,
+                "dev_best_f1": bf1,
+                "dev_threshold": thr,
+                "dev_precision": prec,
+                "dev_recall": rec,
+            }
+        )
         if bf1 > best_dev[0]:
             best_dev = (bf1, thr)
             best_model = m
@@ -159,16 +188,29 @@ def main() -> None:
     # Test at the dev-chosen threshold of the best model.
     test_scored = eval_split(best_model, test_lines)
     test_metrics = f1_at(test_scored, best_dev[1])
-    print(f"BEST ratio={best_ratio} | dev_f1={best_dev[0]:.4f} @thr={best_dev[1]:.3f} | "
-          f"TEST f1={test_metrics['f1']:.4f} P={test_metrics['precision']:.3f} R={test_metrics['recall']:.3f}", flush=True)
+    print(
+        f"BEST ratio={best_ratio} | dev_f1={best_dev[0]:.4f} @thr={best_dev[1]:.3f} | "
+        f"TEST f1={test_metrics['f1']:.4f} P={test_metrics['precision']:.3f} R={test_metrics['recall']:.3f}",
+        flush=True,
+    )
 
     best_model.save_model("/app/router.bin")
     with open("/app/router.bin", "rb") as src, fsspec.open(f"{args.out_root}/router.bin", "wb") as dst:
         dst.write(src.read())
-    metrics = {"best_ratio": best_ratio, "dev_best_f1": best_dev[0], "dev_threshold": best_dev[1],
-               "test": test_metrics, "sweep": runs,
-               "recipe": {"epoch": args.epoch, "lr": args.lr, "dim": args.dim,
-                          "wordNgrams": args.ngrams, "minCount": args.min_count}}
+    metrics = {
+        "best_ratio": best_ratio,
+        "dev_best_f1": best_dev[0],
+        "dev_threshold": best_dev[1],
+        "test": test_metrics,
+        "sweep": runs,
+        "recipe": {
+            "epoch": args.epoch,
+            "lr": args.lr,
+            "dim": args.dim,
+            "wordNgrams": args.ngrams,
+            "minCount": args.min_count,
+        },
+    }
     with fsspec.open(f"{args.out_root}/metrics.json", "wt", encoding="utf-8") as f:
         json.dump(metrics, f, indent=2)
     print(f"saved router.bin + metrics.json -> {args.out_root}", flush=True)

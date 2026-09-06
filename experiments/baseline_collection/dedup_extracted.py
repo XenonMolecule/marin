@@ -265,10 +265,16 @@ def _reshape(spec: str, hashes_ordered: list[str], output_path: str) -> dict:
     buckets = [files[i::n] for i in range(n)]
     template = f"{output_path}/data-{{shard:05d}}-of-{n:05d}.jsonl.gz"
     pipeline = Dataset.from_iterable(buckets).flat_map(_reshape_bucket).write_jsonl(template, skip_existing=True)
+    # coordinator_resources defaults to ram="1g", which OOM-kills (exit 137) at
+    # this N: reshape serializes ~2M canonical path strings bucketed into 200
+    # lists into the coordinator. 8g, not more: coordinators are preemptible=False,
+    # and the only on-demand CPU pool is e2-highmem-2 (16GB total, less allocatable),
+    # so a 16g ask registers ZERO scheduler demand and never places.
     ctx = ZephyrContext(
         name="reshape-extracted",
         max_workers=200,
         resources=ResourceConfig(cpu=2, ram="16g", disk="10g"),
+        coordinator_resources=ResourceConfig(cpu=1, ram="8g", preemptible=False),
     )
     ctx.execute(pipeline)
     return {"success": True, "input_files": len(files), "output_shards": n}
@@ -351,10 +357,13 @@ def _apply_fuzzy_dups(
             skip_existing=True,
         )
     )
+    # Same coordinator sizing rationale as reshape: the default ram="1g" is too
+    # small once shard_pairs is large.
     ctx = ZephyrContext(
         name="apply-fuzzy-dups",
         max_workers=200,
         resources=ResourceConfig(cpu=2, ram="16g", disk="10g"),
+        coordinator_resources=ResourceConfig(cpu=1, ram="8g", preemptible=False),
     )
     ctx.execute(pipeline)
     return {"success": True, "shards": len(shard_pairs)}
@@ -423,6 +432,12 @@ def build_steps(
         num_bands=26,
         ngram_size=5,
         seed=42,
+        # EXPLICIT None = no truncation. Upstream added `text_cap_chars` with a 500_000
+        # default AFTER every method in this campaign was deduped, so taking the default
+        # would compute this corpus's MinHash signatures from a prefix while the others
+        # used full text -- a comparability break in the one step whose whole point is
+        # being parameter-identical. Mirrors experiments/fast_curation/dedup.py.
+        text_cap_chars=None,
         worker_resources=ResourceConfig(cpu=5, ram="32g", disk="5g"),
         override_output_path=f"{bucket}/minhash",
     )
@@ -490,6 +505,7 @@ def build_steps(
                     "num_bands": 26,
                     "ngram_size_chars": 5,
                     "seed": 42,
+                    "text_cap_chars": None,
                     "approx_jaccard_threshold": 0.75,
                 },
             },

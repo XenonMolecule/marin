@@ -50,8 +50,7 @@ logger = logging.getLogger(__name__)
 
 # Default to the 1.7B no-think hq-distill extractor in us-east5 (see project_1p7b_extraction_benchmark).
 DEFAULT_MODEL = (
-    "gs://marin-us-east5/checkpoints/"
-    "qwen3-1.7b-hq-distill-bal350k-proxy100pct-lr7e-6-bs128-mhfix-27b106/hf/step-5063"
+    "gs://marin-us-east5/checkpoints/" "qwen3-1.7b-hq-distill-bal350k-proxy100pct-lr7e-6-bs128-mhfix-27b106/hf/step-5063"
 )
 MARKER = "[NO_USEFUL_CONTENT]"
 
@@ -243,9 +242,7 @@ def main():
     # Compare its tok/s against the no-spec baseline (e.g. v7). The content docs (long verbatim
     # copies from the HTML) are where prompt-lookup should pay off; junk docs barely generate.
     if spec_decode_config:
-        content_out_tokens = sum(
-            len(o.outputs[0].token_ids) for o, nu in zip(gen_out, actually_no_useful) if not nu
-        )
+        content_out_tokens = sum(len(o.outputs[0].token_ids) for o, nu in zip(gen_out, actually_no_useful) if not nu)
         _write_summary(
             {
                 "model": args.model,
@@ -280,17 +277,15 @@ def main():
     # --- Control: does prompt_logprobs work AT ALL? A short prompt removes any
     # length/cache confound. A functional build returns one dict per prompt token. ---
     tiny_ids = tokenizer.encode("The capital of France is Paris.")
-    tiny_pls = llm.generate(
-        [tp_prompt(tiny_ids)], SamplingParams(temperature=0.0, max_tokens=1, prompt_logprobs=1)
-    )[0].prompt_logprobs
+    tiny_pls = llm.generate([tp_prompt(tiny_ids)], SamplingParams(temperature=0.0, max_tokens=1, prompt_logprobs=1))[
+        0
+    ].prompt_logprobs
     prompt_logprobs_control = {
         "tiny_prompt_tokens": len(tiny_ids),
-        "len_prompt_logprobs": (len(tiny_pls) if tiny_pls is not None else None),
-        "n_non_none_entries": (sum(1 for e in tiny_pls if e) if tiny_pls is not None else None),
+        "len_prompt_logprobs": len(tiny_pls) if tiny_pls is not None else None,
+        "n_non_none_entries": sum(1 for e in tiny_pls if e) if tiny_pls is not None else None,
     }
-    prompt_logprobs_functional = bool(
-        tiny_pls is not None and len(tiny_pls) == len(tiny_ids) and any(tiny_pls)
-    )
+    prompt_logprobs_functional = bool(tiny_pls is not None and len(tiny_pls) == len(tiny_ids) and any(tiny_pls))
     logger.info("prompt_logprobs control=%s functional=%s", prompt_logprobs_control, prompt_logprobs_functional)
 
     # --- First-token classifier via SUPPORTED generation logprobs ---
@@ -312,9 +307,7 @@ def main():
     scaffold_len = _lcp_len(gen_tok)
     scaffold_ids = gen_tok[0][:scaffold_len] if gen_tok else []
     # Junk-signal token = the branch token emitted by docs that actually produced the marker.
-    junk_branch = Counter(
-        s[scaffold_len] for s, nu in zip(gen_tok, actually_no_useful) if nu and len(s) > scaffold_len
-    )
+    junk_branch = Counter(s[scaffold_len] for s, nu in zip(gen_tok, actually_no_useful) if nu and len(s) > scaffold_len)
     junk_signal_token = junk_branch.most_common(1)[0][0] if junk_branch else marker_ids[0]
     clf_ids_list = [prompt_ids_list[i] + scaffold_ids for i in range(len(gen_tok))]
 
@@ -353,7 +346,7 @@ def main():
                 "first_token_id": tok0,
                 "marker_first_id": marker_ids[0],
                 "lp0_present": lp0 is not None,
-                "lp0_keys_sample": (list(lp0)[:8] if lp0 else None),
+                "lp0_keys_sample": list(lp0)[:8] if lp0 else None,
             }
 
     # Quality: does the cheap 1-token probe agree with the full-generation NO_USEFUL verdict?

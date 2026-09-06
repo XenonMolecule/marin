@@ -887,7 +887,9 @@ class TrainClassifierConfig:
 
 
 def main(config: TrainClassifierConfig):
-    levanter.initialize(config)
+    # levanter/__init__.py deliberately imports nothing (post-upstream-sync), so `levanter.initialize`
+    # does not resolve; the function lives in levanter.trainer, which train_lm.py also calls directly.
+    levanter.trainer.initialize(config)
     tokenizer = config.data.the_tokenizer
     # pad id: model config's own (ModernBERT-family) wins; otherwise the tokenizer's. Explicit None
     # checks — 0 is a legitimate pad id for some archs.

@@ -25,7 +25,7 @@ from __future__ import annotations
 import argparse
 import logging
 import subprocess
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from experiments.scaling_law_sweeps.region_tracker import REGION_TO_BUCKET
 
@@ -104,7 +104,7 @@ def newest_age_minutes(url: str) -> float:
             newest = ts
     if newest is None:
         return float("inf")
-    return (datetime.now(timezone.utc) - newest).total_seconds() / 60.0
+    return (datetime.now(UTC) - newest).total_seconds() / 60.0
 
 
 def main() -> None:

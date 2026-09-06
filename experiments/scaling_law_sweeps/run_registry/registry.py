@@ -49,7 +49,7 @@ import os
 import re
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import yaml
@@ -70,7 +70,7 @@ RUN_FIELDS = ("status", "wandb", "results_glob", "checkpoint_dir", "iris_job", "
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return datetime.now(UTC).isoformat(timespec="seconds")
 
 
 def _default_supervisor() -> str | None:
@@ -114,7 +114,7 @@ def _age(iso: str | None) -> str:
     if not iso:
         return "never"
     then = datetime.fromisoformat(iso)
-    delta = datetime.now(timezone.utc) - then
+    delta = datetime.now(UTC) - then
     s = int(delta.total_seconds())
     if s < 90:
         return f"{s}s ago"
@@ -128,7 +128,7 @@ def _age(iso: str | None) -> str:
 def _stale_seconds(iso: str | None) -> float:
     if not iso:
         return float("inf")
-    return (datetime.now(timezone.utc) - datetime.fromisoformat(iso)).total_seconds()
+    return (datetime.now(UTC) - datetime.fromisoformat(iso)).total_seconds()
 
 
 # --- commands ----------------------------------------------------------------

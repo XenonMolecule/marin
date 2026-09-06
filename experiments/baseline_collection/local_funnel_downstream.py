@@ -1,9 +1,13 @@
+# Copyright The Marin Authors
+# SPDX-License-Identifier: Apache-2.0
+
 """LOCAL, no-job computation of funnel stages 3 (router) + 4 (1.7B context length)
 on the EXISTING ModernBERT survivors (the local 350k dev/test .txt.gz = BERT-kept docs).
 
 For each survivor: route with router.bin; for the 1.7B-routed (P(extractable) < thr)
 tokenize the extraction prompt with the Qwen3-1.7B tokenizer and bucket the input length.
 """
+
 import argparse
 import gzip
 import json
@@ -68,9 +72,9 @@ def main():
     tok = AutoTokenizer.from_pretrained("Qwen/Qwen3-1.7B")
 
     # D = rules∩ft∩BERT survivors (apply rules to the BERT survivors); routing+context on D.
-    n_bert = 0            # ft∩BERT survivors (= all lines in this file)
-    n_rules = 0           # D: also pass rules
-    n_jt = n_llm = 0      # routing of D
+    n_bert = 0  # ft∩BERT survivors (= all lines in this file)
+    n_rules = 0  # D: also pass rules
+    n_jt = n_llm = 0  # routing of D
     by_src = {"useful": [0, 0], "no_useful": [0, 0]}  # [justext, 1.7b] among D
     over = {str(t): 0 for t in CTX}
     lens = []
@@ -99,7 +103,8 @@ def main():
                 bs = body_strip(text)
                 ids = tok.apply_chat_template(
                     [{"role": "system", "content": SYS}, {"role": "user", "content": UTMPL.format(example=bs)}],
-                    add_generation_prompt=True, tokenize=True,
+                    add_generation_prompt=True,
+                    tokenize=True,
                 )
                 lens.append(len(ids))
                 for t in CTX:
@@ -110,17 +115,30 @@ def main():
 
     lens.sort()
     pct = lambda q: lens[min(len(lens) - 1, int(q * len(lens)))] if lens else 0
-    print(json.dumps({
-        "in_file": args.in_file,
-        "n_bert_survivors": n_bert,
-        "n_after_rules_D": n_rules,
-        "rules_discard_of_bert_survivors_pct": round(100 * (n_bert - n_rules) / n_bert, 2),
-        "route_justext": n_jt, "route_1p7b": n_llm,
-        "pct_justext_of_D": round(100 * n_jt / n_rules, 2), "pct_1p7b_of_D": round(100 * n_llm / n_rules, 2),
-        "by_source_D_[justext,1p7b]": by_src,
-        "ctx_over_among_1p7b": {k: f"{v} ({100*v/n_llm:.1f}%)" for k, v in over.items()},
-        "tok_len_1p7b": {"mean": round(sum(lens) / len(lens)) if lens else 0, "p50": pct(.5), "p90": pct(.9), "p99": pct(.99), "max": lens[-1] if lens else 0},
-    }, indent=2))
+    print(
+        json.dumps(
+            {
+                "in_file": args.in_file,
+                "n_bert_survivors": n_bert,
+                "n_after_rules_D": n_rules,
+                "rules_discard_of_bert_survivors_pct": round(100 * (n_bert - n_rules) / n_bert, 2),
+                "route_justext": n_jt,
+                "route_1p7b": n_llm,
+                "pct_justext_of_D": round(100 * n_jt / n_rules, 2),
+                "pct_1p7b_of_D": round(100 * n_llm / n_rules, 2),
+                "by_source_D_[justext,1p7b]": by_src,
+                "ctx_over_among_1p7b": {k: f"{v} ({100*v/n_llm:.1f}%)" for k, v in over.items()},
+                "tok_len_1p7b": {
+                    "mean": round(sum(lens) / len(lens)) if lens else 0,
+                    "p50": pct(0.5),
+                    "p90": pct(0.9),
+                    "p99": pct(0.99),
+                    "max": lens[-1] if lens else 0,
+                },
+            },
+            indent=2,
+        )
+    )
 
 
 if __name__ == "__main__":

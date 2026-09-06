@@ -269,3 +269,89 @@ extraction fleet. See [[feedback-iris-budget-demotes-priority-band]].
   dies with `multihost_broadcast_sync requires jax distributed client`.
 - Set `LEVANTER_PORTABLE_TPU_CACHE=1` so a preempted run warm-hits the compile
   cache on a new slice instead of a ~76 min cold recompile.
+
+## Arm D — mix50 (added 2026-08-15)
+
+Motivation: arm A lost on every eval set, and every eval set is scored WITHOUT
+`[S]`. A 100%-conditioned model never sees an unconditioned document, so the
+gap conflates "conditioning hurts" with "the model was never trained for the
+eval-time input distribution". Arm D prepends `[S]` to a deterministic half of
+A's documents and leaves the other half bare, at the same 9e19 cell.
+
+**Which docs get the prompt is fixed by content, not by position or RNG:**
+
+```
+mix_conditioned(doc_id) = int(sha1("sysprompt30b-mix50-v1:" + doc_id)[:8], 16) % 2 == 0
+```
+
+(`build_sysprompt30b_dataset.py:mix_conditioned`; salt `MIX_SALT`, modulus
+`MIX_MODULUS`). Every `ab-*` record now carries `mix_conditioned` (bool) and
+`mixed_text` (`conditioned_text` when true, else `text`), and the emit manifest
+records `mix_rule` plus `emitted_mix_conditioned_docs`. Re-running emit at any
+scale reproduces the same assignment; changing the salt is a new experiment and
+must get a new tag. Balance check on 200k synthetic ids: 50.09%.
+
+Pipeline is unchanged otherwise:
+- `emit --tag 998m_9e19` was re-run in place (job
+  `/michaelryan/emit-sp30b-998m-9e19-mix50`) — `text`/`conditioned_text` are
+  byte-identical to before, so A/B/C caches are unaffected; `extra-*` untouched.
+- `tokenize_sysprompt30b.py --tag 998m_9e19 --arms D` → cache
+  `sysprompt30b_998m_9e19_D-<hash>` (`text_key=mixed_text`), expected
+  ≈ C + ½·(A−C) ≈ 14.69B tokens.
+- register `sysprompt30b_998m_9e19_D` in `curation_plan.py`, then
+  `launch_sysprompt30b_ablation.py --arms D` (one epoch, frozen d1536@9e19 HPs,
+  v5p-16 us-central1). B and C already bracket D's token count, so no new
+  control is needed.
+
+Eval note: D should be scored both bare (as A/B/C were) and with a generated
+`[S]` prepended, since the point of the mix is that both modes work.
+
+### Arm D RESULT (complete 2026-08-17, step 56,030, HF export at `hf/step-56030`)
+
+| | A sysprompt | B token-matched | C doc-matched | **D mix50** |
+|---|---|---|---|---|
+| eval/loss | 2.9419 | **2.8368** | 2.8397 | 2.8403 |
+| eval/bpb | 1.0102 | **0.9705** | 0.9716 | 0.9717 |
+| eval/macro_bpb | 1.1211 | **1.0441** | 1.0451 | 1.0468 |
+| lima/bpb | 0.8718 | **0.8395** | 0.8404 | 0.8421 |
+| paloma/bpb | 1.0198 | **0.9778** | 0.9789 | 0.9790 |
+| uncheatable/bpb | 0.9448 | **0.9222** | 0.9234 | 0.9236 |
+
+D matches C to 0.0001 bpb (0.9717 vs 0.9716) — i.e. within the B/C noise floor
+(0.0011) — and recovers essentially the entire 0.04-bpb penalty of arm A, on
+every eval set. So the A gap was a train/eval distribution mismatch (always
+conditioned in training, never at eval), not the prompts poisoning the model:
+half-conditioning costs ~1.2% of tokens and nothing measurable on bare evals.
+Only lima (+0.0017 vs C) and macro_bpb (+0.0017) show a whisker; both are at the
+noise floor.
+
+Not yet measured: whether the conditioned mode of D (or A) is *better* than
+baseline when a matching `[S]` IS present at eval time. That needs the eval docs
+scored with a generated system prompt prepended.
+
+### Arm D on SC (transferred 2026-08-17)
+
+`/juice2/scr2/nlp/personal-rm/dclm_sysprompts/models/mix50/` — alongside the
+existing `sysprompt` (A), `token-matched` (B) and `doc-matched` (C) dirs, same
+5-file HF layout. Source: `hf/step-56030`. Verified `model.safetensors`
+3,992,168,352 bytes, md5 `77a3373b0838ea2810393ea0f2a63573` == GCS.
+
+Two export-format notes, both resolved so all four arms load identically:
+- D was exported by transformers **5.12.1**, A/B/C by **4.57.5**. Every
+  architecture field matches; 5.x merely adds a nested `rope_parameters` while
+  keeping the 4.x top-level `rope_theta`/`rope_scaling`, so an older loader reads
+  the same values.
+- The 5.x export writes a minimal `tokenizer_config.json` (336 B, no
+  `added_tokens_decoder`) and no `special_tokens_map.json`. `tokenizer.json` is
+  byte-identical across all four arms (md5 `f97dc2d5…`), so the 4.x-format files
+  were copied in from `doc-matched`; the 5.x one is kept as
+  `tokenizer_config.transformers5.json.bak`. All four arms' tokenizer files now
+  hash identically.
+
+**Transfer route:** a laptop relay (`gcloud storage cat | ssh`) runs at ~0.8 MB/s
+and would need ~80 min for 3.7 GB — the laptop uplink is the bottleneck, and
+parallel byte-ranges do not help. The DTN pulling straight from GCS is far
+faster. That needs a one-time interactive
+`CLOUDSDK_CONFIG=/juice2/scr2/nlp/personal-rm/.gcloud gcloud auth login` on
+scdt, which is now DONE — future checkpoint moves are a direct
+`gcloud storage cp` on scdt, no relay.

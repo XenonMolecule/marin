@@ -46,6 +46,18 @@ FASTTEXT_LPV11_W640 = (
 POOLED_LPV11_10M = "gs://marin-us-east5/checkpoints/modernbert-useful/mb-clf-lpv11-pooled-10M/hf"
 MODERNBERT_LPV11_10M = "gs://marin-us-east5/checkpoints/modernbert-useful/mb-clf-lpv11-base-10M-c8192/hf"
 
+# --- lpv11 TEXT line (classifiers run on the EXTRACTED text, extraction happens first) ----------
+# TEXT-trained models: input = lower(ws-collapse(resiliparse-rs main content of the RAW html)) — the
+# one-extraction deployment representation the planner's ``*_textraw_*`` score columns priced
+# (comparison_sample.ClassifierInput.TEXT_FROM_RAW). fastText w640 TEXT was trained in us-central2 and
+# mirrored here; the neural checkpoints live in us-east5 natively.
+FASTTEXT_LPV11_TEXT_W640 = (
+    "gs://marin-us-east5/classifiers/useful_fasttext_lpv11/"
+    "resiliparse_scale_w640_sub0p22_strat_prep_mc500_TEXT/model.bin"
+)
+POOLED_LPV11_TEXT_90M = "gs://marin-us-east5/checkpoints/modernbert-useful/mb-clf-lpv11-text-pooled-90M/hf"
+ETTIN68_LPV11_TEXT_10M = "gs://marin-us-east5/checkpoints/modernbert-useful/mb-clf-lpv11-text-ettin68-10M/hf"
+
 # Prebuilt Linux artifact for the XenonMolecule fork's Rust extractor (resiliparse._extract_rs).
 # Pinned by the COMMIT it was built from: the extracted text is the training text, so a rebuild from
 # a different commit changes the corpus and must bump the version.
@@ -63,6 +75,12 @@ class Extractor(StrEnum):
 # ModernBERT-base tokenizer / pad id (answerdotai/ModernBERT-base).
 MODERNBERT_TOKENIZER = "answerdotai/ModernBERT-base"
 MODERNBERT_PAD_TOKEN_ID = 50283
+# [SEP] — used to derive a shorter-context tokenization from the stored max_length ids without
+# re-tokenizing (batch_format.truncate_ids); parity asserted against the real tokenizer in tests.
+MODERNBERT_SEP_TOKEN_ID = 50282
+# [CLS] — prepended by the gigatoken arrow tokenize path (vectorized special-token assembly);
+# parity asserted against the real tokenizer in tests.
+MODERNBERT_CLS_TOKEN_ID = 50281
 
 DEFAULT_STEP_ORDER = ("decode", "body_strip", "fasttext", "justext", "tokenize", "modernbert")
 
@@ -120,11 +138,27 @@ class PipelineSpec:
     # against later — the drop is destructive, exactly like fastText's.
     pooled_ckpt: str | None = None  # None => no pooled stage (the v1-v3 line).
     pooled_threshold: float | None = None
+    # Early-exit band (the TEXT line): a doc with pooled prob >= ``pooled_hi`` is ACCEPTED outright
+    # and the terminal model never scores it; below ``pooled_threshold`` it is dropped; only the
+    # uncertain band in between reaches the terminal model. ``pooled_hi`` IS namespace-defining: a
+    # hi-accepted doc has no stored terminal prob, so re-tuning hi cannot be a stored-prob re-filter.
+    pooled_hi: float | None = None
 
     # --- stage 2: ModernBERT useful-filter (TPU) ---
     # The checkpoint is namespace-defining; the threshold is a cheap late-bound view.
     modernbert_ckpt: str = MODERNBERT_CKPT_V1
     modernbert_threshold: float = 0.1974  # METADATA only (NOT in compute_version).
+    # Eval context of the terminal model when it differs from ``max_length`` (the TEXT line runs
+    # ettin68 at 2048 on ids derived from the stored ``max_length`` tokenization — same checkpoint,
+    # 3.9x the throughput). Namespace-defining: it changes every stored terminal prob.
+    modernbert_max_length: int | None = None
+
+    # --- storage contract version (None = the v1/v2 flat layout) ---
+    # 3 = the sharded 8M-scale contract: work-list is shard parquets (not a flat manifest), claims
+    # and registries are per-shard, presurvivors/kept use the V3 schemas (NO input_ids — Phase B
+    # re-tokenizes from ``text`` via gigatoken), and text columns are written at zstd level 12.
+    # Namespace-defining: the on-disk layout is incompatible with v2 readers.
+    storage_version: int | None = None
 
     # --- stage 3: extraction (CPU, Phase C) — produces the training ``text`` ---
     # None means JUSTEXT. It defaults to None rather than to the enum so that specs predating this
@@ -140,6 +174,21 @@ class PipelineSpec:
     def extraction_engine(self) -> Extractor:
         """The Phase-C engine; ``extractor=None`` is the legacy jusText default."""
         return self.extractor or Extractor.JUSTEXT
+
+    @property
+    def is_text_line(self) -> bool:
+        """True when the classifiers consume the EXTRACTED text (extraction runs in Phase A).
+
+        The text line is a 2-phase pipeline: Phase A extracts every decoded doc and gates on
+        fastText-TEXT; Phase B (pooled band + terminal model) writes the final ``kept/`` directly —
+        there is no Phase C.
+        """
+        return "clf_text" in self.step_order
+
+    @property
+    def modernbert_eval_length(self) -> int:
+        """The terminal model's eval context (defaults to ``max_length``)."""
+        return self.modernbert_max_length or self.max_length
 
     def _namespace_fields(self) -> dict:
         """The dict hashed into the version. Excludes ``spec_id`` (carried in the path) and
@@ -220,6 +269,10 @@ V2_STEP_ORDER = ("decode", "body_strip", "fasttext", "tokenize", "modernbert", "
 # lpv11 line: pooled culls between fastText and ModernBERT (same tokens, ~180x cheaper), and the
 # terminal extraction is the Rust resiliparse fork instead of jusText.
 LPV11_STEP_ORDER = ("decode", "body_strip", "fasttext", "tokenize", "pooled", "modernbert", "resiliparse_rs")
+# TEXT line: extraction FIRST (resiliparse-rs is cheap enough to run on every decoded doc), then
+# every classifier reads lower(collapse(extracted)) — "clf_text". The pooled stage is an early-exit
+# BAND (accept >= hi, drop < lo, send the middle to the terminal model at a short eval context).
+TEXTPIPE_STEP_ORDER = ("decode", "resiliparse_rs", "clf_text", "fasttext", "tokenize", "pooled_band", "modernbert")
 
 
 # Registry of all pipeline versions. ADD a new entry (never mutate an old one) per bump.
@@ -279,6 +332,71 @@ SPECS: dict[str, PipelineSpec] = {
         justext_max_html_chars=50_000_000,
         justext_timeout=60.0,
         step_order=LPV11_STEP_ORDER,
+    ),
+    # lpv11_fastpipe_v2_1: IDENTICAL cascade semantics to v2 (same models, thresholds, band, ctx —
+    # same corpus content), new namespace for the 8M-scale storage contract: sharded work-list and
+    # claims, V3 schemas without input_ids, zstd-12 text. Proven-at-10k v2 stays as the reference.
+    "lpv11_fastpipe_v2_1": PipelineSpec(
+        spec_id="lpv11_fastpipe_v2_1",
+        fasttext_model=FASTTEXT_LPV11_TEXT_W640,
+        fasttext_threshold=0.0048,
+        pooled_ckpt=POOLED_LPV11_TEXT_90M,
+        pooled_threshold=0.079,
+        pooled_hi=0.8883,
+        modernbert_ckpt=ETTIN68_LPV11_TEXT_10M,
+        modernbert_threshold=0.4378,
+        modernbert_max_length=2048,
+        extractor=Extractor.RESILIPARSE_RS,
+        resiliparse_rs_commit=RESILIPARSE_RS_COMMIT,
+        justext_max_html_chars=50_000_000,
+        justext_timeout=60.0,
+        storage_version=3,
+        step_order=TEXTPIPE_STEP_ORDER,
+    ),
+    # lpv11_fastpipe_v2_1_fused: IDENTICAL cascade semantics to v2_1, storage_version=4 — the
+    # SINGLE-PHASE contract (fused_phase.py): Phase A runs on the TPU host's own CPUs and feeds
+    # the chip through RAM, so NO presurvivors are ever written (no reaper, no _a_done, no
+    # cross-phase claims). Output contract (kept/ + catalog + _b_done) is identical to v3.
+    # Benchmark protocol: .agents/projects/fused_worker_benchmark.md.
+    "lpv11_fastpipe_v2_1_fused": PipelineSpec(
+        spec_id="lpv11_fastpipe_v2_1_fused",
+        fasttext_model=FASTTEXT_LPV11_TEXT_W640,
+        fasttext_threshold=0.0048,
+        pooled_ckpt=POOLED_LPV11_TEXT_90M,
+        pooled_threshold=0.079,
+        pooled_hi=0.8883,
+        modernbert_ckpt=ETTIN68_LPV11_TEXT_10M,
+        modernbert_threshold=0.4378,
+        modernbert_max_length=2048,
+        extractor=Extractor.RESILIPARSE_RS,
+        resiliparse_rs_commit=RESILIPARSE_RS_COMMIT,
+        justext_max_html_chars=50_000_000,
+        justext_timeout=60.0,
+        storage_version=4,
+        step_order=TEXTPIPE_STEP_ORDER,
+    ),
+    # lpv11_fastpipe_v2: the TEXTONLY-7d config from the planner's optimal-cascade search
+    # (.agents/projects/planner_text_classifier_stages.md, 2026-08-23). Extraction runs FIRST; every
+    # classifier consumes the extracted text; the pooled 90M gate is an early-exit band; the terminal
+    # ettin68 runs at ctx 2048 (F1 within the 0.015 noise floor of 8192 at 3.9x the throughput).
+    # Thresholds are the search's held-out operating points on the ``*_textraw_*`` (deployment-input)
+    # columns of the 100k sample. ``modernbert_threshold`` stays late-bound over stored probs for
+    # BAND docs; hi-accepted docs are kept without a terminal prob, so ``pooled_hi`` is in the hash.
+    "lpv11_fastpipe_v2": PipelineSpec(
+        spec_id="lpv11_fastpipe_v2",
+        fasttext_model=FASTTEXT_LPV11_TEXT_W640,
+        fasttext_threshold=0.0048,
+        pooled_ckpt=POOLED_LPV11_TEXT_90M,
+        pooled_threshold=0.079,
+        pooled_hi=0.8883,
+        modernbert_ckpt=ETTIN68_LPV11_TEXT_10M,
+        modernbert_threshold=0.4378,
+        modernbert_max_length=2048,
+        extractor=Extractor.RESILIPARSE_RS,
+        resiliparse_rs_commit=RESILIPARSE_RS_COMMIT,
+        justext_max_html_chars=50_000_000,
+        justext_timeout=60.0,
+        step_order=TEXTPIPE_STEP_ORDER,
     ),
 }
 

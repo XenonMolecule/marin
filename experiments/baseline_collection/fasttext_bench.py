@@ -1,16 +1,20 @@
+# Copyright The Marin Authors
+# SPDX-License-Identifier: Apache-2.0
+
 """Benchmark fastText classifier inference throughput (docs/sec per process).
 
 Per doc: to_fasttext_text(body) [ws-collapse + lowercase] then model.predict — the real
 per-doc cost given body_strip HTML as input. Benches one or more models on the same sample.
 """
+
 import argparse
 import gzip
 import json
 import re
 import time
 
-import fsspec
 import fasttext
+import fsspec
 
 _WS = re.compile(r"\s+")
 
@@ -58,7 +62,10 @@ def main() -> None:
         p = lambda q: lat[min(n - 1, int(q * n))]
         print(f"\n=== {label} ({path.split('/')[-1]}) ===", flush=True)
         print(f"throughput: {n/dt:.0f} docs/sec/process  ({dt:.1f}s for {n})", flush=True)
-        print(f"per-doc us: mean {1e6*dt/n:.0f} | p50 {p(0.5):.0f} | p90 {p(0.9):.0f} | p99 {p(0.99):.0f} | max {lat[-1]:.0f}", flush=True)
+        print(
+            f"per-doc us: mean {1e6*dt/n:.0f} | p50 {p(0.5):.0f} | p90 {p(0.9):.0f} | p99 {p(0.99):.0f} | max {lat[-1]:.0f}",
+            flush=True,
+        )
 
 
 if __name__ == "__main__":

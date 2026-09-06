@@ -148,6 +148,23 @@ def test_presurvivor_empty(tmp_path):
     assert t.num_rows == 0 and t.schema.equals(batch_format.PRESURVIVOR_SCHEMA)
 
 
+def test_presurvivor_text_columnar_write_roundtrip(tmp_path):
+    """The columnar TEXT-line write (ids as a ready arrow column, the gigatoken fast path) must
+    produce the identical on-disk table as the row-dict write."""
+    scalar = {"doc_id": "a", "url": "u", "warc_hash": "h", "snapshot": "s", "fasttext_score": 0.5, "text": "body"}
+    row_path = str(tmp_path / "rows.parquet")
+    batch_format.write_presurvivors_text(row_path, [{**scalar, "input_ids": [1, 2, 3], "n_tokens": 3}])
+    col_path = str(tmp_path / "cols.parquet")
+    ids = pa.array([[1, 2, 3]], type=pa.list_(pa.int32()))
+    batch_format.write_presurvivors_text_columns(col_path, [scalar], ids, np.array([3], dtype=np.int32))
+    assert batch_format.read_table(col_path).equals(batch_format.read_table(row_path))
+
+    empty = str(tmp_path / "empty.parquet")
+    batch_format.write_presurvivors_text_columns(empty, [], pa.array([], type=pa.list_(pa.int32())), [])
+    t = batch_format.read_table(empty)
+    assert t.num_rows == 0 and t.schema.equals(batch_format.PRESURVIVOR_TEXT_SCHEMA)
+
+
 def test_keeplist_roundtrip(tmp_path):
     path = str(tmp_path / "kl.parquet")
     batch_format.write_keeplist(path, ["a", "b"], [0.30, 0.05])

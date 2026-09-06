@@ -23,7 +23,7 @@ import json
 import logging
 import os
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import fsspec
 
@@ -49,7 +49,9 @@ DEFAULT_TRACKER_PREFIX: str = "gs://marin-us-central1/metadata/region_locks/data
 # prepend `gs://` because rigging stores bare bucket names.
 def _build_region_to_bucket() -> dict[str, str]:
     try:
-        from rigging.filesystem import REGION_TO_DATA_BUCKET as _src
+        from rigging.filesystem import data_config
+
+        _src = {r: s.name for r, s in data_config().region_buckets.items()}
 
         return {region: f"gs://{bucket}" for region, bucket in _src.items()}
     except Exception:
@@ -237,7 +239,7 @@ def _latest_mtime_seconds_ago(fs, dir_urlpath: str) -> float | None:
         if raw is None:
             continue
         if isinstance(raw, (int, float)):
-            t = datetime.fromtimestamp(raw, tz=timezone.utc)
+            t = datetime.fromtimestamp(raw, tz=UTC)
         elif isinstance(raw, str):
             t = datetime.fromisoformat(raw.replace("Z", "+00:00"))
         elif isinstance(raw, datetime):
@@ -245,12 +247,12 @@ def _latest_mtime_seconds_ago(fs, dir_urlpath: str) -> float | None:
         else:
             continue
         if t.tzinfo is None:
-            t = t.replace(tzinfo=timezone.utc)
+            t = t.replace(tzinfo=UTC)
         times.append(t)
 
     if not times:
         return None
-    return (datetime.now(timezone.utc) - max(times)).total_seconds()
+    return (datetime.now(UTC) - max(times)).total_seconds()
 
 
 def _claim_is_live(checkpoint_dir: str, staleness_seconds: float) -> bool:

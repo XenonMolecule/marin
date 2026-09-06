@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import json
 import logging
 import random
 import time
@@ -39,7 +40,10 @@ from collections.abc import Callable
 
 import fsspec
 import numpy as np
+import pyarrow as pa
+import pyarrow.parquet as pq
 
+from experiments.baseline_collection.comparison_sample import normalize_text
 from experiments.baseline_collection.decode_warcs_clean import _load_manifest, _warc_path_hash
 from experiments.baseline_collection.run_extract_standalone import (
     _claim_warc_atomic,
@@ -48,9 +52,15 @@ from experiments.baseline_collection.run_extract_standalone import (
     _refresh_claim,
     _register_completed_warc,
 )
-from experiments.fast_curation import batch_format
+from experiments.fast_curation import batch_format, preprocess
+from experiments.fast_curation import shard_worklist as sw
 from experiments.fast_curation.cpu_phase import _phase_is_complete
-from experiments.fast_curation.spec import PipelineSpec, get_spec
+from experiments.fast_curation.spec import (
+    MODERNBERT_CLS_TOKEN_ID,
+    MODERNBERT_SEP_TOKEN_ID,
+    PipelineSpec,
+    get_spec,
+)
 from experiments.fast_curation.telemetry import Heartbeat, region_from_bucket
 
 logger = logging.getLogger(__name__)
@@ -153,14 +163,17 @@ def load_model(spec: PipelineSpec, mesh, bucket: str):
     from levanter.utils.tree_utils import inference_mode
 
     hf_ref = spec.modernbert_ckpt_for(bucket)
-    backend = "splash" if spec.max_length >= 8192 else "vanilla"
+    # The terminal model may run at a SHORTER eval context than the stored tokenization (the TEXT
+    # line's ettin68@2048); its ids are derived per batch via batch_format.truncate_ids.
+    eval_len = spec.modernbert_eval_length
+    backend = "splash" if eval_len >= 8192 else "vanilla"
     # Derive architecture (hidden/layers/heads) from the checkpoint's own config.json so base
     # AND large checkpoints load correctly; override only eval context, attn backend, labels, pad.
     converter = ModernBertConfig().hf_checkpoint_converter(ref_checkpoint=hf_ref)
     hf_config = converter.hf_config_from_hf_checkpoint(hf_ref)
     config = dataclasses.replace(
         ModernBertConfig.from_hf_config(hf_config),
-        max_seq_len=spec.max_length,
+        max_seq_len=eval_len,
         attn_backend=backend,
         num_labels=2,
         pad_token_id=spec.pad_token_id,
@@ -199,7 +212,6 @@ def load_pooled_model(spec: PipelineSpec, mesh, bucket: str):
     logits exactly like ModernBERT's, so ``score_survivors`` scores it unchanged.
     """
     import dataclasses as _dc
-    import json
 
     from haliax.partitioning import set_mesh
     from levanter.models.pooled_transformer import PooledTransformerConfig, load_pooled_transformer_classifier
@@ -309,8 +321,6 @@ def process_warc(
     refresh: Callable[[], None] | None = None,
 ) -> dict:
     """Score one WARC's survivors and write kept/tombstone/timing; register on success."""
-    import pyarrow as pa
-
     survivor_path = f"{spec.survivors_prefix(bucket)}/data-{warc_hash}.parquet"
     kept_path = f"{spec.kept_prefix(bucket)}/data-{warc_hash}.parquet"
     tomb_path = f"{spec.tombstones_prefix(bucket)}/data-{warc_hash}.jsonl.gz"
@@ -360,8 +370,6 @@ def process_warc(
     }
     try:
         with fsspec.open(timing_path, "w") as f:
-            import json
-
             json.dump(payload, f)
     except Exception as e:
         logger.warning("failed to write tpu timing for %s: %s", warc_hash, e)
@@ -459,8 +467,6 @@ def process_warc_v2b(
     n_keep = int((probs >= spec.modernbert_threshold).sum()) if n else 0
     try:
         with fsspec.open(timing_path, "w") as f:
-            import json
-
             json.dump(
                 {
                     "warc_hash": warc_hash,
@@ -501,6 +507,406 @@ def process_warc_v2b(
     }
 
 
+def _device_kind() -> str:
+    import jax
+
+    return jax.devices()[0].device_kind
+
+
+def _device_count() -> int:
+    import jax
+
+    return len(jax.devices())
+
+
+def process_warc_text_b(
+    spec: PipelineSpec,
+    warc_hash: str,
+    score_fn,
+    model,
+    config,
+    *,
+    bucket: str,
+    batch_size: int,
+    bucket_tokens: bool,
+    registry_prefix: str,
+    pooled: tuple,
+    refresh: Callable[[], None] | None = None,
+) -> dict:
+    """TEXT-line Phase B: pooled early-exit band, then the terminal model on the uncertain band.
+
+    Terminal phase of the pipeline (no Phase C): the presurvivor already carries the extracted
+    ``text``, so this writes the final ``kept/`` parquet directly. Per doc, on the pooled prob p:
+
+    * ``p >= pooled_hi``       -> kept outright (``modernbert_prob`` = NaN — never scored),
+    * ``p < pooled_threshold`` -> dropped (tombstone with NaN ``modernbert_prob``),
+    * otherwise                -> the terminal model adjudicates at ``modernbert_eval_length``
+      (ids derived from the stored tokenization via ``truncate_ids``) against
+      ``modernbert_threshold``; its prob is stored either way.
+    """
+    presurvivor_path = f"{spec.presurvivors_prefix(bucket)}/data-{warc_hash}.parquet"
+    kept_path = f"{spec.kept_prefix(bucket)}/data-{warc_hash}.parquet"
+    tomb_path = f"{spec.tombstones_prefix(bucket)}/data-{warc_hash}.jsonl.gz"
+    timing_path = f"{spec.namespace(bucket)}/timing_b/data-{warc_hash}.json"
+
+    t0 = time.monotonic()
+    table = batch_format.read_table(presurvivor_path)
+    n = table.num_rows
+    doc_ids = table.column("doc_id").to_pylist()
+    id_lists = table.column("input_ids").to_pylist() if n else []
+    t_read = time.monotonic() - t0
+
+    pooled_model, pooled_config = pooled
+    t_p = time.monotonic()
+    pooled_probs = score_survivors(
+        score_fn,
+        pooled_model,
+        pooled_config,
+        id_lists,
+        batch_size=batch_size,
+        pad_token_id=spec.pad_token_id,
+        bucket_tokens=bucket_tokens,
+        on_batch=refresh,
+    )
+    t_pooled = time.monotonic() - t_p
+
+    band_idx = [i for i in range(n) if spec.pooled_threshold <= pooled_probs[i] < spec.pooled_hi]
+    t1 = time.monotonic()
+    eval_len = spec.modernbert_eval_length
+    band_scored = score_survivors(
+        score_fn,
+        model,
+        config,
+        [batch_format.truncate_ids(id_lists[i], eval_len, MODERNBERT_SEP_TOKEN_ID) for i in band_idx],
+        batch_size=batch_size,
+        pad_token_id=spec.pad_token_id,
+        bucket_tokens=bucket_tokens,
+        on_batch=refresh,
+    )
+    t_score = time.monotonic() - t1
+
+    mb_probs = np.full((n,), np.nan, dtype=np.float32)
+    for slot, i in enumerate(band_idx):
+        mb_probs[i] = band_scored[slot]
+
+    hi_accept = pooled_probs >= spec.pooled_hi
+    keep_mask = hi_accept | (mb_probs >= spec.modernbert_threshold)  # NaN >= t is False
+    n_kept = int(keep_mask.sum())
+
+    kept_table = table.filter(pa.array(keep_mask)) if n else table
+    kept_table = kept_table.append_column("pooled_prob", pa.array(pooled_probs[keep_mask], type=pa.float32()))
+    kept_table = kept_table.append_column("modernbert_prob", pa.array(mb_probs[keep_mask], type=pa.float32()))
+    batch_format.write_kept(kept_path, kept_table, batch_format.KEPT_SCHEMA_TEXT)
+
+    if n:
+        dropped = [(doc_ids[i], float(pooled_probs[i]), float(mb_probs[i])) for i in range(n) if not keep_mask[i]]
+        if dropped:
+            batch_format.write_tombstones_band(tomb_path, dropped)
+
+    try:
+        with fsspec.open(timing_path, "w") as f:
+            json.dump(
+                {
+                    "warc_hash": warc_hash,
+                    "n_presurvivors": n,
+                    "n_hi_accept": int(hi_accept.sum()),
+                    "n_band": len(band_idx),
+                    "n_kept": n_kept,
+                    "read_s": round(t_read, 3),
+                    "pooled_s": round(t_pooled, 3),
+                    "score_s": round(t_score, 3),
+                    # Accelerator attribution: the fleet mixes TPU generations (v6e/v5p/v4/v5e), so
+                    # per-WARC rates are only comparable within a device kind.
+                    "device": _device_kind(),
+                    "n_devices": _device_count(),
+                    "wall_s": round(time.monotonic() - t0, 3),
+                },
+                f,
+            )
+    except Exception as e:
+        logger.warning("failed to write phase-B timing for %s: %s", warc_hash, e)
+    _register_completed_warc(warc_hash, registry_prefix)
+    wall = time.monotonic() - t0
+    logger.info(
+        "B(text) %s: %d presurvivors -> %d hi-accept + %d band -> %d kept (%.1f%%) in %.1fs "
+        "(pooled %.1fs, terminal %.1fs)",
+        warc_hash,
+        n,
+        int(hi_accept.sum()),
+        len(band_idx),
+        n_kept,
+        100.0 * n_kept / n if n else 0.0,
+        wall,
+        t_pooled,
+        t_score,
+    )
+    return {
+        "n_kept": n_kept,
+        "stats": {
+            "docs_in": n,
+            "docs_out": n_kept,
+            "wall_seconds": wall,
+            "compute_seconds": {"pooled": t_pooled, "modernbert": t_score, "read": t_read},
+        },
+    }
+
+
+def process_warc_v3(
+    spec: PipelineSpec,
+    warc_hash: str,
+    score_fn,
+    model,
+    config,
+    *,
+    bucket: str,
+    batch_size: int,
+    bucket_tokens: bool,
+    tokenize_batch,
+    pooled: tuple,
+    refresh: Callable[[], None] | None = None,
+    table: pa.Table | None = None,
+) -> dict:
+    """V3 Phase B: tokenize-on-read (no stored input_ids), band-route, write KEPT_V3 at zstd-12.
+
+    Same cascade semantics as :func:`process_warc_text_b`; the presurvivor carries only ``text``, so
+    the classifier tokens are recomputed here via the gigatoken arrow path (~4% of B wall, ids
+    byte-identical to the stored-token contract by the startup parity gate). Returns the WARC's
+    catalog row (registration is the shard loop's job, not this function's).
+
+    ``table`` bypasses the presurvivor read: the fused single-phase runner (``fused_phase``)
+    hands the freshly-extracted PRESURVIVOR_V3 rows straight from RAM.
+    """
+    kept_path = f"{spec.kept_prefix(bucket)}/data-{warc_hash}.parquet"
+    tomb_path = f"{spec.tombstones_prefix(bucket)}/data-{warc_hash}.jsonl.gz"
+
+    t0 = time.monotonic()
+    if table is None:
+        table = batch_format.read_table(f"{spec.presurvivors_prefix(bucket)}/data-{warc_hash}.parquet")
+    n = table.num_rows
+    doc_ids = table.column("doc_id").to_pylist()
+    texts = table.column("text").to_pylist() if n else []
+    t_read = time.monotonic() - t0
+
+    t_tok0 = time.monotonic()
+    ids_column, n_tokens = tokenize_batch([normalize_text(t) for t in texts])
+    id_lists = ids_column.to_pylist()
+    t_tok = time.monotonic() - t_tok0
+
+    pooled_model, pooled_config = pooled
+    t_p = time.monotonic()
+    pooled_probs = score_survivors(
+        score_fn,
+        pooled_model,
+        pooled_config,
+        id_lists,
+        batch_size=batch_size,
+        pad_token_id=spec.pad_token_id,
+        bucket_tokens=bucket_tokens,
+        on_batch=refresh,
+    )
+    t_pooled = time.monotonic() - t_p
+
+    band_idx = [i for i in range(n) if spec.pooled_threshold <= pooled_probs[i] < spec.pooled_hi]
+    eval_len = spec.modernbert_eval_length
+    t1 = time.monotonic()
+    band_scored = score_survivors(
+        score_fn,
+        model,
+        config,
+        [batch_format.truncate_ids(id_lists[i], eval_len, MODERNBERT_SEP_TOKEN_ID) for i in band_idx],
+        batch_size=batch_size,
+        pad_token_id=spec.pad_token_id,
+        bucket_tokens=bucket_tokens,
+        on_batch=refresh,
+    )
+    t_score = time.monotonic() - t1
+
+    mb_probs = np.full((n,), np.nan, dtype=np.float32)
+    for slot, i in enumerate(band_idx):
+        mb_probs[i] = band_scored[slot]
+    hi_accept = pooled_probs >= spec.pooled_hi
+    keep_mask = hi_accept | (mb_probs >= spec.modernbert_threshold)  # NaN >= t is False
+    n_kept = int(keep_mask.sum())
+
+    kept_table = table.filter(pa.array(keep_mask)) if n else table
+    kept_table = kept_table.append_column("n_tokens", pa.array(np.asarray(n_tokens)[keep_mask], type=pa.int32()))
+    kept_table = kept_table.append_column("pooled_prob", pa.array(pooled_probs[keep_mask], type=pa.float32()))
+    kept_table = kept_table.append_column("modernbert_prob", pa.array(mb_probs[keep_mask], type=pa.float32()))
+    batch_format.write_table_v3(kept_path, kept_table.cast(batch_format.KEPT_V3_SCHEMA))
+    if n:
+        dropped = [(doc_ids[i], float(pooled_probs[i]), float(mb_probs[i])) for i in range(n) if not keep_mask[i]]
+        if dropped:
+            batch_format.write_tombstones_band(tomb_path, dropped)
+
+    wall = time.monotonic() - t0
+    logger.info(
+        "B(v3) %s: %d presurv -> %d hi + %d band -> %d kept in %.1fs (read %.1f tok %.1f pooled %.1f term %.1f)",
+        warc_hash,
+        n,
+        int(hi_accept.sum()),
+        len(band_idx),
+        n_kept,
+        wall,
+        t_read,
+        t_tok,
+        t_pooled,
+        t_score,
+    )
+    return {  # the CATALOG row for this WARC — where the output lives + funnel + timing.
+        "warc_hash": warc_hash,
+        "region": region_from_bucket(bucket),
+        "kept_path": kept_path,
+        "n_presurvivors": n,
+        "n_hi_accept": int(hi_accept.sum()),
+        "n_band": len(band_idx),
+        "n_kept": n_kept,
+        "read_s": round(t_read, 3),
+        "tokenize_s": round(t_tok, 3),
+        "pooled_s": round(t_pooled, 3),
+        "score_s": round(t_score, 3),
+        "wall_s": round(wall, 3),
+        "device": _device_kind(),
+        "n_devices": _device_count(),
+    }
+
+
+def run_shard_worker(
+    spec: PipelineSpec,
+    bucket: str,
+    *,
+    batch_size: int,
+    bucket_tokens: bool,
+    shuffle_seed: int,
+    poll_seconds: float,
+    max_idle_passes: int,
+    claim_stale_hours: float = 0.2,
+    max_shard: int | None = None,
+) -> None:
+    """V3 Phase B: claim SHARDS whose ``_a_done`` sentinel exists and whose index region matches
+    this worker's bucket; per-WARC done markers carry the catalog row; on shard completion write
+    ``catalog/shard-N.parquet`` and the ``_b_done`` sentinel. O(shards) claim/registry traffic."""
+    import jax
+    from haliax.partitioning import ResourceAxis, set_mesh
+    from jax.sharding import Mesh
+
+    region = region_from_bucket(bucket)
+    _assert_ckpt_in_region(spec.modernbert_ckpt_for(bucket), bucket)
+    _setup_compile_cache(f"{spec.namespace(bucket)}/_xla_cache")
+
+    tokenizer = preprocess.load_tokenizer(spec.tokenizer_ref)
+    gt_tok = preprocess.load_gigatoken(spec.tokenizer_ref)
+    special = {"cls_id": MODERNBERT_CLS_TOKEN_ID, "sep_id": MODERNBERT_SEP_TOKEN_ID}
+    preprocess.assert_gigatoken_parity(tokenizer, gt_tok, spec.max_length, **special)
+    tokenize_batch = lambda texts: preprocess.tokenize_trunc_batch_gigatoken(  # noqa: E731
+        gt_tok, texts, spec.max_length, **special
+    )
+
+    n_dev = len(jax.devices())
+    if batch_size % n_dev != 0:
+        raise ValueError(f"--batch-size {batch_size} must be a multiple of device count {n_dev}")
+    mesh = Mesh(np.array(jax.devices()).reshape(n_dev, 1), (ResourceAxis.DATA, ResourceAxis.MODEL))
+
+    with set_mesh(mesh):
+        model, config = load_model(spec, mesh, bucket)
+        pooled = load_pooled_model(spec, mesh, bucket)
+        score_fn = make_score_fn()
+
+        my_shards = [
+            e["shard"]
+            for e in sw.load_index(spec)
+            if e["region"] == region and (max_shard is None or e["shard"] < max_shard)
+        ]
+        random.Random(shuffle_seed).shuffle(my_shards)
+        hb = Heartbeat(spec, phase="b", region=region, seed=shuffle_seed, kind="tpu")
+        logger.info("B shard worker (seed=%d region=%s): %d shards", shuffle_seed, region, len(my_shards))
+
+        idle = 0
+        while True:
+            b_done = _load_completed_registry(sw.sentinel_prefix(spec, "b"))
+            a_done = _load_completed_registry(sw.sentinel_prefix(spec, "a"))
+            remaining = [s for s in my_shards if f"{s:05d}" not in b_done]
+            if not remaining:
+                logger.info("all %d region shards B-complete; exiting.", len(my_shards))
+                hb.close("done")
+                return
+            progressed = 0
+            for s in remaining:
+                if f"{s:05d}" not in a_done:
+                    continue  # A hasn't finished this shard yet.
+                claim_path = f"{sw.claim_prefix(spec, 'b')}/shard-{s:05d}"
+                if not _claim_warc_atomic(claim_path, stale_hours=claim_stale_hours):
+                    continue
+                refresh = _throttled(lambda p=claim_path: _refresh_claim(p), CLAIM_REFRESH_SECONDS)
+                marks_prefix = f"{sw.CENTRAL_BUCKET}/{spec.subdir()}/_b_marks/shard-{s:05d}"
+                pairs = sw.load_shard(spec, s)
+                marked = _load_marker_payloads(marks_prefix)
+                logger.info("claimed shard %05d: %d WARCs (%d marked)", s, len(pairs), len(marked))
+                for _, h in pairs:
+                    if h in marked:
+                        continue
+                    row = process_warc_v3(
+                        spec,
+                        h,
+                        score_fn,
+                        model,
+                        config,
+                        bucket=bucket,
+                        batch_size=batch_size,
+                        bucket_tokens=bucket_tokens,
+                        tokenize_batch=tokenize_batch,
+                        pooled=pooled,
+                        refresh=refresh,
+                    )
+                    _write_marker(f"{marks_prefix}/data-{h}", row)
+                    marked[h] = row
+                    hb.record_warc(
+                        warc_hash=h,
+                        docs_in=row["n_presurvivors"],
+                        docs_out=row["n_kept"],
+                        wall_seconds=row["wall_s"],
+                        compute_seconds={"pooled": row["pooled_s"], "modernbert": row["score_s"]},
+                    )
+                catalog = pa.Table.from_pylist([marked[h] for _, h in pairs])
+                with fsspec.open(sw.catalog_path(spec, s), "wb") as f:
+                    pq.write_table(catalog, f, compression="zstd")
+                _register_completed_warc(f"{s:05d}", sw.sentinel_prefix(spec, "b"))
+                progressed += 1
+            if progressed == 0:
+                idle += 1
+                hb.tick("idle")
+                if idle >= HARD_IDLE_PASSES * 4:  # be patient: A may still be producing shards
+                    logger.warning("no claimable shards for %d passes; exiting.", idle)
+                    hb.close("done")
+                    return
+                time.sleep(poll_seconds)
+            else:
+                idle = 0
+
+
+def _write_marker(path: str, payload: dict) -> None:
+    with fsspec.open(path, "w") as f:
+        json.dump(payload, f)
+
+
+def _load_marker_payloads(prefix: str) -> dict:
+    """{warc_hash: catalog_row} from a shard's B markers (empty dict if none yet)."""
+    fs, root = fsspec.core.url_to_fs(prefix)
+    out = {}
+    try:
+        names = fs.ls(root, refresh=True)
+    except FileNotFoundError:
+        return out
+    for p in names:
+        base = p.rsplit("/", 1)[-1]
+        if base.startswith("data-"):
+            try:
+                with fs.open(p, "r") as f:
+                    out[base[len("data-") :]] = json.load(f)
+            except Exception as e:
+                logger.warning("unreadable B marker %s: %s", p, e)
+    return out
+
+
 def run_worker(
     spec: PipelineSpec,
     manifest_path: str,
@@ -534,8 +940,10 @@ def run_worker(
         model, config = load_model(spec, mesh, bucket)
         # Both models share the forward signature and the mesh, so ONE jitted score fn serves both.
         pooled = load_pooled_model(spec, mesh, bucket) if spec.pooled_ckpt else None
-        if pooled is not None and mode != "v2b":
-            raise ValueError(f"{spec.spec_id} has a pooled stage, which only the v2b phase runs; pass --mode v2b")
+        if pooled is not None and mode not in ("v2b", "textb"):
+            raise ValueError(f"{spec.spec_id} has a pooled stage; pass --mode v2b (or textb for the TEXT line)")
+        if mode == "textb" and (pooled is None or spec.pooled_hi is None):
+            raise ValueError(f"--mode textb needs a pooled band spec (pooled_ckpt + pooled_hi); got {spec.spec_id}")
         score_fn = make_score_fn()
 
         warc_paths = _load_manifest(manifest_path)
@@ -548,12 +956,12 @@ def run_worker(
         # Central claims (us-central1) for cross-region work-stealing; B only claims WARCs whose
         # presurvivor exists in its OWN region bucket, so scoring stays local to A's region.
         central = f"gs://marin-us-central1/{spec.subdir()}"
-        if mode == "v2b":
+        if mode in ("v2b", "textb"):
             input_prefix = spec.presurvivors_prefix(bucket)
             registry_prefix = f"{central}/_completed_b"
             claim_root = f"{central}/_claims_b"
             upstream_done_path = f"{central}/_phase_a_end.json"
-            process_fn = process_warc_v2b
+            process_fn = process_warc_text_b if mode == "textb" else process_warc_v2b
         else:
             input_prefix = spec.survivors_prefix(bucket)
             registry_prefix = f"{central}/_completed"
@@ -565,7 +973,7 @@ def run_worker(
         hb = Heartbeat(spec, phase="b", region=region, seed=shuffle_seed, kind="tpu")
 
         # Phase-end sentinel for the fast self-exit (v2b writes _phase_b_end when B is globally done).
-        phase_end_path = f"{central}/_phase_b_end.json" if mode == "v2b" else None
+        phase_end_path = f"{central}/_phase_b_end.json" if mode in ("v2b", "textb") else None
         idle = 0
         total_kept = 0
         total_done = 0
@@ -608,7 +1016,7 @@ def run_worker(
                     # Keeps a long WARC's claim alive so peers don't reclaim work in flight; stops
                     # the moment batches stop landing, so a dead/wedged worker still goes stale.
                     refresh=_throttled(lambda p=claim_path: _refresh_claim(p), CLAIM_REFRESH_SECONDS),
-                    **({"pooled": pooled} if mode == "v2b" else {}),
+                    **({"pooled": pooled} if mode in ("v2b", "textb") else {}),
                 )
                 total_kept += payload["n_kept"]
                 if payload.get("stats"):
@@ -620,12 +1028,14 @@ def run_worker(
             completed_now = _load_completed_registry(registry_prefix)
             remaining = [h for h in hashes if h not in completed_now]
             if not remaining:
-                if mode == "v2b":
-                    # Signal Phase C that all keeplists are written (its upstream_done gate).
+                # Only a FULL-manifest worker may stamp the sentinel: a --limit canary shares the
+                # manifest path, so its sentinel would instantly exit every full-run worker launched
+                # after it (see cpu_phase.run_claim_loop for the same guard and its history).
+                if mode in ("v2b", "textb") and limit is None:
+                    # Signal downstream that Phase B is globally done (Phase C's upstream_done gate
+                    # on the html line; on the TEXT line just the completion marker — B is terminal).
                     try:
                         with fsspec.open(f"{central}/_phase_b_end.json", "w") as f:
-                            import json
-
                             # The manifest is what scopes this flag to THIS run. Without it the
                             # sentinel is namespace-global: a 300-WARC straggler wrote an unlabeled
                             # one and killed every newly-launched B worker of the 10k run.
@@ -690,10 +1100,17 @@ def main() -> None:
     )
     ap.add_argument("--limit", type=int, default=None, help="Only consider the first N manifest WARCs (smoke).")
     ap.add_argument(
+        "--max-shard",
+        type=int,
+        default=None,
+        help="V3 ladder cap: score only shards < N of the frozen full-pool layout (raise to scale up).",
+    )
+    ap.add_argument(
         "--mode",
         default="v1",
-        choices=["v1", "v2b"],
-        help="v1: score cpu_survivors -> kept/tombstones. v2b: score a_presurvivors -> b_keeplist.",
+        choices=["v1", "v2b", "textb"],
+        help="v1: score cpu_survivors -> kept/tombstones. v2b: score a_presurvivors -> b_keeplist. "
+        "textb (TEXT line): pooled band + terminal model over a_presurvivors -> final kept/.",
     )
     ap.add_argument(
         "--claim-stale-hours",
@@ -711,6 +1128,19 @@ def main() -> None:
     args = ap.parse_args()
 
     spec = get_spec(args.spec)
+    if spec.storage_version == 3:
+        run_shard_worker(
+            spec,
+            args.bucket,
+            batch_size=args.batch_size,
+            bucket_tokens=args.bucket_tokens,
+            shuffle_seed=args.shuffle_seed,
+            poll_seconds=args.poll_seconds,
+            max_idle_passes=args.max_idle_passes,
+            claim_stale_hours=args.claim_stale_hours,
+            max_shard=args.max_shard,
+        )
+        return
     run_worker(
         spec,
         args.manifest,

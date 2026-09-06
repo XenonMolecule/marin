@@ -1,0 +1,2 @@
+run_name,region,output_path
+curation-fineweb_edu_10k-expFM_natural-2e+18-d1024-L11-B8,us-east1,gs://marin-us-east1/checkpoints/isoflop-curation/curation-fineweb_edu_10k-expFM_natural-2e+18-d1024-L11-B8

@@ -447,7 +447,13 @@ def run_claim_loop(
             break
         completed = _load_completed_registry(registry_prefix)
         if my_hashes <= completed:
-            _write_once(phase_end_path, {"epoch": time.time(), "manifest": manifest_path})
+            # Only a FULL-manifest worker may stamp the phase-end sentinel. A sliced worker
+            # (--start/--limit, e.g. a canary) shares the manifest path, so its sentinel would pass
+            # the manifest-scope check and instantly exit every full-run worker launched after it —
+            # the historical namespace-sentinel trap, replayed through the slice door (it cost the
+            # first optimized-worker launch: a 3-WARC canary's sentinel exited it in 2 seconds).
+            if start == 0 and limit is None:
+                _write_once(phase_end_path, {"epoch": time.time(), "manifest": manifest_path})
             logger.info("phase %s: all %d of this worker's WARCs complete; exiting.", phase_key, len(pairs))
             hb.close("done")
             break

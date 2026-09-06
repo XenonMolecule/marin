@@ -27,7 +27,6 @@ import haliax as hax
 import jax
 import jax.numpy as jnp
 import jax.random as jrandom
-import levanter
 import numpy as np
 from haliax import Axis
 from haliax.partitioning import named_jit, round_axis_for_partitioning
@@ -46,6 +45,8 @@ from levanter.trainer import Trainer, TrainerConfig
 from levanter.utils.jax_utils import parameter_count
 from levanter.utils.tree_utils import inference_mode
 from transformers import AutoTokenizer
+
+import levanter
 
 logger = logging.getLogger(__name__)
 

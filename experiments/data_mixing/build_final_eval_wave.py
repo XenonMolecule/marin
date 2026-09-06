@@ -37,7 +37,7 @@ from experiments.scaling_law_sweeps.region_tracker import REGION_TO_BUCKET
 
 logger = logging.getLogger(__name__)
 
-CORPORA = ("dclm_10k", "high_quality_10k")
+CORPORA = ("dclm_10k", "high_quality_10k", "resiliparse_10k", "lpv11_fastpipe_v1_10k")
 REGIONS = ("us-east5", "us-central1", "europe-west4", "us-west4")
 
 # us-west4 has only v5litepod-*; everything else has the launcher's defaults.

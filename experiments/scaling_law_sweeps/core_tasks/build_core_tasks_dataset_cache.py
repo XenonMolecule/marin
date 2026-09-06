@@ -149,9 +149,13 @@ def main():
     ap.add_argument(
         "--upload-to", default=None, help="If set, recursively upload the populated dataset cache to this GCS prefix."
     )
-    ap.add_argument("--hub-cache-dir", default="/tmp/core_tasks_hf_home", help="Local HF_HOME for the model-config hub cache.")
+    ap.add_argument(
+        "--hub-cache-dir", default="/tmp/core_tasks_hf_home", help="Local HF_HOME for the model-config hub cache."
+    )
     ap.add_argument("--warm-checkpoint", default=None, help="A gs:// hf/step-N/ dir; from_hf(it) warms the hub cache.")
-    ap.add_argument("--upload-hub-to", default=None, help="If set, upload the warmed HF_HOME hub cache to this GCS prefix.")
+    ap.add_argument(
+        "--upload-hub-to", default=None, help="If set, upload the warmed HF_HOME hub cache to this GCS prefix."
+    )
     args = ap.parse_args()
 
     # Set HF_HOME before any transformers import so the model-config hub cache lands

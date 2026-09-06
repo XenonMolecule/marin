@@ -228,7 +228,9 @@ def main(argv: list[str] | None = None) -> None:
     main_ds = load_dataset(DD_REPO, "Dilemmas_with_values_aggregated")["test"]
     v2mft = value_to_mft(load_dataset(DD_REPO, "Values")["test"])
     fw_rows = build_framework_rows(main_ds, v2mft, args.limit)
-    principles = build_principles(_by_dilemma(main_ds), load_dataset(DD_REPO, "OpenAI_modelspec_with_system_prompts")["test"])
+    principles = build_principles(
+        _by_dilemma(main_ds), load_dataset(DD_REPO, "OpenAI_modelspec_with_system_prompts")["test"]
+    )
     logger.info("framework rows=%d | paper principles=%d", len(fw_rows), len(principles))
 
     trainer = TrainerConfig(

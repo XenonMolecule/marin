@@ -187,6 +187,8 @@ def submit_one(
         constraints=constraints,
         max_retries_preemption=20,
         max_retries_failure=5,
+        # iris job-level budget defaults to 0 (fail on first task failure); match per-task retries.
+        max_task_failures=5,
         priority_band=priority_band,
     )
     return str(job.job_id)

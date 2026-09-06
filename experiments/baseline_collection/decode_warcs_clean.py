@@ -61,6 +61,8 @@ MAX_RETRIES = 5
 RETRY_BASE_DELAY = 5.0  # seconds, doubles each retry
 RETRYABLE_STATUS_CODES = {429, 503}
 HTTP_TIMEOUT = 600  # 10 minutes — 1GB at 2MB/s = 500s
+# Wall-clock cap on one WARC body read (dribbling servers defeat per-read timeouts).
+DOWNLOAD_DEADLINE_SECONDS = 1200
 
 REPLACEMENT = "�"  # U+FFFD; must NEVER appear in correctly-decoded output
 
@@ -232,11 +234,130 @@ def decode_payload(raw: bytes, content_type_header: str | None) -> str:
         return raw.decode("latin-1")
 
 
-def _decode_one_warc(warc_path: str) -> list[dict]:
+def _iter_decoded_records(raw_stream, warc_path: str, warc_hash: str, snapshot: str, with_text_body: bool):
+    """Yield cleanly-decoded HTML response records one at a time (the loop of ``_decode_one_warc``).
+
+    A generator so callers can bound RAM: only the caller's window of decoded ``html`` strings is
+    alive, not the whole WARC's (~1-20GB materialized — what OOMed fused workers on 180GB hosts).
+    """
+    parse_errors = 0
+    fffd_skips = 0
+    for record in warcio.ArchiveIterator(raw_stream):
+        try:
+            if record.rec_type != "response":
+                continue
+            http_headers = record.http_headers
+            if http_headers is None:
+                continue
+            content_type = http_headers.get_header("Content-Type") or ""
+            if "text/html" not in content_type.lower():
+                continue
+
+            payload = record.content_stream().read()
+            html = decode_payload(payload, content_type)
+            if REPLACEMENT in html:
+                # Rule 4: never ship a corrupted row. Should be unreachable given
+                # the latin-1 tail, but assert-by-skip rather than trust it.
+                fffd_skips += 1
+                continue
+
+            row = {
+                "doc_id": _normalize_record_id(record.rec_headers.get_header("WARC-Record-ID") or ""),
+                "warc_hash": warc_hash,
+                "url": record.rec_headers.get_header("WARC-Target-URI") or "",
+                "snapshot": snapshot,
+                "html": html,
+            }
+            if with_text_body:
+                text_body = fasttext_text(body_strip(html))
+                if not text_body:
+                    continue
+                row["text_body"] = text_body
+            yield row
+        except Exception as e:
+            parse_errors += 1
+            if parse_errors <= 3:
+                logger.warning(f"Skipping corrupt record in {warc_path}: {e}")
+    if fffd_skips:
+        logger.warning(f"{warc_path}: skipped {fffd_skips} records that still held U+FFFD after decode")
+    if parse_errors:
+        logger.warning(f"Skipped {parse_errors} corrupt records in {warc_path}")
+
+
+def _decode_one_warc_stream(warc_path: str, chunk_records: int = 2000):
+    """Download one WARC (with retries) and yield decoded records in ``chunk_records`` lists.
+
+    Peak RAM per WARC ≈ the compressed download (~1GB) + one chunk of decoded html, instead of
+    the fully-materialized record list — this is what lets fused workers run on 180GB v5e hosts.
+    No ``text_body`` prep (TEXT-line only, matching ``with_text_body=False``).
+    """
+    url = _s3_to_https(warc_path)
+    warc_hash = _warc_path_hash(warc_path)
+    snapshot = _snapshot_of(warc_path)
+    for attempt in range(MAX_RETRIES):
+        try:
+            logger.info(f"Downloading WARC (attempt {attempt + 1}): {warc_path}")
+            response = requests.get(url, stream=True, timeout=HTTP_TIMEOUT)
+            if response.status_code in RETRYABLE_STATUS_CODES:
+                delay = RETRY_BASE_DELAY * (2**attempt)
+                logger.warning(f"Rate limited ({response.status_code}) on {warc_path}, retry in {delay:.0f}s")
+                time.sleep(delay)
+                continue
+            response.raise_for_status()
+        except requests.exceptions.RequestException as e:
+            delay = RETRY_BASE_DELAY * (2**attempt)
+            if attempt < MAX_RETRIES - 1:
+                logger.warning(f"Download error on {warc_path} (attempt {attempt + 1}): {e}. Retrying in {delay:.0f}s")
+                time.sleep(delay)
+                continue
+            raise RuntimeError(f"Failed to download {warc_path} after {MAX_RETRIES} attempts: {e}") from e
+        # Deadline-bounded body read: requests' read timeout only fires BETWEEN bytes, so a
+        # server that dribbles keeps ``response.content`` hung forever (six such WARCs wedged
+        # every worker that touched them, 2026-09-03). iter_content with a wall-clock cap
+        # turns "hangs forever" into a retryable, ultimately reportable failure.
+        try:
+            buf = bytearray()
+            t_dl = time.monotonic()
+            for piece in response.iter_content(chunk_size=1 << 20):
+                buf.extend(piece)
+                if time.monotonic() - t_dl > DOWNLOAD_DEADLINE_SECONDS:
+                    raise requests.exceptions.RequestException(
+                        f"download exceeded {DOWNLOAD_DEADLINE_SECONDS}s ({len(buf)} bytes so far)"
+                    )
+        except requests.exceptions.RequestException as e:
+            delay = RETRY_BASE_DELAY * (2**attempt)
+            if attempt < MAX_RETRIES - 1:
+                logger.warning(f"Body read failed on {warc_path} (attempt {attempt + 1}): {e}. Retrying in {delay:.0f}s")
+                time.sleep(delay)
+                continue
+            raise RuntimeError(f"Failed to download {warc_path} after {MAX_RETRIES} attempts: {e}") from e
+        raw_stream = io.BytesIO(bytes(buf))
+        del buf
+        n = 0
+        chunk: list[dict] = []
+        for row in _iter_decoded_records(raw_stream, warc_path, warc_hash, snapshot, with_text_body=False):
+            chunk.append(row)
+            n += 1
+            if len(chunk) >= chunk_records:
+                yield chunk
+                chunk = []
+        if chunk:
+            yield chunk
+        logger.info(f"Decoded {n} clean HTML pages from {warc_path} (streamed)")
+        return
+    raise RuntimeError(f"Failed to download {warc_path} after {MAX_RETRIES} attempts")
+
+
+def _decode_one_warc(warc_path: str, with_text_body: bool = True) -> list[dict]:
     """Download one WARC and emit cleanly-decoded HTML response records.
 
     Returns ``[{doc_id, warc_hash, url, snapshot, html, text_body}]``. Retries on
     transient HTTP errors; raises on permanent failure (never silently drops a WARC).
+
+    ``with_text_body=False`` skips the ``body_strip``/``fasttext_text`` prep AND its
+    empty-``text_body`` population filter (records carry no ``text_body`` key) — for the TEXT-line
+    Phase A, which applies that exact filter inside its extraction pool instead: the prep is ~80%
+    of decode wall time and pointless to compute serially when the pool sees the html anyway.
     """
     url = _s3_to_https(warc_path)
     warc_hash = _warc_path_hash(warc_path)
@@ -255,54 +376,8 @@ def _decode_one_warc(warc_path: str) -> list[dict]:
 
             response.raise_for_status()
 
-            records: list[dict] = []
             raw_stream = io.BytesIO(response.content)
-            parse_errors = 0
-            fffd_skips = 0
-
-            for record in warcio.ArchiveIterator(raw_stream):
-                try:
-                    if record.rec_type != "response":
-                        continue
-                    http_headers = record.http_headers
-                    if http_headers is None:
-                        continue
-                    content_type = http_headers.get_header("Content-Type") or ""
-                    if "text/html" not in content_type.lower():
-                        continue
-
-                    payload = record.content_stream().read()
-                    html = decode_payload(payload, content_type)
-                    if REPLACEMENT in html:
-                        # Rule 4: never ship a corrupted row. Should be unreachable given
-                        # the latin-1 tail, but assert-by-skip rather than trust it.
-                        fffd_skips += 1
-                        continue
-
-                    bs = body_strip(html)
-                    text_body = fasttext_text(bs)
-                    if not text_body:
-                        continue
-
-                    records.append(
-                        {
-                            "doc_id": _normalize_record_id(record.rec_headers.get_header("WARC-Record-ID") or ""),
-                            "warc_hash": warc_hash,
-                            "url": record.rec_headers.get_header("WARC-Target-URI") or "",
-                            "snapshot": snapshot,
-                            "html": html,
-                            "text_body": text_body,
-                        }
-                    )
-                except Exception as e:
-                    parse_errors += 1
-                    if parse_errors <= 3:
-                        logger.warning(f"Skipping corrupt record in {warc_path}: {e}")
-
-            if fffd_skips:
-                logger.warning(f"{warc_path}: skipped {fffd_skips} records that still held U+FFFD after decode")
-            if parse_errors:
-                logger.warning(f"Skipped {parse_errors} corrupt records in {warc_path}")
+            records = list(_iter_decoded_records(raw_stream, warc_path, warc_hash, snapshot, with_text_body))
             if not records:
                 logger.warning(f"WARC yielded 0 clean HTML records: {warc_path}")
             else:

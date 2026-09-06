@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import gzip
 import json
+import math
 from collections.abc import Iterable, Sequence
 
 import fsspec
@@ -60,10 +61,72 @@ KEPT_SCHEMA = pa.schema([*SURVIVOR_SCHEMA, pa.field("modernbert_prob", pa.float3
 # for every spec would mix schemas within an existing corpus.
 KEPT_SCHEMA_POOLED = pa.schema([*KEPT_SCHEMA, pa.field("pooled_prob", pa.float32())])
 
+# TEXT-line final corpus (written by Phase B — there is no Phase C): the text-presurvivor columns
+# plus BOTH stage scores. ``modernbert_prob`` is NaN for docs the pooled band accepted outright
+# (the terminal model never scored them — that skip is the early exit's whole saving).
+KEPT_SCHEMA_TEXT = pa.schema(
+    [
+        ("doc_id", pa.string()),
+        ("url", pa.string()),
+        ("warc_hash", pa.string()),
+        ("snapshot", pa.string()),
+        ("fasttext_score", pa.float32()),
+        ("text", pa.large_string()),  # resiliparse-rs extraction — the training content.
+        ("input_ids", pa.list_(pa.int32())),
+        ("n_tokens", pa.int32()),
+        ("pooled_prob", pa.float32()),
+        ("modernbert_prob", pa.float32()),  # NaN = hi-accepted, never scored by the terminal model.
+    ]
+)
+
 
 def kept_schema_for(spec) -> pa.Schema:
     """The final-corpus schema for ``spec`` — widened with ``pooled_prob`` iff it has a pooled stage."""
+    if spec.is_text_line:
+        # storage_version 4 (fused single-phase) shares the v3 output contract exactly.
+        return KEPT_V3_SCHEMA if spec.storage_version in (3, 4) else KEPT_SCHEMA_TEXT
     return KEPT_SCHEMA_POOLED if spec.pooled_ckpt else KEPT_SCHEMA
+
+
+# --- V3 (storage_version=3, the 8M-scale contract) ---
+# No input_ids anywhere: they were 42% of every stored byte, and Phase B re-tokenizes from ``text``
+# via the gigatoken arrow path for ~4% of its wall. Text-bearing parquets are written at zstd
+# level 12 (measured -21% on text for ~5s/WARC of CPU).
+V3_TEXT_COMPRESSION_LEVEL = 12
+PRESURVIVOR_V3_SCHEMA = pa.schema(
+    [
+        ("doc_id", pa.string()),
+        ("url", pa.string()),
+        ("warc_hash", pa.string()),
+        ("snapshot", pa.string()),
+        ("fasttext_score", pa.float32()),
+        ("text", pa.large_string()),
+    ]
+)
+# Phase B appends its scores plus ``n_tokens`` (computed at scoring time — A no longer tokenizes).
+KEPT_V3_SCHEMA = pa.schema(
+    [
+        *PRESURVIVOR_V3_SCHEMA,
+        pa.field("n_tokens", pa.int32()),
+        pa.field("pooled_prob", pa.float32()),
+        pa.field("modernbert_prob", pa.float32()),  # NaN = pooled hi-accept, never terminal-scored.
+    ]
+)
+
+
+def write_table_v3(path: str, table: pa.Table) -> None:
+    """Parquet write at the V3 text compression level."""
+    with fsspec.open(path, "wb") as fh:
+        pq.write_table(table, fh, compression="zstd", compression_level=V3_TEXT_COMPRESSION_LEVEL)
+
+
+def write_presurvivors_v3(path: str, rows: Sequence[dict]) -> None:
+    """V3 Phase A: fastText-survivors carrying the extracted ``text`` only (no token columns)."""
+    if not rows:
+        write_table_v3(path, PRESURVIVOR_V3_SCHEMA.empty_table())
+        return
+    cols = {name: [r[name] for r in rows] for name in PRESURVIVOR_V3_SCHEMA.names}
+    write_table_v3(path, pa.table(cols, schema=PRESURVIVOR_V3_SCHEMA))
 
 
 # --- v2 (ModernBERT-before-JustText) schemas ---
@@ -80,6 +143,21 @@ PRESURVIVOR_SCHEMA = pa.schema(
         ("n_tokens", pa.int32()),
     ]
 )
+# TEXT-line Phase A output: extraction already ran, so the survivor carries the final ``text``
+# (not raw html) and the classifier-input tokens. Phase B reads this and writes ``kept/`` directly.
+PRESURVIVOR_TEXT_SCHEMA = pa.schema(
+    [
+        ("doc_id", pa.string()),
+        ("url", pa.string()),
+        ("warc_hash", pa.string()),
+        ("snapshot", pa.string()),
+        ("fasttext_score", pa.float32()),
+        ("text", pa.large_string()),  # resiliparse-rs extraction — the training content.
+        ("input_ids", pa.list_(pa.int32())),
+        ("n_tokens", pa.int32()),
+    ]
+)
+
 # Phase B output: per-WARC ModernBERT prob for every pre-survivor (Phase C filters by threshold).
 KEEPLIST_SCHEMA = pa.schema([("doc_id", pa.string()), ("modernbert_prob", pa.float32())])
 # Same, for a cascade with a pooled pre-filter. A doc pooled dropped is never scored by ModernBERT,
@@ -137,6 +215,46 @@ def write_presurvivors(path: str, rows: Sequence[dict]) -> None:
         return
     cols = {name: [r[name] for r in rows] for name in PRESURVIVOR_SCHEMA.names}
     write_table(path, pa.table(cols, schema=PRESURVIVOR_SCHEMA))
+
+
+def write_presurvivors_text(path: str, rows: Sequence[dict]) -> None:
+    """TEXT-line Phase A: write fastText-survivors carrying the extracted ``text``."""
+    if not rows:
+        write_table(path, PRESURVIVOR_TEXT_SCHEMA.empty_table())
+        return
+    cols = {name: [r[name] for r in rows] for name in PRESURVIVOR_TEXT_SCHEMA.names}
+    write_table(path, pa.table(cols, schema=PRESURVIVOR_TEXT_SCHEMA))
+
+
+def write_presurvivors_text_columns(path: str, rows: Sequence[dict], input_ids: pa.Array, n_tokens) -> None:
+    """TEXT-line Phase A, columnar: scalar fields from ``rows``; token columns passed as arrays.
+
+    The tokenize seam produces ``input_ids`` as a ready ``list<int32>`` arrow column (the gigatoken
+    path never materializes per-doc Python lists), so the write takes it as-is instead of routing
+    ids through row dicts.
+    """
+    if not rows:
+        write_table(path, PRESURVIVOR_TEXT_SCHEMA.empty_table())
+        return
+    scalar_names = [n for n in PRESURVIVOR_TEXT_SCHEMA.names if n not in ("input_ids", "n_tokens")]
+    cols: dict = {name: [r[name] for r in rows] for name in scalar_names}
+    cols["input_ids"] = input_ids
+    cols["n_tokens"] = pa.array(n_tokens, type=pa.int32())
+    write_table(path, pa.table(cols, schema=PRESURVIVOR_TEXT_SCHEMA))
+
+
+def truncate_ids(ids: Sequence[int], target_len: int, sep_token_id: int) -> list[int]:
+    """Ids tokenized at a longer max_length -> the EXACT ids ``tokenize(..., max_length=target_len)``
+    would yield, without re-tokenizing.
+
+    Right truncation keeps ``[CLS]`` + the first ``target_len - 2`` body tokens + ``[SEP]``, so
+    slicing the longer sequence to ``target_len - 1`` and re-appending ``[SEP]`` reproduces the
+    shorter tokenization exactly (asserted against the real tokenizer in ``test_preprocess``).
+    A sequence already within ``target_len`` is returned unchanged.
+    """
+    if len(ids) <= target_len:
+        return list(ids)
+    return [*ids[: target_len - 1], sep_token_id]
 
 
 def write_keeplist(
@@ -202,6 +320,25 @@ def write_tombstones(path: str, rows: Iterable[tuple[str, float]]) -> None:
     with fsspec.open(path, "wb") as fh, gzip.GzipFile(fileobj=fh, mode="wb") as gz:
         for doc_id, prob in rows:
             line = json.dumps({"doc_id": doc_id, "modernbert_prob": round(float(prob), 6)})
+            gz.write((line + "\n").encode("utf-8"))
+
+
+def write_tombstones_band(path: str, rows: Iterable[tuple[str, float, float]]) -> None:
+    """TEXT-line tombstones: ``{doc_id, pooled_prob, modernbert_prob}`` per dropped survivor.
+
+    ``modernbert_prob`` is None for docs the band dropped below ``lo`` (the terminal model never
+    scored them); band docs the terminal model rejected carry both probs, so re-thresholding the
+    terminal model downward stays a free offline re-filter.
+    """
+    with fsspec.open(path, "wb") as fh, gzip.GzipFile(fileobj=fh, mode="wb") as gz:
+        for doc_id, pooled_prob, mb_prob in rows:
+            line = json.dumps(
+                {
+                    "doc_id": doc_id,
+                    "pooled_prob": round(float(pooled_prob), 6),
+                    "modernbert_prob": None if math.isnan(mb_prob) else round(float(mb_prob), 6),
+                }
+            )
             gz.write((line + "\n").encode("utf-8"))
 
 

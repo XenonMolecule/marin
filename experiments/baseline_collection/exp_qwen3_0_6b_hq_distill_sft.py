@@ -53,7 +53,9 @@ TAGS = ("bal350k", "bal3p5m")
 QWEN3_TOKENIZER = "Qwen/Qwen3-0.6B"
 MAX_SEQ_LEN = 32_768
 SURVIVAL = 0.93  # fraction surviving the <=32k full-fit filter (measured on the smoke sample)
-TRAIN_TPU = os.environ.get("HQ_DISTILL_TPU", "v6e-8")  # default v6e-8 (32 GB HBM, pdp=1+ce_block); override e.g. v4-32 for us-central2
+TRAIN_TPU = os.environ.get(
+    "HQ_DISTILL_TPU", "v6e-8"
+)  # default v6e-8 (32 GB HBM, pdp=1+ce_block); override e.g. v4-32 for us-central2
 # Set HQ_DISTILL_PREEMPTIBLE=0 to target reserved (non-preemptible) pools, e.g. v4-reserved in us-central2.
 TRAIN_PREEMPTIBLE = os.environ.get("HQ_DISTILL_PREEMPTIBLE", "1") != "0"
 

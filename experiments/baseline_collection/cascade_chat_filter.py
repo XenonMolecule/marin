@@ -1,3 +1,6 @@
+# Copyright The Marin Authors
+# SPDX-License-Identifier: Apache-2.0
+
 """Cascade-filter the high_quality_3000 distill corpus through BOTH classifiers
 (fastText stage-1 -> survivor-BERT stage-2) and emit a distillation **chat**
 dataset of the survivors, in the natural class distribution.
@@ -25,6 +28,7 @@ weight broadcast (so it can't deadlock mid-run).
 The 350k TRAIN cap is applied later at assembly (concat train shards in the frozen
 shuffled order, take the first N) so this job just emits all survivors per WARC.
 """
+
 import argparse
 import gzip
 import json
@@ -135,7 +139,9 @@ def iter_docs(path):
 def load_bert(ckpt, device, attn, is_main):
     """Build ModernBERT + load survivor weights (rank-0 read, broadcast) — the
     proven path from modernbert_tpu_smoke."""
-    model = AutoModelForSequenceClassification.from_pretrained(MODEL_ID, num_labels=2, attn_implementation=attn).to(device)
+    model = AutoModelForSequenceClassification.from_pretrained(MODEL_ID, num_labels=2, attn_implementation=attn).to(
+        device
+    )
     sd = None
     if is_main:
         with fsspec.open(f"{ckpt}/latest.pt", "rb") as f:
@@ -214,8 +220,10 @@ def process_warc(i, split, rank, world, ftmodel, bert, tokenizer, device, args, 
     while chunk_exists(resume_chunks):
         resume_chunks += 1
     resume_bi = resume_chunks * chunk
-    log(f"WARC {i:05d} [{split}] read pos={pos_seen} neg={neg_seen} surv={len(survivors)} "
-        f"-> {n_batches} batches, resume@chunk {resume_chunks} (batch {resume_bi})")
+    log(
+        f"WARC {i:05d} [{split}] read pos={pos_seen} neg={neg_seen} surv={len(survivors)} "
+        f"-> {n_batches} batches, resume@chunk {resume_chunks} (batch {resume_bi})"
+    )
 
     buf = []
     kept = 0
@@ -276,7 +284,7 @@ def _cache_sync_down(gcs_dir: str, local_dir: str) -> int:
         return 0
     n = 0
     for f in fs.find(root):
-        rel = f[len(root):].lstrip("/")
+        rel = f[len(root) :].lstrip("/")
         dst = os.path.join(local_dir, rel)
         os.makedirs(os.path.dirname(dst) or local_dir, exist_ok=True)
         with fs.open(f, "rb") as s, open(dst, "wb") as d:
@@ -329,7 +337,9 @@ def _mp_fn(index):
     ap.add_argument("--train-limit", type=int, default=None, help="Process only the first N (shuffled) train WARCs.")
     ap.add_argument("--val-limit", type=int, default=None, help="Process only the first N val WARCs.")
     ap.add_argument("--test-limit", type=int, default=None, help="Process only the first N test WARCs.")
-    ap.add_argument("--chunk-batches", type=int, default=100, help="Checkpoint a sub-part every N batches (preemption granularity).")
+    ap.add_argument(
+        "--chunk-batches", type=int, default=100, help="Checkpoint a sub-part every N batches (preemption granularity)."
+    )
     ap.add_argument("--warc-shard", type=int, default=0, help="This job's index in a multi-job WARC fan-out.")
     ap.add_argument("--warc-shards", type=int, default=1, help="Total jobs in the WARC fan-out (disjoint WARC subsets).")
     ap.add_argument("--shuffle-seed", type=int, default=42)
@@ -376,7 +386,9 @@ def _mp_fn(index):
     # WARC fan-out: independent jobs take disjoint WARC subsets (avoids fragile multi-host
     # gangs). Within each job, docs are still split across this job's ranks.
     mine = work[args.warc_shard :: args.warc_shards] if args.warc_shards > 1 else work
-    log(f"loading models; shard {args.warc_shard}/{args.warc_shards}: {len(mine)}/{len(work)} WARCs, doc-sharded across {world} ranks")
+    log(
+        f"loading models; shard {args.warc_shard}/{args.warc_shards}: {len(mine)}/{len(work)} WARCs, doc-sharded across {world} ranks"
+    )
 
     # every rank needs the fastText model locally (CPU). Download per-rank.
     with fsspec.open(args.ft_model, "rb") as src, open(f"/app/_ft_{rank}.bin", "wb") as dst:

@@ -61,8 +61,9 @@ METHOD_STYLE: dict[str, tuple[str, str]] = {
     "fastpipe_v3_60": ("#a06e52", "fastpipe 60%"),
     "fastpipe_v3_40": ("#c08a6a", "fastpipe 40%"),
     "fastpipe_v3_20": ("#dbb28f", "fastpipe 20%"),
-    # fastpipe over llm_pipeline_v1_1 — gold, distinct from the v3 brown ramp
+    # fastpipe over llm_pipeline_v1_1 — gold ramp, distinct from the v3 brown ramp
     "lpv11_fastpipe_v1": ("#bf9b30", "lpv11 fastpipe v1"),
+    "lpv11_fastpipe_v2": ("#8a6d1d", "lpv11 fastpipe v2"),
 }
 
 
@@ -163,6 +164,9 @@ INDEX_DATASET_REGION: dict[str, str] = {
     # llm_pipeline_v1_1 300-WARC extraction. Keys-only coverage tier (rid_h null;
     # fast_curation carries no warc_record_id) at url_index/small/lpv11_fastpipe_v1.
     "lpv11_fastpipe_v1": "us-east5",
+    # lpv11_fastpipe_v2: TEXTONLY-7d cascade (extraction-first, pooled+ettin68) over
+    # the random-300 manifest. Full keys+meta+text tier; rid_h populated via doc_id.
+    "lpv11_fastpipe_v2": "us-east5",
 }
 
 

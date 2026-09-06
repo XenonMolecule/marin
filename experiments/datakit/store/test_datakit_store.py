@@ -7,10 +7,10 @@ These run the real shuffle against a Zephyr ``LocalClient`` — no mocks — bec
 the properties worth checking are only observable end to end:
 
 * every ``(topic, quality)`` cell is a cache **levanter can actually load**, and
-  its documents are exactly the ones the attribute tables assign to it. Upstream
-  writes a bucket-level ledger over child caches; this levanter cannot read that,
-  and the failure mode is a cell that looks fine and trains on nothing, so
-  loading each cell back is the test that matters.
+  its documents are exactly the ones the attribute tables assign to it. A cell is
+  a sharded cache (a bucket-level ledger over ``sub=*`` children), and the failure
+  mode of getting that wrong is a cell that looks fine and trains on nothing, so
+  loading each cell back and reading its documents is the test that matters.
 * token sequences arrive intact and in order. Regrouping documents into cells
   must not disturb anything inside a document.
 * the positional join fails loudly on broken co-partitioning rather than
@@ -28,6 +28,7 @@ import pytest
 from fray.local_backend import LocalClient
 from fray.types import ResourceConfig
 from levanter.store.cache import TreeCache
+from zephyr.execution import ZephyrContext
 
 from experiments.datakit.store.datakit_store import build_clustered_store
 from experiments.datakit.store.store_compat import (
@@ -117,14 +118,14 @@ def inputs(tmp_path):
         "tokenize": {
             SOURCE: TokenizedAttrData(
                 output_dirs={"train": str(tok_dir)},
-                source_main_dirs={"train": str(tmp_path / "docs")},
+                source_keys={"train": str(tmp_path / "docs")},
                 tokenizer="stub-tokenizer",
             )
         },
         "cluster_assign": {
             SOURCE: AssignmentAttrData(
                 output_dir=str(cluster_dir),
-                source_main_dir=str(tmp_path / "docs"),
+                source_key=str(tmp_path / "docs"),
                 k_train=N_TOPICS,
             )
         },
@@ -139,14 +140,27 @@ def inputs(tmp_path):
     }
 
 
+# The map task's declared requirement must fit inside a worker, so the two travel together.
+_SMALL = ResourceConfig(cpu=1, ram="512m")
+
+
+def _ctx(tmp_path, local_client) -> ZephyrContext:
+    """The execution context the store runs on. Post-merge ``build_clustered_store`` takes a
+    ZephyrContext rather than a raw client plus resource knobs."""
+    return ZephyrContext(
+        client=local_client,
+        chunk_storage_prefix=str(tmp_path / "chunks"),
+        resources=_SMALL,
+        max_workers=2,
+    )
+
+
 def _build(inputs, tmp_path, local_client, **kwargs):
     return build_clustered_store(
         output_path=str(tmp_path / "store"),
         cluster_view=N_TOPICS,
-        client=local_client,
-        chunk_storage_prefix=str(tmp_path / "chunks"),
-        worker_resources=ResourceConfig(cpu=1, ram="512m"),
-        max_workers=2,
+        zephyr_context=_ctx(tmp_path, local_client),
+        worker_resources=_SMALL,
         reduce_shards=4,
         default_subshards=1,
         **inputs,
@@ -248,21 +262,19 @@ def test_empty_shard_with_null_typed_id_column_is_not_fatal(inputs, tmp_path, lo
     assert sum(b.total_elements for b in artifact.buckets) == survivors
 
 
-def test_subshard_split_produces_one_consolidated_cache_per_cell(inputs, tmp_path, local_client):
+def test_subshard_split_produces_one_loadable_cache_per_cell(inputs, tmp_path, local_client):
     """With k>1 a cell must still be ONE loadable cache holding all its documents.
 
-    Exercises the consolidation branch of :func:`_finalize_buckets`. Our corpora
-    are small enough that ``_plan_subshards`` leaves k=1, so without this test that
-    branch would only ever run for the first time on a corpus large enough to need
-    it — the worst moment to discover it.
+    Exercises the sharded-ledger branch: the cell root is a ledger over ``sub=*`` children rather
+    than a single tensorstore, and levanter must address every child through it. Most cells in
+    practice are k=1, so without this test the branch would first run for real on a corpus large
+    enough to need it — the worst moment to discover it.
     """
     artifact = build_clustered_store(
         output_path=str(tmp_path / "store"),
         cluster_view=N_TOPICS,
-        client=local_client,
-        chunk_storage_prefix=str(tmp_path / "chunks"),
-        worker_resources=ResourceConfig(cpu=1, ram="512m"),
-        max_workers=2,
+        zephyr_context=_ctx(tmp_path, local_client),
+        worker_resources=_SMALL,
         reduce_shards=4,
         default_subshards=3,
         **inputs,
@@ -294,10 +306,8 @@ def test_cell_path_carries_the_split_level_a_mixture_component_needs(inputs, tmp
     artifact = build_clustered_store(
         output_path=str(tmp_path / "store"),
         cluster_view=N_TOPICS,
-        client=local_client,
-        chunk_storage_prefix=str(tmp_path / "chunks"),
-        worker_resources=ResourceConfig(cpu=1, ram="512m"),
-        max_workers=2,
+        zephyr_context=_ctx(tmp_path, local_client),
+        worker_resources=_SMALL,
         reduce_shards=4,
         default_subshards=default_subshards,
         **inputs,
@@ -343,8 +353,8 @@ def test_cluster_view_must_have_been_materialized(inputs, tmp_path, local_client
         build_clustered_store(
             output_path=str(tmp_path / "store"),
             cluster_view=40,
-            client=local_client,
-            chunk_storage_prefix=str(tmp_path / "chunks"),
+            zephyr_context=_ctx(tmp_path, local_client),
+            worker_resources=_SMALL,
             default_subshards=1,
             **inputs,
         )

@@ -4,6 +4,20 @@
 // Cascade evaluation engine — pure client-side math over the cached per-doc matrix. No model re-runs:
 // every pipeline is a sequence of boolean masks + aggregations. Exposed as a global `Engine`.
 //
+// Shape of a pipeline: HTML classifiers -> THE EXTRACTOR -> TEXT classifiers. Exactly one extractor, and
+// it is required (nothing downstream exists without extracted text). Where a classifier sits is decided by
+// what it READS, not by the user: a stage with `requires_text: "<extractor key>"` consumes that extractor's
+// output and so runs after it; everything else reads markup and runs before it. A TEXT classifier is only
+// valid when the selected extractor is the one it was trained on, so switching the extractor invalidates
+// them loudly instead of scoring them against text they never saw.
+//
+// EARLY-EXIT stages (`mode: "band"`): a cheap classifier can decide the confident tails itself and hand
+// only the uncertain middle to the expensive model behind it. Docs at or above `hi` are ACCEPTED (kept,
+// and they skip every later filter); docs below `lo` are dropped; the band in between flows on. This is
+// what lets a 3932-docs/chip/s gate spend a 36-docs/chip/s model on ~9% of the corpus instead of 30%.
+// Accepted docs still need their text, so the extractor is charged for them too — they leave the
+// CLASSIFIER chain, not the pipeline.
+//
 // Usefulness convention: each classifier has a `direction`. We map every score to a "usefulness value"
 // v (higher = more useful) so a single rule `keep iff v(score) >= v(threshold)` handles both probability
 // columns (high=useful) and LLM marker-logprob columns (low=useful, where null = very-confident-useful).
@@ -85,48 +99,108 @@ const Engine = (() => {
     for (let i = 0; i < n; i++) if (cov[i] === 1) { reach[i] = 1; reaching++; }
     const covered = reaching;
     const scale = covered ? TOTAL_DOCS / covered : 0;
-    const stages = [];
     let tpuChipSec = 0, cpuCoreSec = 0;
 
-    for (const f of pipeline.filters) {
+    const ext = stageById[pipeline.extractor.stageId];
+    const extKey = extKeyOf(ext, target);
+
+    // Split the filters around the extractor by what each one reads.
+    const pre = [], post = [];
+    pipeline.filters.forEach((f, filterIdx) => {
       const st = stageById[f.stageId];
-      const rec = { stageId: f.stageId, label: st.label, device: st.device, enabled: f.enabled, docsIn: reaching };
-      if (!f.enabled) { // disabled => pure pass-through, zero compute
-        rec.docsOut = reaching; rec.skipped = true; rec.reachMask = reach; rec.unitSec = 0;
-        stages.push(rec); continue;
+      if (!st) throw new Error(`unknown stage ${f.stageId}`);
+      if (st.kind === "extractor") throw new Error(`${st.label} is an extractor — select it AS the extractor, not as a filter`);
+      if (!st.requires_text) { pre.push({ f, st, filterIdx }); return; }
+      if (st.requires_text !== extKey) {
+        throw new Error(`${st.label} reads ${st.requires_text} text, but this pipeline extracts with ${ext.label}`);
       }
-      const keep = new Uint8Array(n);
-      let out = 0;
-      let T = null;
-      let unitSec = 0;
-      if (st.oracle) {
-        // Perfect and free: passes exactly the docs the target keeps, contributing no compute.
-        for (let i = 0; i < n; i++) if (reach[i] && gold[i]) { keep[i] = 1; out++; }
-      } else {
-        const scores = cols[st.score_col];
-        T = f.mode === "recall" ? thresholdForRecall(scores, gold, reach, st.direction, f.recall) : f.threshold;
-        const vCut = vOfThreshold(T, st.direction);
-        for (let i = 0; i < n; i++) if (reach[i] && vOf(scores[i], st.direction) >= vCut) { keep[i] = 1; out++; }
-        const tput = (f.throughput ?? st.throughput) * (st.tokenization_bound ? cap.tokEfficiency : 1);
-        unitSec = (reaching * scale) / tput;
+      post.push({ f, st, filterIdx });
+    });
+
+    // Docs an early-exit stage has already accepted: they are kept, and skip all later filters.
+    const accepted = new Uint8Array(n);
+    let acceptedCount = 0;
+
+    function runFilters(list) {
+      const rows = [];
+      for (const { f, st, filterIdx } of list) {
+        const rec = {
+          stageId: f.stageId, filterIdx, label: st.label, device: st.device,
+          enabled: f.enabled, docsIn: reaching, afterExtract: !!st.requires_text,
+        };
+        if (!f.enabled) { // disabled => pure pass-through, zero compute
+          rec.docsOut = reaching; rec.skipped = true; rec.reachMask = reach; rec.unitSec = 0;
+          rows.push(rec); continue;
+        }
+        const keep = new Uint8Array(n);
+        let out = 0, T = null, unitSec = 0;
+        if (f.mode === "band" && !st.oracle) {
+          // Early exit: decide the confident tails here, pass only the uncertain band downstream.
+          const scores = cols[st.score_col];
+          const vHi = vOfThreshold(f.hi, st.direction), vLo = vOfThreshold(f.lo, st.direction);
+          let acc = 0;
+          for (let i = 0; i < n; i++) {
+            if (!reach[i]) continue;
+            const v = vOf(scores[i], st.direction);
+            if (v >= vHi) { accepted[i] = 1; acc++; }        // kept outright; skips every later filter
+            else if (v >= vLo) { keep[i] = 1; out++; }        // uncertain: hand to the next stage
+          }
+          acceptedCount += acc;
+          rec.accepted = acc;
+          rec.band = out;
+          T = f.lo;
+          const tput = (f.throughput ?? st.throughput) * (st.tokenization_bound ? cap.tokEfficiency : 1);
+          unitSec = (reaching * scale) / tput;
+        } else if (st.oracle) {
+          // Perfect and free: passes exactly the docs the target keeps, contributing no compute.
+          for (let i = 0; i < n; i++) if (reach[i] && gold[i]) { keep[i] = 1; out++; }
+        } else {
+          const scores = cols[st.score_col];
+          T = f.mode === "recall" ? thresholdForRecall(scores, gold, reach, st.direction, f.recall) : f.threshold;
+          const vCut = vOfThreshold(T, st.direction);
+          for (let i = 0; i < n; i++) if (reach[i] && vOf(scores[i], st.direction) >= vCut) { keep[i] = 1; out++; }
+          const tput = (f.throughput ?? st.throughput) * (st.tokenization_bound ? cap.tokEfficiency : 1);
+          unitSec = (reaching * scale) / tput;
+        }
+        if (st.device === "tpu") tpuChipSec += unitSec; else cpuCoreSec += unitSec;
+        Object.assign(rec, { docsOut: out, threshold: T, unitSec, reachMask: reach });
+        rows.push(rec);
+        reach = keep; reaching = out;
       }
-      if (st.device === "tpu") tpuChipSec += unitSec; else cpuCoreSec += unitSec;
-      Object.assign(rec, { docsOut: out, threshold: T, unitSec, reachMask: reach });
-      stages.push(rec);
-      reach = keep; reaching = out;
+      return rows;
     }
 
-    // Terminal extractor: processes all survivors (compute), then its own abstain decides final-kept.
-    const ext = stageById[pipeline.extractor.stageId];
-    // Oracle terminal abstains exactly as the target does; jusText has no label => never abstains.
-    const keepCol = ext.oracle ? target.gold_col : ext.label_col ? ext.label_col + "_useful" : null;
-    const extracted = (i) => (keepCol ? cols[keepCol][i] === 1 : true);
+    const stages = runFilters(pre);
+
+    // THE extractor: runs on every doc the HTML filters passed, then drops the ones it abstains on
+    // (jusText / resiliparse-rs have no abstain column, so they pass everything through).
+    // Everything still destined for the corpus needs extracting — the band AND anything an early-exit
+    // stage already accepted — so the extractor is charged for both.
+    const extDocsIn = reaching + acceptedCount;
+    const extReachMask = reach;
+    const extTput = pipeline.extractor.throughput ?? ext.throughput;
+    const extUnitSec = ext.oracle ? 0 : (extDocsIn * scale) / extTput;
+    if (ext.device === "tpu") tpuChipSec += extUnitSec; else cpuCoreSec += extUnitSec;
+    const extKeepCol = ext.oracle ? target.gold_col : ext.label_col ? ext.label_col + "_useful" : null;
+    {
+      const keep = new Uint8Array(n);
+      let out = 0;
+      for (let i = 0; i < n; i++) {
+        const ok = !extKeepCol || cols[extKeepCol][i] === 1;
+        if (reach[i]) { if (ok) { keep[i] = 1; out++; } }
+        else if (accepted[i] && !ok) { accepted[i] = 0; acceptedCount--; }  // the extractor abstained
+      }
+      reach = keep; reaching = out;
+    }
+    const extDocsOut = reaching + acceptedCount;
+
+    // TEXT classifiers: they read what the extractor just produced.
+    const postStages = runFilters(post);
+
+    // Final keep-set: the band survivors PLUS everything accepted early.
     const finalKept = new Uint8Array(n);
     let kept = 0;
-    for (let i = 0; i < n; i++) if (reach[i] && extracted(i)) { finalKept[i] = 1; kept++; }
-    const extTput = pipeline.extractor.throughput ?? ext.throughput;
-    const extUnitSec = ext.oracle ? 0 : (reaching * scale) / extTput;
-    if (ext.device === "tpu") tpuChipSec += extUnitSec; else cpuCoreSec += extUnitSec;
+    for (let i = 0; i < n; i++) if (reach[i] || accepted[i]) { finalKept[i] = 1; kept++; }
 
     // Metrics over finalKept vs the selected target, across covered docs only.
     let tp = 0, fp = 0, fn = 0, goldTotal = 0;
@@ -161,18 +235,24 @@ const Engine = (() => {
     const wallTpuYears = cap.nChips ? tpuChipSec / cap.nChips / SEC_PER_YEAR : 0;
     const wallCpuYears = cap.nCores ? cpuCoreSec / cap.nCores / SEC_PER_YEAR : 0;
 
-    const computeBreakdown = stages.filter((s) => s.enabled).map((s) => ({
+    const rowOf = (s) => ({
       label: s.label, device: s.device, unitSec: s.unitSec,
       pct: s.device === "tpu" ? (tpuChipSec ? 100 * s.unitSec / tpuChipSec : 0) : (cpuCoreSec ? 100 * s.unitSec / cpuCoreSec : 0),
-    }));
+    });
+    const computeBreakdown = stages.filter((s) => s.enabled).map(rowOf);
     computeBreakdown.push({
       label: ext.label + " (extract)", device: ext.device, unitSec: extUnitSec,
       pct: ext.device === "tpu" ? (tpuChipSec ? 100 * extUnitSec / tpuChipSec : 0) : (cpuCoreSec ? 100 * extUnitSec / cpuCoreSec : 0),
     });
+    computeBreakdown.push(...postStages.filter((s) => s.enabled).map(rowOf));
 
     return {
       n, covered, scale, totalDocs: TOTAL_DOCS, targetId: target.id, targetLabel: target.label,
-      stages, extractor: { id: ext.id, label: ext.label, device: ext.device, docsIn: reaching, kept, unitSec: extUnitSec },
+      stages, postStages,
+      extractor: {
+        id: ext.id, label: ext.label, device: ext.device,
+        docsIn: extDocsIn, docsOut: extDocsOut, unitSec: extUnitSec, reachMask: extReachMask, kept,
+      },
       finalKept,
       summary: {
         f1, precision, recall: recallM, goldTotal, keptSample: kept,

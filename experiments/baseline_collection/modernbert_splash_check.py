@@ -111,8 +111,7 @@ def run(args):
         # PASS if splash is within ~3x the bf16 floor (or both tiny). 3x allows flash-vs-dense order.
         close = backend_diff <= max(3.0 * bf16_floor, 5e-3)
         logger.info(
-            "[correctness] %s vs %s @ seq=%d batch=%d: backend_diff(bf16)=%.3e  bf16_floor=%.3e  "
-            "ratio=%.2f  PASS=%s",
+            "[correctness] %s vs %s @ seq=%d batch=%d: backend_diff(bf16)=%.3e  bf16_floor=%.3e  " "ratio=%.2f  PASS=%s",
             backend_a.value,
             backend_b.value,
             Pos.size,

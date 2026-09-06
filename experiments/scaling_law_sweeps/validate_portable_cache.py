@@ -61,7 +61,9 @@ def main() -> None:
     if not matches:
         raise SystemExit(f"No plan matching {TARGET_SUBSTR!r} in {METHOD}")
     plan = matches[0]
-    logger.info("PORTABLE-CACHE VALIDATION cell=%s suffix=%s flag=LEVANTER_PORTABLE_TPU_CACHE=1", plan.run_name_core, RUN_SUFFIX)
+    logger.info(
+        "PORTABLE-CACHE VALIDATION cell=%s suffix=%s flag=LEVANTER_PORTABLE_TPU_CACHE=1", plan.run_name_core, RUN_SUFFIX
+    )
 
     submitted, skipped = submit_all(
         client,

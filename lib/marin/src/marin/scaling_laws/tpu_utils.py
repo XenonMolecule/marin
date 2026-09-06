@@ -48,14 +48,12 @@ V4_SPEC = TpuSpec(
 # more chips (or a smaller batch) to fit.
 V5E_SPEC = TpuSpec(
     prefix="v5e",
-    hbm_per_chip_gib=16,
     cores_per_chip=1,
     core_options=(1, 4, 8, 16, 32, 64, 128, 256),
 )
 
 V6E_SPEC = TpuSpec(
     prefix="v6e",
-    hbm_per_chip_gib=32,
     cores_per_chip=1,
     core_options=(1, 4, 8, 16, 32, 64, 128, 256),
 )

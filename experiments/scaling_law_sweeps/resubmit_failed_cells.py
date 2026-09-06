@@ -56,7 +56,9 @@ def main() -> None:
     for method, substr, prio in TARGETS:
         plans = [p for p in enumerate_10k_natural_plans((method,)) if substr in p.run_name_core]
         if len(plans) != 1:
-            raise SystemExit(f"Expected exactly 1 plan for {method} {substr!r}, got {len(plans)}: {[p.run_name_core for p in plans]}")
+            raise SystemExit(
+                f"Expected exactly 1 plan for {method} {substr!r}, got {len(plans)}: {[p.run_name_core for p in plans]}"
+            )
         plan = plans[0]
         jid = submit_one(
             client,

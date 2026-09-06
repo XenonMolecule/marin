@@ -27,6 +27,8 @@ import os
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
 
+from experiments.baseline_collection.grid_projection_manifest import REGION_MANIFEST_KEY
+
 logger = logging.getLogger(__name__)
 
 CLUSTER = "marin"
@@ -39,15 +41,6 @@ REGION_TPU: dict[str, str] = {
     "us-east1": "v6e-4",
     "us-west4": "v5litepod-4",
     "europe-west4": "v6e-4",
-}
-# The manifest is named by bucket short-name, which differs from the Iris region
-# label for europe-west4 only.
-REGION_MANIFEST_KEY: dict[str, str] = {
-    "us-central1": "us-central1",
-    "us-east5": "us-east5",
-    "us-east1": "us-east1",
-    "us-west4": "us-west4",
-    "europe-west4": "eu-west4",
 }
 MEMORY = "64GB"
 # Every `iris job run` opens its own SSH tunnel to the single controller, and

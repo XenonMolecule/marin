@@ -116,6 +116,7 @@ def _enable_slice_portable_compile_cache() -> None:
     except Exception as exc:
         logger.warning("Could not enable slice-portable TPU compile cache: %s", exc)
 
+
 X = TypeVar("X")  # Input
 M = TypeVar("M")  # Model
 S = TypeVar("S", bound=TrainerState)  # State

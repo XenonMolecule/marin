@@ -241,7 +241,7 @@ async def send_request(
                         result.prompt_tokens = usage.get("prompt_tokens", 0)
                         result.completion_tokens = usage.get("completion_tokens", 0)
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             result.error = "timeout"
             result.e2e = time.perf_counter() - t_start
             return result

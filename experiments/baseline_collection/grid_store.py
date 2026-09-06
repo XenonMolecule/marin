@@ -62,16 +62,23 @@ STORE_ROOT = "datakit/store"
 QUALITY_MODEL_DIR = "gs://marin-us-central1/resources/datakit/quality/pooled_junkgate2"
 QUALITY_CALIB_FILE = "calib_bme.json"
 
-# Our hottest cell is ~2.3B tokens, against the ~651B that forced upstream's 32-way
-# split. Targeting 8B keeps every cell at k=1 -- one reducer, one cache, and no
-# consolidation copy -- while still splitting a future corpus that outgrows it.
-# Upstream's 8B leaves nearly every cell at k=1, which is right for corpora whose
-# hottest cell is ~2.3B. resiliparse is an order of magnitude fatter (up to 18B a
-# cell), and a reducer writes its whole subshard in one uninterrupted stretch, so
-# on preemptible workers an 8B cell is repeatedly killed before it can commit.
-# 4B halves that write. The plan is pinned on the first build and never
-# recomputed, so changing this only affects a store built from scratch.
-TARGET_TOKENS_PER_SUBSHARD = 4_000_000_000
+# A subshard is one reduce KEY, and the reduce merges that key's whole payload. Zephyr merges
+# in memory while `payload * 4 < ram * 0.4` (two 2x overheads for the Polars frame and the Python
+# iterator) and otherwise "spills to disk" via tempfile -- but iris mounts the container's /tmp as
+# a tmpfs sized to the memory limit, and Docker charges tmpfs pages to the same cgroup, so the
+# spill IS memory. A key that needs the spill path therefore OOM-kills its worker instead of
+# degrading gracefully; lpv11 lost three reduce shards this way at 4B (largest unsplit cell 3.87B
+# tokens ~ 15.5 GB against a 16g worker).
+#
+# So the target has to keep every subshard inside the in-memory budget, not merely inside the
+# worker: 16g * 0.4 / 4 = 1.72 GB of payload, i.e. ~0.43B int32 tokens. 250M leaves ~40% headroom
+# for per-record overhead, costs 416 subshards over 120 cells (26 at most for the fattest), and
+# every cell stays under MAX_SUBSHARDS. Raise the worker RAM instead and the arithmetic does not
+# work: a 3.87B-token key would need ~155 GB.
+#
+# The plan is pinned on the first build and never recomputed, so changing this only affects a
+# store built from scratch -- an existing store must be deleted, plan file included.
+TARGET_TOKENS_PER_SUBSHARD = 250_000_000
 MAX_SUBSHARDS = 32
 
 
@@ -81,8 +88,18 @@ def worker_resources(region: str) -> ResourceConfig:
 
 
 DEFAULT_MAX_WORKERS = 256
-# Reduce tasks. Only ~120 groups exist per corpus, so more than that idles.
-DEFAULT_REDUCE_SHARDS = 128
+# Reduce tasks. One per subshard key keeps each task's merge payload to a single subshard; at
+# TARGET_TOKENS_PER_SUBSHARD=250M a corpus this size plans ~416 keys, so 512 covers it with room
+# to spare. Excess shards idle rather than hurt.
+DEFAULT_REDUCE_SHARDS = 512
+# Input shards per map task. The scatter writer flushes a memory-bounded buffer and writes ONE FILE
+# PER TARGET SHARD at every flush, so each map task pays a fixed ~reduce_shards file cost no matter
+# how little data it holds. One tokenize shard per task (upstream's default) therefore produced
+# 10,364 x 512 scatter objects; reading them back exceeded GCS's per-prefix request budget and the
+# reduce died on `429 SlowDown` after object-store's 2 retries. Batching 32 shards per task cuts the
+# object count ~32x by amortizing that fixed cost, which also cuts the class-B read bill. A task
+# still streams: it holds one bounded buffer, not 32 shards' worth of tokens.
+DEFAULT_SHARDS_PER_TASK = 32
 
 
 def store_output(dataset: str) -> str:
@@ -122,6 +139,7 @@ def run(
     source: str,
     max_workers: int,
     reduce_shards: int,
+    shards_per_task: int = DEFAULT_SHARDS_PER_TASK,
     tokenize_override: str | None = None,
     output_override: str | None = None,
     compute_region: str = "us-central1",
@@ -137,12 +155,12 @@ def run(
     corpus = resolve(dataset, source)
     tokenize = TokenizedAttrData(
         output_dirs={"train": tokenize_override or tokenize_dir(dataset)},
-        source_main_dirs={"train": corpus.path},
+        source_keys={"train": corpus.path},
         tokenizer=DEFAULT_TOKENIZER,
     )
     cluster_assign = AssignmentAttrData(
         output_dir=stage_output_dir(dataset, Stage.TOPIC),
-        source_main_dir=corpus.path,
+        source_key=corpus.path,
         k_train=NUM_TOPICS,
     )
     quality = QualityScores(
@@ -163,6 +181,7 @@ def run(
         worker_resources=worker_resources(compute_region),
         max_workers=max_workers,
         reduce_shards=reduce_shards,
+        shards_per_task=shards_per_task,
         bucket_token_hint=bucket_token_hint(dataset),
         target_tokens_per_subshard=TARGET_TOKENS_PER_SUBSHARD,
         max_subshards=MAX_SUBSHARDS,
@@ -199,6 +218,13 @@ def main() -> None:
     parser.add_argument("--source", choices=["native", "mirror"], default="mirror")
     parser.add_argument("--max-workers", type=int, default=DEFAULT_MAX_WORKERS)
     parser.add_argument("--reduce-shards", type=int, default=DEFAULT_REDUCE_SHARDS)
+    parser.add_argument(
+        "--shards-per-task",
+        type=int,
+        default=DEFAULT_SHARDS_PER_TASK,
+        help="Tokenize shards per map task. Higher amortizes the per-flush scatter file cost; see "
+        "DEFAULT_SHARDS_PER_TASK for why one-per-task rate-limits GCS.",
+    )
     parser.add_argument("--tokenize-dir", default=None, help="Join against this tokenization. For smoke runs.")
     parser.add_argument("--output-path", default=None, help="Write the store here instead of the canonical tree.")
     parser.add_argument(
@@ -228,6 +254,7 @@ def main() -> None:
         args.source,
         args.max_workers,
         args.reduce_shards,
+        shards_per_task=args.shards_per_task,
         tokenize_override=args.tokenize_dir,
         output_override=args.output_path,
         compute_region=args.compute_region,

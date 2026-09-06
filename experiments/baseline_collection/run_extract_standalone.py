@@ -29,6 +29,7 @@ import logging
 import os
 import re
 import time
+from datetime import UTC
 from typing import Any
 
 import fsspec
@@ -192,7 +193,7 @@ def _list_steal_claims(warc_dir: str) -> set[int]:
     whose age can't be determined is treated as fresh (conservative — never worse
     than the old always-exclude behavior).
     """
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     fs = fsspec.filesystem("gcs") if warc_dir.startswith("gs://") else fsspec.filesystem("file")
     steal_dir = f"{warc_dir}/_stealing"
@@ -202,7 +203,7 @@ def _list_steal_claims(warc_dir: str) -> set[int]:
         entries = fs.ls(steal_dir, detail=True)
     except Exception:
         return set()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     fresh: set[int] = set()
     for e in entries:
         name = e.get("name") if isinstance(e, dict) else e
@@ -232,7 +233,9 @@ def _list_steal_claims(warc_dir: str) -> set[int]:
 
 def _batch_exists_any_region(warc_hash: str, batch_idx: int, output_subdir: str) -> bool:
     """Check if a specific batch file exists in any regional bucket."""
-    from rigging.filesystem import REGION_TO_DATA_BUCKET
+    from rigging.filesystem import data_config
+
+    REGION_TO_DATA_BUCKET = {r: s.name for r, s in data_config().region_buckets.items()}
 
     fs = fsspec.filesystem("gcs")
     batch_name = f"batch_{batch_idx:04d}.jsonl.gz"
@@ -493,7 +496,9 @@ def _find_completed_batches_all_regions(warc_hash: str, output_subdir: str) -> s
     Enables cross-region resume: Job A writes batches 0-20 in us-central1,
     gets preempted. Job B picks up in eu-west4 and skips batches 0-20.
     """
-    from rigging.filesystem import REGION_TO_DATA_BUCKET
+    from rigging.filesystem import data_config
+
+    REGION_TO_DATA_BUCKET = {r: s.name for r, s in data_config().region_buckets.items()}
 
     completed = set()
     for bucket in REGION_TO_DATA_BUCKET.values():
@@ -512,7 +517,9 @@ def _is_warc_done(warc_dir: str) -> bool:
 
 def _is_warc_done_any_region(warc_hash: str, output_subdir: str) -> bool:
     """Check if a WARC is done in ANY regional bucket."""
-    from rigging.filesystem import REGION_TO_DATA_BUCKET
+    from rigging.filesystem import data_config
+
+    REGION_TO_DATA_BUCKET = {r: s.name for r, s in data_config().region_buckets.items()}
 
     gcs = fsspec.filesystem("gcs")
     for bucket in REGION_TO_DATA_BUCKET.values():
@@ -532,7 +539,9 @@ def _is_warc_claimed_any_region(warc_hash: str, output_subdir: str, stale_hours:
     ``stale_hours`` are ignored (the claiming job probably died without
     finishing or releasing the claim).
     """
-    from rigging.filesystem import REGION_TO_DATA_BUCKET
+    from rigging.filesystem import data_config
+
+    REGION_TO_DATA_BUCKET = {r: s.name for r, s in data_config().region_buckets.items()}
 
     gcs = fsspec.filesystem("gcs")
     now = time.time()
@@ -725,7 +734,9 @@ def _should_yield_to_older_claim(
 
     Stale claims (>stale_hours old) are always ignored.
     """
-    from rigging.filesystem import REGION_TO_DATA_BUCKET
+    from rigging.filesystem import data_config
+
+    REGION_TO_DATA_BUCKET = {r: s.name for r, s in data_config().region_buckets.items()}
 
     now = time.time()
     for bucket in REGION_TO_DATA_BUCKET.values():
@@ -790,7 +801,9 @@ def _count_records_in_all_batches(warc_hash: str, output_subdir: str) -> int:
     written before the fix), it's simply not counted. Avoids expensive cross-region
     decompression. The count will be accurate once all legacy batches drain.
     """
-    from rigging.filesystem import REGION_TO_DATA_BUCKET
+    from rigging.filesystem import data_config
+
+    REGION_TO_DATA_BUCKET = {r: s.name for r, s in data_config().region_buckets.items()}
 
     fs = fsspec.filesystem("gcs")
     total = 0

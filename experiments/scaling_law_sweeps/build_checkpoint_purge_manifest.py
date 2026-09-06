@@ -140,8 +140,9 @@ def classify_region(region: str, bucket: str, running: set[str]):
     def add(run, tag, action, keep, path, sz):
         nonlocal deletable
         deletable += sz
-        manifest.append({"region": region, "run": run, "tag": tag, "action": action,
-                         "keep": keep, "path": path, "bytes": sz})
+        manifest.append(
+            {"region": region, "run": run, "tag": tag, "action": action, "keep": keep, "path": path, "bytes": sz}
+        )
 
     for run, total in run_total.items():
         tag_m = TAG_RE.search(run)
@@ -218,7 +219,9 @@ def main() -> None:
         for r in rows:
             by_tag_del[r["tag"]] += r["bytes"]
             by_action_del[r["action"]] += r["bytes"]
-        print(f"{region:14s} deletable={gib(deletable):10.1f} GiB   keep={gib(kept):9.1f}   review={gib(review):9.1f}   rows={len(rows)}")
+        print(
+            f"{region:14s} deletable={gib(deletable):10.1f} GiB   keep={gib(kept):9.1f}   review={gib(review):9.1f}   rows={len(rows)}"
+        )
 
     tsv = os.path.join(args.out_dir, "purge_manifest.tsv")
     with open(tsv, "w") as f:

@@ -305,7 +305,6 @@ def main(argv: list[str] | None = None) -> None:
     import jax
     import jax.numpy as jnp
     import jmp
-    import levanter
     from haliax import Axis
     from haliax.partitioning import round_axis_for_partitioning
     from levanter.checkpoint import load_checkpoint
@@ -313,6 +312,8 @@ def main(argv: list[str] | None = None) -> None:
     from levanter.models.lm_model import LmExample, LmHeadModel
     from levanter.utils.jax_utils import use_cpu_device
     from levanter.utils.tree_utils import inference_mode
+
+    import levanter
 
     levanter.initialize(config)
     tokenizer = config.data.the_tokenizer
@@ -379,7 +380,7 @@ def main(argv: list[str] | None = None) -> None:
         "eval/lima/bpb": float(lima_bpb) if lima_bpb is not None else None,
         "eval/loss": float(overall_loss) if overall_loss is not None else None,
         "total_eval_tokens": int(total_eval_tokens) if total_eval_tokens is not None else None,
-        "completed_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "completed_at": dt.datetime.now(dt.UTC).isoformat(),
     }
 
     out_path = _write_result(args.output_prefix, args.run_name, payload)

@@ -23,7 +23,7 @@ import logging
 import threading
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from flask import Flask, jsonify, request, send_from_directory
@@ -76,7 +76,7 @@ def _ensure_reconnected() -> None:
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _save_eval_cache() -> None:

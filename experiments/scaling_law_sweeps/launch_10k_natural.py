@@ -98,11 +98,21 @@ METHOD_NAMES: tuple[str, ...] = (
     # Mixtures steered toward the BLEnD cultural-knowledge benchmark (16 country tasks).
     "dclm_10k_mix_blend_lambda0p01",
     "high_quality_10k_mix_blend_lambda0p01",
+    # Mixtures solved against the olmix paper's exact 51-task devset (Table 9) at KL
+    # lambda=0.01, all four fits on the full 363-run swarm. First grid-mix arms for
+    # resiliparse and lpv11. Grid stores: resiliparse us-east5 ONLY; lpv11/dclm/hq also
+    # us-central1 + us-central2 (dclm/hq additionally us-west4 + europe-west4).
+    "dclm_10k_mix_olmixexact_lambda0p01",
+    "high_quality_10k_mix_olmixexact_lambda0p01",
+    "resiliparse_10k_mix_olmixexact_lambda0p01",
+    "lpv11_fastpipe_v1_10k_mix_olmixexact_lambda0p01",
     "fastpipe_v3_100",
     "fastpipe_v3_80",
     "fastpipe_v3_60",
     "fastpipe_v3_40",
     "fastpipe_v3_20",
+    # lpv11-targeted cascade, full corpus (89.1B tokens); cache + pin us-east5.
+    "lpv11_fastpipe_v1",
 )
 WIDTHS: tuple[int, ...] = (512, 1024, 1536, 2432, 3584)
 BASE_BUDGETS: tuple[float, ...] = (

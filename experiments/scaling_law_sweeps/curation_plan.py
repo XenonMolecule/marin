@@ -29,6 +29,7 @@ from experiments.scaling_law_sweeps.completed_adamh import (
     completed_adamh_heuristic,
 )
 from experiments.scaling_law_sweeps.data_curation_math import (
+    TOTAL_WARCS_CC,
     CurationMethod,
     GridMixCurationMethod,
     ReweightedCurationMethod,
@@ -106,8 +107,6 @@ def expc_uniform_t_exp_cap(t_target: float, sampled_warcs: int = EXPC_SAMPLED_WA
 
     From data_curation_math.TOTAL_WARCS_CC = 7,925,398.
     """
-    from experiments.scaling_law_sweeps.data_curation_math import TOTAL_WARCS_CC
-
     return t_target * sampled_warcs / TOTAL_WARCS_CC
 
 
@@ -241,6 +240,7 @@ _D_OBS_DEFAULTS: dict[str, int] = {
     "sysprompt30b_998m_9e19_A-94f799": 14810496434,
     "sysprompt30b_998m_9e19_B-64d3a5": 14815377151,
     "sysprompt30b_998m_9e19_C-c94a3d": 14565835827,
+    "sysprompt30b_998m_9e19_D-mix50v1": 14688250300,
     # --- WARC-scaling sweep subsamples (N ∈ {100, 500, 1000, 2000}) ---
     # Read 2026-04-29 from {bucket}/tokenized/{key}/train/.stats.json.
     # dclm: source us-central2; mirrored to us-central1.
@@ -333,6 +333,11 @@ _D_OBS_DEFAULTS: dict[str, int] = {
     "fastpipe_v3_60_decon_10364warcs-1f0b9a": 28_559_342_931,
     "fastpipe_v3_40_decon_10364warcs-54c951": 18_129_129_360,
     "fastpipe_v3_20_decon_10364warcs-141620": 8_658_430_656,
+    # lpv11_fastpipe_v1 (llm_pipeline_v1_1-targeted cascade), full corpus, 10,364 WARCs.
+    # dedup 286/26/5/seed42 (text_cap_chars=None to match the pre-cap methods) -> CORE v2 decon
+    # -> llama3. 77,051,628 docs. Cache is us-east5 ONLY (post-merge explicit path; -a16e729 =
+    # parity-merge commit). Token count read from the cache ledger, not hand-derived.
+    "lpv11_fastpipe_v1_decon_10364warcs-a16e729": 89_109_695_474,
 }
 _SOURCE_BUCKET: str = "gs://marin-us-central2"
 # BOS-fixed rebuilds were only tokenized on us-central1 (see rebuild_bos_fixed.py)
@@ -615,6 +620,50 @@ METHODS: dict[str, CurationMethod] = {
         "high_quality_10k",
         mixture_tag="_blend_lambda0p01",
     ),
+    # --- OlmixExact arms (registered 2026-08-26) ---
+    # Same swarms, same (R=30B, k=20), same grid caches as the arms above. What changes is the
+    # DEVSET the per-task laws were fit against: olmix's own 51-task suite from the paper's
+    # Table 9 (`olmix_tasks.build_olmix_exact_tasks`) instead of marin's 42-task objective. The
+    # two differ by exactly ten tasks re-added and gsm8k dropped; see that function's docstring.
+    #
+    # CAVEAT, and it is the whole reason the 42-task arms still exist: those ten re-added tasks
+    # ARE DCLM Core v2. A model trained on these mixtures may not be reported as beating natural
+    # *on Core v2* -- the optimizer was pointed at it. Use the plain `_lambda0p01` arms for that
+    # claim. Both devsets read the same evals, so every corpus below has both.
+    #
+    # Measured at solve time: the two devsets agree closely (resiliparse top cells c02_q3
+    # 0.084 vs 0.080, c19_q3 0.078 vs 0.075), so this is a comparability arm, not a new
+    # hypothesis about the mixture.
+    #
+    # All four fits used the full 363-run swarm, collected across ALL FOUR result buckets
+    # (us-east5, us-central1, us-west4, europe-west4). A two-region collection silently fits on
+    # a subset and still reports `status=optimal`; the vendored files carry `swarm_runs` so this
+    # is checkable after the fact.
+    "dclm_10k_mix_olmixexact_lambda0p01": _grid_mix_method(
+        "dclm_10k_mix_olmixexact_lambda0p01",
+        "dclm_400m_1x_10k_dclm-3df0ba",
+        "dclm_10k",
+        mixture_tag="_olmixexact_lambda0p01",
+    ),
+    "high_quality_10k_mix_olmixexact_lambda0p01": _grid_mix_method(
+        "high_quality_10k_mix_olmixexact_lambda0p01",
+        "high_quality_decon_10364warcs-6451c8",
+        "high_quality_10k",
+        mixture_tag="_olmixexact_lambda0p01",
+    ),
+    # First grid-mix arms for these two corpora; the cells live in us-east5.
+    "resiliparse_10k_mix_olmixexact_lambda0p01": _grid_mix_method(
+        "resiliparse_10k_mix_olmixexact_lambda0p01",
+        "resiliparse_decon_10364warcs-beaaf5",
+        "resiliparse_10k",
+        mixture_tag="_olmixexact_lambda0p01",
+    ),
+    "lpv11_fastpipe_v1_10k_mix_olmixexact_lambda0p01": _grid_mix_method(
+        "lpv11_fastpipe_v1_10k_mix_olmixexact_lambda0p01",
+        "lpv11_fastpipe_v1_decon_10364warcs-a16e729",
+        "lpv11_fastpipe_v1_10k",
+        mixture_tag="_olmixexact_lambda0p01",
+    ),
     # --- Dilution-ablation variants of high_quality ---
     # Base hq cache + both variant caches (hq_dense, hq_epoch_sub344) exist in BOTH
     # us-central1 and us-east5, so pin_region=None lets runs float across those two
@@ -684,6 +733,12 @@ METHODS: dict[str, CurationMethod] = {
     "sysprompt30b_998m_9e19_C": _method(
         "sysprompt30b_998m_9e19_C",
         "sysprompt30b_998m_9e19_C-c94a3d",
+        sampled_warcs=EXPC_SAMPLED_WARCS,
+        pin_region="us-central1",
+    ),
+    "sysprompt30b_998m_9e19_D": _method(
+        "sysprompt30b_998m_9e19_D",
+        "sysprompt30b_998m_9e19_D-mix50v1",
         sampled_warcs=EXPC_SAMPLED_WARCS,
         pin_region="us-central1",
     ),
@@ -995,6 +1050,14 @@ METHODS: dict[str, CurationMethod] = {
     "fastpipe_v3_20": _method(
         "fastpipe_v3_20",
         "fastpipe_v3_20_decon_10364warcs-141620",
+        sampled_warcs=EXPC_SAMPLED_WARCS,
+    ),
+    # lpv11_fastpipe_v1: the lpv11-targeted cascade over the full 10,364-WARC pool. Cache mirrored
+    # (CRC32C byte-verified, 10,874 objects) to us-central1 on 2026-08-14 -> no pin; launches MUST
+    # pass --allowed-regions us-central1 us-east5 (cache exists nowhere else).
+    "lpv11_fastpipe_v1": _method(
+        "lpv11_fastpipe_v1",
+        "lpv11_fastpipe_v1_decon_10364warcs-a16e729",
         sampled_warcs=EXPC_SAMPLED_WARCS,
     ),
 }

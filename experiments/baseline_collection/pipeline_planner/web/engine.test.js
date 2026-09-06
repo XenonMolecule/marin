@@ -18,6 +18,11 @@ const STAGES = {
   ft: { id: "ft", label: "ft", kind: "classifier", device: "cpu", throughput: 1, score_col: "ft_prob", direction: "high_useful" },
   oracle_filter: { id: "oracle_filter", label: "Oracle filter", kind: "classifier", device: "cpu", throughput: 0, oracle: true },
   oracle_extract: { id: "oracle_extract", label: "Oracle extractor", kind: "extractor", device: "cpu", throughput: 0, oracle: true },
+  // A cheap CPU text extractor (never abstains) and a TPU classifier that reads ITS text, not the HTML.
+  extract_rs: { id: "extract_rs", label: "rs", kind: "extractor", device: "cpu", throughput: 4, text_col: "text_rs", label_col: null },
+  text_clf: { id: "text_clf", label: "text clf", kind: "classifier", device: "tpu", throughput: 10, score_col: "text_prob", direction: "high_useful", requires_text: "rs" },
+  text_clf2: { id: "text_clf2", label: "text clf 2", kind: "classifier", device: "tpu", throughput: 10, score_col: "text_prob", direction: "high_useful", requires_text: "rs" },
+  bad_text_clf: { id: "bad_text_clf", label: "bad", kind: "classifier", device: "tpu", throughput: 10, score_col: "text_prob", direction: "high_useful", requires_text: "nope" },
 };
 
 // 5 docs. lpv11 covers only the first 4 (doc 4 is from a WARC lpv11 never ran).
@@ -39,6 +44,10 @@ const COLS = {
   tok_lpv11: [10, 10, 10, 10, 10],
   tok_8b: [20, 20, 20, 20, 20],
   tok_justext: [30, 30, 30, 30, 30],
+  text_prob: [0.9, 0.9, 0.9, 0.9, 0.9],
+  lev_rs__lpv11: [0.2, 0.2, 0.2, 0.2, 0.2],
+  both_rs__lpv11: [1, 1, 1, 1, 1],
+  tok_rs: [5, 5, 5, 5, 5],
   warc_record_id: ["a", "b", "c", "d", "e"],
 };
 const N = 5;
@@ -152,4 +161,98 @@ test("jusText never abstains, so it keeps everything reaching it", () => {
   assert.strictEqual(r.extractor.kept, 4, "all covered docs");
   assert.strictEqual(r.summary.recall, 1, "keeps every useful doc...");
   assert.strictEqual(r.summary.precision, 0.5, "...at the cost of precision");
+});
+
+// ---- HTML classifiers -> THE extractor -> TEXT classifiers ----
+// nWarcs=100, docsPerWarc=1, lpv11 covers 4 docs => scale = 25. ft keeps docs 0,1,2.
+
+const F = (stageId, extra = {}) => ({ stageId, enabled: true, mode: "threshold", threshold: 0.5, ...extra });
+
+test("a TEXT classifier runs after the extractor, on what the extractor passed", () => {
+  const r = Engine.evaluate(COLS, N, pipe("extract_rs", [F("ft"), F("text_clf")]), STAGES, TARGET_LPV11);
+  assert.deepStrictEqual(r.stages.map((s) => s.stageId), ["ft"], "HTML filters run before the extractor");
+  assert.deepStrictEqual(r.postStages.map((s) => s.stageId), ["text_clf"], "TEXT filters run after it");
+  assert.strictEqual(r.extractor.docsIn, 3, "the extractor sees the 3 docs ft passed, not all 4");
+  assert.strictEqual(r.postStages[0].docsIn, r.extractor.docsOut, "the TEXT stage reads the extractor's output");
+});
+
+test("the extractor is charged on the docs the HTML filters passed", () => {
+  const r = Engine.evaluate(COLS, N, pipe("extract_rs", [F("ft"), F("text_clf")]), STAGES, TARGET_LPV11);
+  // CPU: ft on 4 covered docs @1 => 100s ; rs on the 3 survivors @4 => 18.75s. TPU: text_clf 3 @10 => 7.5s.
+  assert.strictEqual(r.summary.cpuCoreSec, 100 + 18.75);
+  assert.strictEqual(r.summary.tpuChipSec, 7.5);
+  assert.strictEqual(r.extractor.unitSec, 18.75);
+  // Dropping the HTML filter makes the extractor pay for all 4 docs — the placement tradeoff.
+  const all = Engine.evaluate(COLS, N, pipe("extract_rs", [F("text_clf")]), STAGES, TARGET_LPV11);
+  assert.strictEqual(all.extractor.unitSec, 25);
+});
+
+test("every cost appears exactly once in the breakdown", () => {
+  const r = Engine.evaluate(COLS, N, pipe("extract_rs", [F("ft"), F("text_clf")]), STAGES, TARGET_LPV11);
+  const sum = (dev) => r.computeBreakdown.filter((b) => b.device === dev).reduce((a, b) => a + b.unitSec, 0);
+  assert.strictEqual(sum("cpu"), r.summary.cpuCoreSec);
+  assert.strictEqual(sum("tpu"), r.summary.tpuChipSec);
+  assert.deepStrictEqual(r.computeBreakdown.map((b) => b.label), ["ft", "rs (extract)", "text clf"], "order follows the pipeline");
+});
+
+test("the extractor's abstain applies before the TEXT classifiers", () => {
+  // lpv11 keeps docs 0,1; resiliparse-rs has no abstain column and passes everything.
+  const withAbstain = Engine.evaluate(COLS, N, pipe("extract_lpv11"), STAGES, TARGET_LPV11);
+  assert.strictEqual(withAbstain.extractor.docsOut, 2);
+  const noAbstain = Engine.evaluate(COLS, N, pipe("extract_rs"), STAGES, TARGET_LPV11);
+  assert.strictEqual(noAbstain.extractor.docsOut, 4);
+});
+
+test("a TEXT classifier is rejected when the pipeline extracts with something else", () => {
+  assert.throws(
+    () => Engine.evaluate(COLS, N, pipe("extract_lpv11", [F("text_clf")]), STAGES, TARGET_LPV11),
+    /reads rs text, but this pipeline extracts with lpv11/,
+  );
+  assert.throws(
+    () => Engine.evaluate(COLS, N, pipe("extract_rs", [F("bad_text_clf")]), STAGES, TARGET_LPV11),
+    /reads nope text/,
+  );
+});
+
+test("an extractor cannot be added as a filter — there is exactly one, and it is selected", () => {
+  assert.throws(
+    () => Engine.evaluate(COLS, N, pipe("extract_rs", [F("extract_rs")]), STAGES, TARGET_LPV11),
+    /select it AS the extractor/,
+  );
+});
+
+// ---- early-exit ("band") stages ----
+// COLS: ft_prob [.9,.8,.7,.1,.9], gold(lpv11) docs 0,1 ; text_prob all .9 ; rs never abstains.
+
+test("an early-exit stage keeps its confident head and drops its confident tail", () => {
+  // hi=.85 accepts doc 0 outright; lo=.5 drops doc 3; docs 1,2 form the band and reach text_clf.
+  const filters = [F("ft", { mode: "band", hi: 0.85, lo: 0.5 }), F("text_clf")];
+  const r = Engine.evaluate(COLS, N, pipe("extract_rs", filters), STAGES, TARGET_LPV11);
+  assert.strictEqual(r.stages[0].accepted, 1, "doc 0 is accepted outright");
+  assert.strictEqual(r.stages[0].band, 2, "docs 1 and 2 are uncertain");
+  assert.strictEqual(r.postStages[0].docsIn, 2, "only the band reaches the expensive stage");
+  assert.strictEqual(r.summary.keptSample, 3, "accepted doc + the 2 band survivors");
+});
+
+test("an accepted doc skips later filters entirely", () => {
+  // text_clf2 would reject everything (threshold above every score), yet the accepted doc survives.
+  const filters = [F("ft", { mode: "band", hi: 0.85, lo: 0.5 }), F("text_clf2", { threshold: 99 })];
+  const r = Engine.evaluate(COLS, N, pipe("extract_rs", filters), STAGES, TARGET_LPV11);
+  assert.strictEqual(r.summary.keptSample, 1, "only the early-accepted doc remains");
+  assert.strictEqual(r.finalKept[0], 1);
+});
+
+test("early exit cuts the expensive stage's bill, not the extractor's", () => {
+  const plain = Engine.evaluate(COLS, N, pipe("extract_rs", [F("ft"), F("text_clf")]), STAGES, TARGET_LPV11);
+  const band = Engine.evaluate(COLS, N, pipe("extract_rs", [F("ft", { mode: "band", hi: 0.85, lo: 0.5 }), F("text_clf")]), STAGES, TARGET_LPV11);
+  assert.ok(band.postStages[0].unitSec < plain.postStages[0].unitSec, "the strong stage sees fewer docs");
+  // The extractor still processes the accepted docs — they need text to enter the corpus.
+  assert.strictEqual(band.extractor.docsIn, 3, "2 band + 1 accepted");
+});
+
+test("an extractor that abstains still removes an early-accepted doc", () => {
+  // lpv11 abstains on docs 2,3; doc 0 is accepted early but lpv11 keeps it, doc 1 accepted and kept.
+  const r = Engine.evaluate(COLS, N, pipe("extract_lpv11", [F("ft", { mode: "band", hi: 0.75, lo: 0.5 })]), STAGES, TARGET_LPV11);
+  assert.strictEqual(r.finalKept[2], 0, "doc 2 was accepted by the gate but lpv11 abstained on it");
+  assert.strictEqual(r.finalKept[0], 1);
 });
