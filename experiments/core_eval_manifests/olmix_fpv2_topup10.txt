@@ -1,0 +1,11 @@
+run_name,region,output_path
+olmix-lpv11_fastpipe_v2_10k-s42-K363-i0100-we5e01df7,us-east1,gs://marin-us-east1/checkpoints/olmix-swarm/olmix-lpv11_fastpipe_v2_10k-s42-K363-i0100-we5e01df7
+olmix-lpv11_fastpipe_v2_10k-s42-K363-i0102-w4a548ddd,us-east1,gs://marin-us-east1/checkpoints/olmix-swarm/olmix-lpv11_fastpipe_v2_10k-s42-K363-i0102-w4a548ddd
+olmix-lpv11_fastpipe_v2_10k-s42-K363-i0104-wafeab139,us-east1,gs://marin-us-east1/checkpoints/olmix-swarm/olmix-lpv11_fastpipe_v2_10k-s42-K363-i0104-wafeab139
+olmix-lpv11_fastpipe_v2_10k-s42-K363-i0105-wa57e1de4,us-east1,gs://marin-us-east1/checkpoints/olmix-swarm/olmix-lpv11_fastpipe_v2_10k-s42-K363-i0105-wa57e1de4
+olmix-lpv11_fastpipe_v2_10k-s42-K363-i0106-wecfc0cff,us-east1,gs://marin-us-east1/checkpoints/olmix-swarm/olmix-lpv11_fastpipe_v2_10k-s42-K363-i0106-wecfc0cff
+olmix-lpv11_fastpipe_v2_10k-s42-K363-i0107-w97452bd0,us-east1,gs://marin-us-east1/checkpoints/olmix-swarm/olmix-lpv11_fastpipe_v2_10k-s42-K363-i0107-w97452bd0
+olmix-lpv11_fastpipe_v2_10k-s42-K363-i0108-w761d540c,us-east1,gs://marin-us-east1/checkpoints/olmix-swarm/olmix-lpv11_fastpipe_v2_10k-s42-K363-i0108-w761d540c
+olmix-lpv11_fastpipe_v2_10k-s42-K363-i0109-wcc3b8970,us-east1,gs://marin-us-east1/checkpoints/olmix-swarm/olmix-lpv11_fastpipe_v2_10k-s42-K363-i0109-wcc3b8970
+olmix-lpv11_fastpipe_v2_10k-s42-K363-i0114-w440446e4,us-east1,gs://marin-us-east1/checkpoints/olmix-swarm/olmix-lpv11_fastpipe_v2_10k-s42-K363-i0114-w440446e4
+olmix-lpv11_fastpipe_v2_10k-s42-K363-i0115-w57d7962f,us-east1,gs://marin-us-east1/checkpoints/olmix-swarm/olmix-lpv11_fastpipe_v2_10k-s42-K363-i0115-w57d7962f

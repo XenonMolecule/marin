@@ -1,0 +1,3 @@
+run_name,region,output_path
+curation-dclm_10k_mix_cultural_clp_lambda0p01-expFM_natural-9e+17-d512-L6-B8,us-east5,gs://marin-us-east5/checkpoints/isoflop-curation/curation-dclm_10k_mix_cultural_clp_lambda0p01-expFM_natural-9e+17-d512-L6-B8
+curation-lpv11_10k_mix_cultural_clp_lambda0p01-expFM_natural-9e+17-d512-L6-B8,us-east5,gs://marin-us-east5/checkpoints/isoflop-curation/curation-lpv11_10k_mix_cultural_clp_lambda0p01-expFM_natural-9e+17-d512-L6-B8

@@ -1,21 +1,23 @@
 # Copyright The Marin Authors
 # SPDX-License-Identifier: Apache-2.0
 
-"""Launch the MMLU (`mmlu_sl_verb`) suite over an explicit checkpoint manifest.
+"""Launch a per-shot-count lm-eval suite (MMLU `mmlu_sl_verb` by default) over an explicit
+checkpoint manifest.
 
 The MMLU analogue of `core_tasks.launch_core_tasks_manifest` /
 `olmes_base.launch_olmes_manifest`: reads the same (run_name, region, output_path, ...)
-CSV/TXT manifest and submits one iris child per (checkpoint, shot count) running
-`run_mmlu_eval.py`. Each child is HARD-pinned to its checkpoint's region and points at
-that region's `mmlu_hf_cache/` (datasets) and the shared `core_tasks_hub_cache/` (model
-configs), so weights + eval data read locally — no cross-region egress, no HF Hub calls.
+CSV/TXT manifest and submits one iris child per (checkpoint, shot count) running the
+suite's eval module. Each child is HARD-pinned to its checkpoint's region and points at
+that region's dataset cache and the shared `core_tasks_hub_cache/` (model configs), so
+weights + eval data read locally — no cross-region egress, no HF Hub calls.
 
-5-shot (canonical MMLU) is the default; add `--shots 0` for the 0-shot fallback. Shot
-counts are separate children because they share the lm-eval task name `mmlu_sl_verb` and
-would collide inside one harness run — see mmlu_tasks_set.
+The suite is an `EvalSuite`: the eval module, result/cache subpaths and blessed shot
+counts. `MMLU_SUITE` is the default; `cultural/launch_cultural_manifest.py` reuses this
+launcher with its own suite. Shot counts are separate children because they share the
+lm-eval task name and would collide inside one harness run — see mmlu_tasks_set.
 
 Results land IN-REGION at
-`gs://<bucket>/metadata/mmlu_sl_verb_results/<shots>shot/<run_name>/results.json`.
+`gs://<bucket>/<results_subpath>` (MMLU: `metadata/mmlu_sl_verb_results/<shots>shot/<run_name>/results.json`).
 
 Handoff (run via iris so the parent can submit children and keep them alive):
 
@@ -52,23 +54,41 @@ from experiments.scaling_law_sweeps.dclm_core.launch_dclm_core_sweep import (
     _iris_client,
     _resolve_final_step,
 )
-from experiments.scaling_law_sweeps.mmlu.mmlu_tasks_set import task_for_shots
+from experiments.scaling_law_sweeps.mmlu.mmlu_tasks_set import SUPPORTED_SHOTS
 
 logger = logging.getLogger(__name__)
 
-# Results are partitioned by shot count: 0-shot and 5-shot are separate evals of the
-# same task name, so they need separate results dirs (and separate skip-existing checks).
-RESULTS_SUBPATH = "metadata/mmlu_sl_verb_results/{shots}shot/{run_name}/"
-CACHE_SUBPATH = "eval_datasets/mmlu_hf_cache/"
 HUB_CACHE_SUBPATH = "eval_datasets/core_tasks_hub_cache/"  # reused from the CORE sweep
 
+
+@dataclass(frozen=True)
+class EvalSuite:
+    """One per-shot-count suite this launcher can drive."""
+
+    name: str  # child job-name prefix
+    run_module: str  # `python -m <run_module>`; must accept run_mmlu_eval's CLI
+    results_subpath: str  # bucket-relative, with {shots} and {run_name}
+    cache_subpath: str  # bucket-relative dataset cache prefix
+    supported_shots: tuple[int, ...]
+    default_shots: tuple[int, ...]
+
+
+# Results are partitioned by shot count: 0-shot and 5-shot are separate evals of the
+# same task name, so they need separate results dirs (and separate skip-existing checks).
 # 5-shot is canonical MMLU (the dev split + first_n sampler exist for exactly this) and
 # the only setting whose accuracy is comparable to published numbers, so it is the sweep
 # default. 0-shot is NOT run by default: sl_verb emits the same seven metrics at both
 # shot counts, so 0-shot buys no extra soft-metric signal — it is only a fallback for
 # prompts that overflow the evaluator's 2048-token max_length (see run_mmlu_eval), and
 # is reachable via `--shots 0`.
-DEFAULT_SHOTS: tuple[int, ...] = (5,)
+MMLU_SUITE = EvalSuite(
+    name="mmlu",
+    run_module="experiments.scaling_law_sweeps.mmlu.run_mmlu_eval",
+    results_subpath="metadata/mmlu_sl_verb_results/{shots}shot/{run_name}/",
+    cache_subpath="eval_datasets/mmlu_hf_cache/",
+    supported_shots=SUPPORTED_SHOTS,
+    default_shots=(5,),
+)
 
 
 @dataclass(frozen=True)
@@ -84,14 +104,14 @@ class CheckpointRow:
     def hf_dir(self) -> str:
         return f"{self.output_path.rstrip('/')}/hf/"
 
-    def output_dir(self, shots: int) -> str:
-        return f"gs://{self.bucket}/{RESULTS_SUBPATH.format(shots=shots, run_name=self.run_name)}"
+    def output_dir(self, suite: EvalSuite, shots: int) -> str:
+        return f"gs://{self.bucket}/{suite.results_subpath.format(shots=shots, run_name=self.run_name)}"
 
-    def results_json(self, shots: int) -> str:
-        return f"{self.output_dir(shots)}results.json"
+    def results_json(self, suite: EvalSuite, shots: int) -> str:
+        return f"{self.output_dir(suite, shots)}results.json"
 
-    def cache_gcs(self) -> str:
-        return f"gs://{self.bucket}/{CACHE_SUBPATH}"
+    def cache_gcs(self, suite: EvalSuite) -> str:
+        return f"gs://{self.bucket}/{suite.cache_subpath}"
 
     def hub_cache_gcs(self) -> str:
         return f"gs://{self.bucket}/{HUB_CACHE_SUBPATH}"
@@ -116,6 +136,7 @@ def submit_one(
     row: CheckpointRow,
     hf_step_dir: str,
     *,
+    suite: EvalSuite,
     shots: int,
     priority_band: int,
     wandb_api_key: str,
@@ -123,21 +144,22 @@ def submit_one(
     limit: int | None,
     name_suffix: str,
     memory_gb: int,
+    tpu_variants: tuple[str, ...] = DEFAULT_TPU_VARIANTS,
 ) -> str:
     cmd_args = [
         "python",
         "-m",
-        "experiments.scaling_law_sweeps.mmlu.run_mmlu_eval",
+        suite.run_module,
         "--hf-checkpoint",
         hf_step_dir,
         "--output-dir",
-        row.output_dir(shots),
+        row.output_dir(suite, shots),
         "--run-name",
         row.run_name,
         "--num-fewshot",
         str(shots),
         "--dataset-cache-gcs",
-        row.cache_gcs(),
+        row.cache_gcs(suite),
         "--hub-cache-gcs",
         row.hub_cache_gcs(),
     ]
@@ -161,13 +183,13 @@ def submit_one(
         mode=job_pb2.CONSTRAINT_MODE_REQUIRED,
     )
     constraints = [preemptible_constraint(True), region_constraint]
-    if len(set(DEFAULT_TPU_VARIANTS)) > 1:
-        constraints.append(device_variant_constraint(list(DEFAULT_TPU_VARIANTS)))
+    if len(set(tpu_variants)) > 1:
+        constraints.append(device_variant_constraint(list(tpu_variants)))
 
     job = client.submit(
         entrypoint=Entrypoint.from_command(*cmd_args),
-        name=f"mmlu{shots}s-{row.run_name}{name_suffix}"[:200],
-        resources=ResourceSpec(cpu=8, memory=f"{memory_gb}GB", disk="50GB", device=tpu_device(DEFAULT_TPU_VARIANTS[0])),
+        name=f"{suite.name}{shots}s-{row.run_name}{name_suffix}"[:200],
+        resources=ResourceSpec(cpu=8, memory=f"{memory_gb}GB", disk="50GB", device=tpu_device(tpu_variants[0])),
         environment=EnvironmentSpec(extras=["tpu", "eval"], env_vars=env_vars),
         constraints=constraints,
         max_retries_preemption=20,
@@ -177,7 +199,7 @@ def submit_one(
     return str(job.job_id)
 
 
-def main():
+def main(suite: EvalSuite = MMLU_SUITE):
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     ap = argparse.ArgumentParser()
     ap.add_argument("--manifest", required=True, help="CSV/TXT with columns run_name,region,output_path,hf_dir.")
@@ -191,13 +213,22 @@ def main():
         "--shots",
         type=int,
         nargs="+",
-        default=list(DEFAULT_SHOTS),
-        help="Shot counts to evaluate; one child per (checkpoint, shot). Default: 0 and 5.",
+        default=list(suite.default_shots),
+        help=f"Shot counts to evaluate; one child per (checkpoint, shot). Default: {list(suite.default_shots)}.",
     )
     ap.add_argument("--limit", type=int, default=None, help="Cap each task to N examples (smoke test).")
     ap.add_argument("--name-suffix", default="", help="Suffix on child job names to dodge JobAlreadyExists.")
     ap.add_argument("--max-count", type=int, default=None, help="Only submit the first N not-yet-done child jobs.")
     ap.add_argument("--memory-gb", type=int, default=64, help="Child worker memory.")
+    ap.add_argument(
+        "--tpu-variants",
+        default=",".join(DEFAULT_TPU_VARIANTS),
+        help="Comma-separated TPU variants for the children. The default exists in us-east5 / "
+        "us-central1 / europe-west4 but NOT in us-west4, which only has v5litepod-*; a child "
+        "asking for a variant its pinned region lacks is rejected at SUBMIT time, so a "
+        "us-west4 manifest must pass e.g. 'v5litepod-4'. Applies to every row, so keep one "
+        "launch per region when the hardware differs.",
+    )
     ap.add_argument("--keepalive-timeout", type=float, default=43200.0, help="Max seconds to hold the parent open.")
     ap.add_argument("--keepalive-poll", type=float, default=300.0, help="Seconds between keep-alive GCS polls.")
     args = ap.parse_args()
@@ -206,8 +237,9 @@ def main():
     # Fail fast on an unsupported shot count here, at submit time, rather than letting
     # every child discover it independently after burning TPU startup.
     for shots in args.shots:
-        task_for_shots(shots)
-    logger.info("Loaded %d checkpoints from %s; shots=%s", len(rows), args.manifest, args.shots)
+        if shots not in suite.supported_shots:
+            raise ValueError(f"{suite.name}: unsupported shot count {shots}; expected one of {suite.supported_shots}")
+    logger.info("Loaded %d checkpoints from %s; suite=%s shots=%s", len(rows), args.manifest, suite.name, args.shots)
 
     client = wandb_api_key = hf_token = None
     if args.launch:
@@ -228,7 +260,7 @@ def main():
             logger.info("Reached --max-count=%d; stopping submission.", args.max_count)
             break
 
-        pending_shots = [s for s in args.shots if not (args.skip_existing and _gcs_exists(row.results_json(s)))]
+        pending_shots = [s for s in args.shots if not (args.skip_existing and _gcs_exists(row.results_json(suite, s)))]
         if not pending_shots:
             logger.info("[%3d] SKIP (exists, all shots): %s", i, row.run_name)
             skipped.append(row.run_name)
@@ -252,7 +284,7 @@ def main():
                     shots,
                     row.region,
                     hf_step_dir,
-                    row.results_json(shots),
+                    row.results_json(suite, shots),
                 )
                 continue
 
@@ -261,6 +293,7 @@ def main():
                     client,
                     row,
                     hf_step_dir,
+                    suite=suite,
                     shots=shots,
                     priority_band=PRIORITY_BAND_MAP[args.child_priority],
                     wandb_api_key=wandb_api_key,
@@ -268,13 +301,14 @@ def main():
                     limit=args.limit,
                     name_suffix=args.name_suffix,
                     memory_gb=args.memory_gb,
+                    tpu_variants=tuple(args.tpu_variants.split(",")),
                 )
             except Exception as e:
                 logger.error("[%3d] SUBMIT FAILED for %s: %s", i, label, e)
                 incomplete.append(label)
                 continue
             submitted.append((label, job_id))
-            submitted_results.append(row.results_json(shots))
+            submitted_results.append(row.results_json(suite, shots))
             logger.info("[%3d] LAUNCHED %s -> %s (region=%s)", i, label, job_id, row.region)
 
     logger.info("Summary: submitted=%d skipped=%d incomplete=%d", len(submitted), len(skipped), len(incomplete))

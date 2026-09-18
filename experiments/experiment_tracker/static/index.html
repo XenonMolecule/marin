@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Experiment Tracker</title>
+<style>
+  :root {
+    --bg: #f7f7f5; --card: #ffffff; --ink: #1a1a1a; --ink-2: #5f6368; --ink-3: #9aa0a6;
+    --line: #e4e4e0; --accent: #4a6fa5; --accent-soft: #dbe4f0;
+    --good: #0ca30c; --warn: #b97900; --crit: #d03b3b; --manual: #5f6368;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #17181a; --card: #202124; --ink: #e8eaed; --ink-2: #9aa0a6; --ink-3: #6b7075;
+      --line: #33363a; --accent: #7fa3d4; --accent-soft: #2c3a4d;
+      --good: #4cbb4c; --warn: #e0a53a; --crit: #e0716a; --manual: #9aa0a6;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 14px/1.45 -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { display: flex; align-items: baseline; gap: 16px; padding: 20px 28px 8px; }
+  h1 { font-size: 19px; margin: 0; letter-spacing: -0.01em; }
+  #meta { color: var(--ink-2); font-size: 12.5px; }
+  #meta.stale { color: var(--crit); font-weight: 600; }
+  #refresh { margin-left: auto; border: 1px solid var(--line); background: var(--card); color: var(--ink);
+             border-radius: 6px; padding: 6px 14px; font: inherit; cursor: pointer; }
+  #refresh:hover { border-color: var(--accent); }
+  #refresh[disabled] { opacity: .55; cursor: wait; }
+  main { padding: 8px 28px 48px; max-width: 1180px; }
+  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--ink-2);
+       margin: 26px 0 10px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 14px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+  .card h3 { margin: 0 0 2px; font-size: 14.5px; font-weight: 600; }
+  .detail { color: var(--ink-2); font-size: 12.5px; margin: 2px 0 10px; }
+  .row { display: flex; align-items: center; gap: 10px; }
+  .pill { font-size: 11.5px; padding: 1px 8px; border-radius: 99px; border: 1px solid; white-space: nowrap; }
+  .pill.running { color: var(--accent); border-color: var(--accent); }
+  .pill.done    { color: var(--good);   border-color: var(--good); }
+  .pill.blocked { color: var(--warn);   border-color: var(--warn); }
+  .pill.failed  { color: var(--crit);   border-color: var(--crit); }
+  .pill.manual  { color: var(--manual); border-color: var(--manual); }
+  .nums { margin-left: auto; font-variant-numeric: tabular-nums; color: var(--ink-2); font-size: 12.5px; }
+  .bar { height: 8px; border-radius: 4px; background: var(--accent-soft); margin: 8px 0 2px; overflow: hidden; }
+  .bar > i { display: block; height: 100%; border-radius: 4px; background: var(--accent); }
+  .bar.done > i { background: var(--good); }
+  .bd { margin-top: 10px; display: grid; grid-template-columns: max-content 1fr max-content; gap: 3px 10px;
+        font-size: 12px; color: var(--ink-2); align-items: center; }
+  .bd .mini { height: 5px; border-radius: 3px; background: var(--accent-soft); overflow: hidden; min-width: 60px; }
+  .bd .mini > i { display: block; height: 100%; background: var(--accent); }
+  .bd .mini.done > i { background: var(--good); }
+  .bd .n { font-variant-numeric: tabular-nums; text-align: right; }
+  .note { margin-top: 8px; font-size: 12px; color: var(--warn); }
+  #empty { color: var(--ink-2); padding: 40px 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Experiment Tracker</h1>
+  <span id="meta">loading…</span>
+  <a href="/mixtures" style="color:var(--accent);font-size:13px">mixture viewer →</a>
+  <button id="refresh">Refresh probes</button>
+</header>
+<main id="main"><div id="empty">Loading snapshot…</div></main>
+<script>
+const ICONS = { running: "▶", done: "✓", blocked: "⏸", failed: "✕", manual: "✎" };
+
+function ago(ts) {
+  if (!ts) return "never refreshed";
+  const s = Math.max(0, (Date.now() / 1000) - ts);
+  if (s < 90) return `${Math.round(s)}s ago`;
+  if (s < 5400) return `${Math.round(s / 60)}m ago`;
+  return `${(s / 3600).toFixed(1)}h ago`;
+}
+
+function bar(done, total, status, mini) {
+  if (done == null || !total) return "";
+  const pct = Math.min(100, 100 * done / total);
+  const cls = (mini ? "mini" : "bar") + (status === "done" ? " done" : "");
+  return `<div class="${cls}"><i style="width:${pct}%"></i></div>`;
+}
+
+function card(e) {
+  const nums = e.done == null ? "" :
+    `${e.done.toLocaleString()}${e.total ? " / " + e.total.toLocaleString() : ""} ${e.unit}`;
+  const bd = (e.breakdown || []).map(([label, d, t]) => `
+      <span>${label}</span>${t ? bar(d, t, d >= t ? "done" : "", true) : "<span></span>"}
+      <span class="n">${d.toLocaleString()}${t ? " / " + t : ""}</span>`).join("");
+  return `<div class="card">
+    <div class="row">
+      <h3>${e.name}</h3>
+      <span class="nums">${nums}</span>
+    </div>
+    ${e.detail ? `<div class="detail">${e.detail}</div>` : ""}
+    <div class="row">
+      <span class="pill ${e.status}">${ICONS[e.status] || ""} ${e.status}</span>
+    </div>
+    ${bar(e.done, e.total, e.status, false)}
+    ${bd ? `<div class="bd">${bd}</div>` : ""}
+    ${e.note ? `<div class="note">${e.note}</div>` : ""}
+  </div>`;
+}
+
+async function render() {
+  const snap = await (await fetch("/api/experiments")).json();
+  const meta = document.getElementById("meta");
+  const ageS = snap.generated_at ? (Date.now() / 1000 - snap.generated_at) : Infinity;
+  meta.textContent = (snap.refreshing ? "refreshing… · " : "") + "snapshot " + ago(snap.generated_at)
+    + (ageS > 1800 ? " — STALE, numbers may lag reality" : "");
+  meta.classList.toggle("stale", ageS > 1800);
+  const groups = new Map();
+  for (const e of snap.experiments) {
+    if (!groups.has(e.group)) groups.set(e.group, []);
+    groups.get(e.group).push(e);
+  }
+  const main = document.getElementById("main");
+  if (!snap.experiments.length) { main.innerHTML = '<div id="empty">No snapshot yet — hit Refresh probes.</div>'; return; }
+  main.innerHTML = [...groups.entries()].map(([g, rows]) =>
+    `<h2>${g}</h2><div class="grid">${rows.map(card).join("")}</div>`).join("");
+  if (snap.refreshing) setTimeout(render, 4000);
+}
+setInterval(render, 60000);  // pick up fresh snapshots without a manual reload
+
+document.getElementById("refresh").onclick = async (ev) => {
+  ev.target.disabled = true;
+  await fetch("/api/refresh", { method: "POST" });
+  setTimeout(() => { ev.target.disabled = false; render(); }, 1500);
+  render();
+};
+render();
+</script>
+</body>
+</html>

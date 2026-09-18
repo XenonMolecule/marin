@@ -106,6 +106,80 @@ METHOD_NAMES: tuple[str, ...] = (
     "high_quality_10k_mix_olmixexact_lambda0p01",
     "resiliparse_10k_mix_olmixexact_lambda0p01",
     "lpv11_fastpipe_v1_10k_mix_olmixexact_lambda0p01",
+    # lpv11 (llm_pipeline_v1_1 LLM extraction) olmixexact arm. Grid store is us-east5 +
+    # us-east1 + us-central1 only, so launch with those --allowed-regions. This corpus has
+    # no natural arm (see curation_plan) -- the mix is trainable but not mix-vs-natural.
+    "lpv11_10k_mix_olmixexact_lambda0p01",
+    # Cultural-targeted mixes (user 2026-09-13): d512 + d1536 sweeps only.
+    "dclm_10k_mix_cultural_clp_lambda0p01",
+    "lpv11_10k_mix_cultural_clp_lambda0p01",
+    "nemotron_full_10k_mix_cultural_clp_lambda0p01",
+    "resiliparse_10k_mix_cultural_clp_lambda0p01",
+    "lpv11_fastpipe_v2_10k_mix_cultural_clp_lambda0p01",
+    "fineweb_cc_10k_mix_cultural_clp_r100k20_lambda0p05",
+    "fineweb_cc_10k_mix_mmlu_stem_clp_r100k20_lambda0p05",
+    "fineweb_cc_10k_mix_mmlu_humanities_clp_r100k20_lambda0p05",
+    "fineweb_cc_10k_mix_mmlu_social_sciences_clp_r100k20_lambda0p05",
+    "lpv11_10k_mix_cultural_clp_r100k20_lambda0p05",
+    "lpv11_10k_mix_mmlu_stem_clp_r100k20_lambda0p05",
+    "lpv11_10k_mix_mmlu_humanities_clp_r100k20_lambda0p05",
+    "lpv11_10k_mix_mmlu_social_sciences_clp_r100k20_lambda0p05",
+    "resiliparse_10k_mix_cultural_clp_r100k20_lambda0p05",
+    "resiliparse_10k_mix_mmlu_stem_clp_r100k20_lambda0p05",
+    "resiliparse_10k_mix_mmlu_humanities_clp_r100k20_lambda0p05",
+    "resiliparse_10k_mix_mmlu_social_sciences_clp_r100k20_lambda0p05",
+    "lpv11_fastpipe_v2_10k_mix_cultural_clp_r100k20_lambda0p05",
+    "lpv11_fastpipe_v2_10k_mix_mmlu_stem_clp_r100k20_lambda0p05",
+    "lpv11_fastpipe_v2_10k_mix_mmlu_humanities_clp_r100k20_lambda0p05",
+    "lpv11_fastpipe_v2_10k_mix_mmlu_social_sciences_clp_r100k20_lambda0p05",
+    "lpv11_10k_mix_cultural_clp_r100k5_lambda0p05",
+    "lpv11_10k_mix_mmlu_stem_clp_r100k5_lambda0p05",
+    "lpv11_10k_mix_mmlu_humanities_clp_r100k5_lambda0p05",
+    "lpv11_10k_mix_mmlu_social_sciences_clp_r100k5_lambda0p05",
+    "resiliparse_10k_mix_cultural_clp_r100k5_lambda0p05",
+    "resiliparse_10k_mix_mmlu_stem_clp_r100k5_lambda0p05",
+    "resiliparse_10k_mix_mmlu_humanities_clp_r100k5_lambda0p05",
+    "resiliparse_10k_mix_mmlu_social_sciences_clp_r100k5_lambda0p05",
+    "lpv11_fastpipe_v2_10k_mix_cultural_clp_r100k5_lambda0p05",
+    "lpv11_fastpipe_v2_10k_mix_mmlu_stem_clp_r100k5_lambda0p05",
+    "lpv11_fastpipe_v2_10k_mix_mmlu_humanities_clp_r100k5_lambda0p05",
+    "lpv11_fastpipe_v2_10k_mix_mmlu_social_sciences_clp_r100k5_lambda0p05",
+    "dclm_10k_mix_cultural_clp_r100k20_lambda0p05",
+    "dclm_10k_mix_mmlu_stem_clp_r100k20_lambda0p05",
+    "dclm_10k_mix_mmlu_humanities_clp_r100k20_lambda0p05",
+    "dclm_10k_mix_mmlu_social_sciences_clp_r100k20_lambda0p05",
+    "nemotron_full_10k_mix_cultural_clp_r100k20_lambda0p05",
+    "nemotron_full_10k_mix_mmlu_stem_clp_r100k20_lambda0p05",
+    "nemotron_full_10k_mix_mmlu_humanities_clp_r100k20_lambda0p05",
+    "nemotron_full_10k_mix_mmlu_social_sciences_clp_r100k20_lambda0p05",
+    "dclm_10k_mix_mmlu_stem_clp_lambda0p01",
+    "dclm_10k_mix_mmlu_humanities_clp_lambda0p01",
+    "dclm_10k_mix_mmlu_social_sciences_clp_lambda0p01",
+    "lpv11_10k_mix_mmlu_stem_clp_lambda0p01",
+    "lpv11_10k_mix_mmlu_humanities_clp_lambda0p01",
+    "lpv11_10k_mix_mmlu_social_sciences_clp_lambda0p01",
+    "nemotron_full_10k_mix_mmlu_stem_clp_lambda0p01",
+    "nemotron_full_10k_mix_mmlu_humanities_clp_lambda0p01",
+    "nemotron_full_10k_mix_mmlu_social_sciences_clp_lambda0p01",
+    "resiliparse_10k_mix_mmlu_stem_clp_lambda0p01",
+    "resiliparse_10k_mix_mmlu_humanities_clp_lambda0p01",
+    "resiliparse_10k_mix_mmlu_social_sciences_clp_lambda0p01",
+    "lpv11_fastpipe_v2_10k_mix_mmlu_stem_clp_lambda0p01",
+    "lpv11_fastpipe_v2_10k_mix_mmlu_humanities_clp_lambda0p01",
+    "lpv11_fastpipe_v2_10k_mix_mmlu_social_sciences_clp_lambda0p01",
+    # Nemotron olmixexact arm; grid store in us-east5 + us-central1 only.
+    "nemotron_full_10k_mix_olmixexact_lambda0p01",
+    # fineweb_cc olmixexact arm; grid store in us-east5/us-central1/us-central2.
+    "fineweb_cc_10k_mix_olmixexact_lambda0p01",
+    # fineweb_edu olmixexact arm; grid store in us-east5/us-central1/us-central2. No d3584.
+    "fineweb_edu_10k_mix_olmixexact_lambda0p01",
+    # lpv11_fastpipe_v2 natural arm; cache in us-east5 only.
+    "lpv11_fastpipe_v2",
+    # lpv11_fastpipe_v2 olmixexact arm; grid store in us-east5 + us-central1 + us-east1.
+    "lpv11_fastpipe_v2_10k_mix_olmixexact_lambda0p01",
+    # Extractor ablation arm B: lpv11_fastpipe_v2's documents with upstream resiliparse text;
+    # cache in us-east5 only.
+    "lpv11_fastpipe_v2_upstreamrs",
     "fastpipe_v3_100",
     "fastpipe_v3_80",
     "fastpipe_v3_60",
@@ -129,7 +203,11 @@ BASE_BUDGETS: tuple[float, ...] = (
     1.8e20,
     3e20,
 )
-BIG_WIDTHS: tuple[int, ...] = (2432, 3584)
+# 2026-09-06: d1024 + d1536 added by user direction — extend every 447M and 998M
+# ladder to 9e20/1.8e21 (all arms, baselines included). d3584 extension cells remain
+# BANNED for the nemotron/fineweb_cc/fineweb_edu arms (user 2026-09-06); launch those
+# methods with --only lists that exclude d3584.
+BIG_WIDTHS: tuple[int, ...] = (1024, 1536, 2432, 3584)
 # High-end extension for the big widths only: budget -> batch_divisor.
 # Divisors chosen so every extension cell lands on <= v5p-128 (the frozen peak):
 # 9e20 fits at div=1; 1.8e21 shrinks x2 (-> v5p-64); 9e21 shrinks x4 (-> v5p-128).

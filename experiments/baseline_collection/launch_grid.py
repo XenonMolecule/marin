@@ -70,7 +70,12 @@ LABEL_CPU_MEMORY = "12GB"
 # CPU-only task on a TPU host that has spare cores, so an interactive quality
 # wave silently evicts extraction from accelerators it actually needs.
 PRIORITY = "interactive"
-SUBMIT_PARALLELISM = 12
+# Concurrent `iris job run` calls. Each opens its own SSH tunnel and uploads a ~15 MB
+# bundle, so too many at once wedge the controller's bundle intake and EVERY submit then
+# times out together (observed: 0/24 landed at 12-way in July; 3/24 at 12-way on 2026-09-06,
+# leaving ~45 orphaned clients that stalled the next launcher too). Serial submits take
+# ~20 s each, so 2-way keeps a 24-task wave under 5 min. Overridable via --submit-parallelism.
+SUBMIT_PARALLELISM = 2
 # Per-submit ceiling. Each `iris job run` opens its own SSH tunnel and uploads a
 # ~15 MB workspace bundle, so a hung submit must free its pool slot quickly
 # rather than stalling the wave behind it. Stages are re-runnable via done markers.
@@ -152,10 +157,11 @@ def _wave(
     extra: str,
     priority: str,
     region: str = COMPUTE_REGION,
+    submit_parallelism: int = SUBMIT_PARALLELISM,
 ) -> None:
     """Submit a wave in parallel and report how much of it landed."""
     logger.info("submitting %d jobs at priority=%s region=%s ...", len(jobs), priority, region)
-    with ThreadPoolExecutor(max_workers=SUBMIT_PARALLELISM) as pool:
+    with ThreadPoolExecutor(max_workers=submit_parallelism) as pool:
         results = list(
             pool.map(
                 lambda item: _submit(
@@ -207,6 +213,7 @@ def run_label(
     priority: str = PRIORITY,
     region: str = COMPUTE_REGION,
     output_base: str | None = None,
+    submit_parallelism: int = SUBMIT_PARALLELISM,
 ) -> None:
     """Fan out the labelling stage across ``tasks`` independent single-host jobs.
 
@@ -253,9 +260,19 @@ def run_label(
             extra="cpu",
             priority=priority,
             region=region,
+            submit_parallelism=submit_parallelism,
         )
         return
-    _wave(jobs, tpu=tpu, cpu=0.1, memory=LABEL_MEMORY, extra="tpu", priority=priority, region=region)
+    _wave(
+        jobs,
+        tpu=tpu,
+        cpu=0.1,
+        memory=LABEL_MEMORY,
+        extra="tpu",
+        priority=priority,
+        region=region,
+        submit_parallelism=submit_parallelism,
+    )
 
 
 def run_status() -> None:
@@ -276,6 +293,13 @@ def main() -> None:
     parser.add_argument("--dataset", choices=list(GRID_CORPORA))
     parser.add_argument("--stages", default="topic")
     parser.add_argument("--tasks", type=int, default=24)
+    parser.add_argument(
+        "--submit-parallelism",
+        type=int,
+        default=SUBMIT_PARALLELISM,
+        help="Concurrent iris submits. Lower it (2-4) when the controller is contended: "
+        "at the default every submit can time out together and the wave lands 0 jobs.",
+    )
     parser.add_argument("--source", choices=["native", "mirror"], default="mirror")
     parser.add_argument("--quality-model", default=None)
     parser.add_argument(
@@ -338,6 +362,7 @@ def main() -> None:
         priority=args.priority,
         region=args.region,
         output_base=args.output_base,
+        submit_parallelism=args.submit_parallelism,
     )
 
 

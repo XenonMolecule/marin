@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fleet Landscape</title>
+<style>
+  :root { --bg:#f7f7f5; --card:#fff; --ink:#1a1a1a; --ink2:#5f6368; --line:#e4e4e0;
+          --run:#1a6f3c; --pend:#8a6d1a; --done:#4a6fa5; --bad:#b03030; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#17181a; --card:#202124; --ink:#e8eaed; --ink2:#9aa0a6; --line:#33363a;
+            --run:#5cc98a; --pend:#d9b95c; --done:#7fa3d4; --bad:#e07a7a; }
+  }
+  body { margin:0; background:var(--bg); color:var(--ink);
+         font:14px/1.5 -apple-system,"Segoe UI",Roboto,sans-serif; padding:20px 28px 60px; }
+  h1 { font-size:19px; margin:0 0 2px; } a { color:var(--done); }
+  #meta { color:var(--ink2); font-size:12.5px; margin-bottom:16px; }
+  h2 { font-size:14px; margin:22px 0 8px; color:var(--ink2); text-transform:uppercase; letter-spacing:.04em; }
+  table { border-collapse:collapse; width:100%; max-width:1150px; background:var(--card);
+          border:1px solid var(--line); border-radius:8px; overflow:hidden; }
+  th, td { padding:7px 12px; text-align:left; font-size:13px; border-bottom:1px solid var(--line); }
+  th { color:var(--ink2); font-weight:500; font-size:12px; }
+  td.num { text-align:right; font-variant-numeric:tabular-nums; }
+  .run  { color:var(--run);  font-weight:600; }
+  .pend { color:var(--pend); font-weight:600; }
+  .done { color:var(--done); }
+  .bad  { color:var(--bad); font-weight:600; }
+  .band { font-size:11px; padding:1px 7px; border-radius:9px; border:1px solid var(--line); color:var(--ink2); }
+  .band.interactive { border-color:var(--run); color:var(--run); }
+  .note { color:var(--ink2); font-size:12px; }
+  #paused li { margin:3px 0; color:var(--ink2); }
+  button { font:inherit; padding:5px 12px; border:1px solid var(--line); border-radius:6px;
+           background:var(--card); color:var(--ink); cursor:pointer; }
+</style>
+</head>
+<body>
+<h1>Fleet Landscape <a href="/" style="font-size:13px">← tracker</a></h1>
+<div id="meta">loading… <button onclick="refresh()">refresh</button></div>
+<div id="content"></div>
+<script>
+function stateCell(s, k, cls) { const v = s[k] || 0; return `<td class="num ${v ? cls : ''}">${v || ""}</td>`; }
+function render(doc) {
+  const groups = {};
+  for (const f of doc.families) (groups[f.group] ||= []).push(f);
+  let html = "";
+  for (const [g, fams] of Object.entries(groups)) {
+    html += `<h2>${g}</h2><table><tr><th>family</th><th>band</th>
+             <th style="text-align:right">running</th><th style="text-align:right">pending</th>
+             <th style="text-align:right">done</th><th style="text-align:right">failed*</th>
+             <th>top pending reason</th><th>note</th></tr>`;
+    for (const f of fams) {
+      const s = f.states, bad = (s.failed||0)+(s.worker_failed||0)+(s.killed||0);
+      html += `<tr><td>${f.label}</td><td><span class="band ${f.band}">${f.band}</span></td>
+        ${stateCell(s,"running","run")}${stateCell(s,"pending","pend")}${stateCell(s,"succeeded","done")}
+        <td class="num ${bad?'bad':''}">${bad||""}</td>
+        <td class="note">${f.top_pending_reason||""}</td><td class="note">${f.note||""}</td></tr>`;
+    }
+    html += "</table>";
+  }
+  html += `<h2>Paused / deliberately offline</h2><ul id="paused">` +
+          doc.paused.map(p => `<li><b>${p.label}</b> — ${p.note}</li>`).join("") + "</ul>" +
+          `<p class="note">*failed column sums failed + worker_failed + killed; killed usually means a superseded or user-stopped wave.</p>`;
+  document.getElementById("content").innerHTML = html;
+}
+async function refresh(force) {
+  document.getElementById("meta").innerHTML = "refreshing (≈20s of iris queries)… ";
+  const doc = await (await fetch("/api/fleet" + (force ? "?force=1" : ""))).json();
+  document.getElementById("meta").innerHTML =
+    `snapshot ${new Date(doc.generated_at*1000).toLocaleTimeString()} <button onclick="refresh(1)">refresh</button>`;
+  render(doc);
+}
+refresh();
+</script>
+</body>
+</html>

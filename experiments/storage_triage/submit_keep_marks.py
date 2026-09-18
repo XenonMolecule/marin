@@ -1,3 +1,6 @@
+# Copyright The Marin Authors
+# SPDX-License-Identifier: Apache-2.0
+
 """Submit keep marks to the gcs-usage mark & sweep ledger (https://gcs.oa.dev).
 
 Reads mark_keep_prefixes.txt (marked keep + claimed as @me) and

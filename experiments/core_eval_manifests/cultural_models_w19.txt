@@ -1,0 +1,3 @@
+run_name,region,output_path
+curation-lpv11_fastpipe_v2_10k_mix_cultural_clp_r100k5_lambda0p05-expFM_natural-3e+17-d512-L6-B8,us-east1,gs://marin-us-east1/checkpoints/isoflop-curation/curation-lpv11_fastpipe_v2_10k_mix_cultural_clp_r100k5_lambda0p05-expFM_natural-3e+17-d512-L6-B8
+curation-nemotron_full_10k_mix_cultural_clp_r100k20_lambda0p05-expFM_natural-9e+17-d512-L6-B8,us-east5,gs://marin-us-east5/checkpoints/isoflop-curation/curation-nemotron_full_10k_mix_cultural_clp_r100k20_lambda0p05-expFM_natural-9e+17-d512-L6-B8

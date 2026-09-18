@@ -59,6 +59,9 @@ from experiments.data_mixing.olmix_plan import read_manifest
 from experiments.data_mixing.olmix_solve import DEFAULT_KL_REG, DEFAULT_REPETITION_FACTOR
 from experiments.data_mixing.olmix_tasks import build_olmix_exact_tasks, build_target_tasks
 from experiments.data_mixing.run_olmix_swarm_standalone import PROXY_TRAIN_STEPS
+from experiments.scaling_law_sweeps.cultural.cultural_tasks_set import TASKS_BY_BENCHMARK, result_key
+from experiments.scaling_law_sweeps.mmlu.consolidate_mmlu_categories import subject_key
+from experiments.scaling_law_sweeps.olmo_bpb.mmlu_olmes import MMLU_CATEGORIES
 
 logger = logging.getLogger(__name__)
 
@@ -211,7 +214,7 @@ def main() -> None:
     p.add_argument("--write-csv", action="store_true", help="Also write olmix-schema ratios.csv/metrics.csv.")
     p.add_argument(
         "--metric",
-        choices=("bpb", "core_v2", "blend"),
+        choices=("bpb", "core_v2", "blend", "mmlu_stem", "mmlu_humanities", "mmlu_social_sciences", "cultural"),
         default="bpb",
         help="What to optimise. 'bpb' = the 42-task OLMo Base-Easy devset (default). "
         "'core_v2' = the 22 DCLM Core v2 tasks, fit as 1-centered_accuracy so that lower "
@@ -220,7 +223,12 @@ def main() -> None:
         "'blend' = the 16 BLEnD cultural-knowledge tasks as gold bpb -- DIAGNOSTIC ONLY: "
         "the across-swarm variance is ~90% a single general-quality axis, and gold bpb "
         "never sees BLEnD's cross-country distractors, so a mixture fit on it is weakly "
-        "identified for anything culture-specific.",
+        "identified for anything culture-specific. "
+        "'mmlu_stem' / 'mmlu_humanities' / 'mmlu_social_sciences' = that MMLU category's "
+        "sl_verb subjects, fit as -choice_logprob (contrastive: the score DOES see the "
+        "lettered distractors, unlike gold bpb). 'cultural' = the 19-task cultural_sl_verb "
+        "suite (BLEnD-MCQ x16 countries + CulturalBench + FORK + NormAd), same metric. "
+        "These read metadata/olmix_swarm_mmlu / olmix_swarm_cultural (launch_swarm_* evals).",
     )
     args = p.parse_args()
 
@@ -231,6 +239,13 @@ def main() -> None:
     elif args.metric == "blend":
         task_names = list(BLEND_TASKS)
         logger.info("objective: BLEnD cultural bpb, %d country tasks (diagnostic)", len(task_names))
+    elif args.metric.startswith("mmlu_"):
+        category = args.metric[len("mmlu_") :]
+        task_names = [subject_key(s, 5) for s in MMLU_CATEGORIES[category]]
+        logger.info("objective: MMLU %s, %d sl_verb subjects, fit as -choice_logprob", category, len(task_names))
+    elif args.metric == "cultural":
+        task_names = [result_key(t, 5) for tasks in TASKS_BY_BENCHMARK.values() for t in tasks]
+        logger.info("objective: cultural_sl_verb suite, %d tasks, fit as -choice_logprob", len(task_names))
     elif args.devset == "olmix_exact":
         task_names = list(build_olmix_exact_tasks(include_mmlu=args.include_mmlu))
         logger.info(

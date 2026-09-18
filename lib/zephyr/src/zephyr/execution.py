@@ -298,7 +298,16 @@ class ZephyrContext:
             self.no_workers_timeout = 6 * 60 * 60
 
         if self.chunk_storage_prefix is None:
-            self.chunk_storage_prefix = marin_temp_bucket(ttl_days=1, prefix="zephyr")
+            # ZEPHYR_CHUNK_TTL_DAYS guards long pipelines whose shuffle intermediates outlive the
+            # 1-day default: the bucket lifecycle rule deletes tmp/ttl=1d/ scratch mid-run when a
+            # stage's map+reduce spans more than a day (observed 2026-09-10, 500k-WARC normalize).
+            ttl_days = 1
+            if env_val := os.environ.get("ZEPHYR_CHUNK_TTL_DAYS"):
+                try:
+                    ttl_days = int(env_val)
+                except ValueError as e:
+                    raise ValueError(f"Invalid ZEPHYR_CHUNK_TTL_DAYS environment variable value: {env_val}") from e
+            self.chunk_storage_prefix = marin_temp_bucket(ttl_days=ttl_days, prefix="zephyr")
 
         if self.stage_runner_factory is None:
             assert self.client is not None

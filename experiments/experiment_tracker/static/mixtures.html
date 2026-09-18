@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mixture Viewer</title>
+<style>
+  :root {
+    --bg: #f7f7f5; --card: #ffffff; --ink: #1a1a1a; --ink-2: #5f6368;
+    --line: #e4e4e0; --accent: #4a6fa5; --up: #1a6f3c; --down: #b0501e;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #17181a; --card: #202124; --ink: #e8eaed; --ink-2: #9aa0a6;
+            --line: #33363a; --accent: #7fa3d4; --up: #5cc98a; --down: #e8a06e; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 14px/1.45 -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { display: flex; align-items: center; gap: 14px; padding: 20px 28px 10px; flex-wrap: wrap; }
+  h1 { font-size: 19px; margin: 0; }
+  a { color: var(--accent); }
+  select, label { font: inherit; }
+  select { background: var(--card); color: var(--ink); border: 1px solid var(--line);
+           border-radius: 6px; padding: 5px 8px; max-width: 480px; }
+  main { padding: 4px 28px 48px; max-width: 1180px; }
+  #meta { color: var(--ink-2); font-size: 12.5px; margin: 6px 0 14px; }
+  .wrap { display: flex; gap: 22px; flex-wrap: wrap; align-items: flex-start; }
+  table.grid { border-collapse: separate; border-spacing: 2px; }
+  table.grid th { font-size: 11px; color: var(--ink-2); font-weight: 500; padding: 2px 4px; }
+  table.grid td { width: 52px; height: 26px; border-radius: 4px; text-align: center;
+                  font-size: 10.5px; font-variant-numeric: tabular-nums; cursor: default; }
+  .side { background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+          padding: 14px 16px; min-width: 300px; flex: 1; }
+  .side h2 { font-size: 13px; margin: 0 0 8px; }
+  .side table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  .side td, .side th { padding: 3px 6px; text-align: right; font-variant-numeric: tabular-nums; }
+  .side td:first-child, .side th:first-child { text-align: left; }
+  .side th { color: var(--ink-2); font-weight: 500; border-bottom: 1px solid var(--line); }
+  .delta.up { color: var(--up); } .delta.down { color: var(--down); }
+  #legend { font-size: 12px; color: var(--ink-2); margin-top: 8px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Mixture Viewer</h1>
+  <a href="/">← tracker</a>
+  <label>dataset <select id="corpus"></select></label>
+  <label>target <select id="target"></select></label>
+  <label>R <select id="rsel"></select></label>
+  <label>k <select id="ksel"></select></label>
+  <label>λ <select id="lsel"></select></label>
+  <label><input type="checkbox" id="ratio"> color by ratio vs natural</label>
+</header>
+<main>
+  <div id="meta"></div>
+  <div class="wrap">
+    <div>
+      <table class="grid" id="grid"></table>
+      <div id="legend"></div>
+    </div>
+    <div class="side">
+      <h2>Top 15 cells by weight</h2>
+      <table id="top"></table>
+    </div>
+  </div>
+</main>
+<script>
+let DATA = {};
+const Q = ["q0","q1","q2","q3","q4"], C = [...Array(24).keys()].map(i => "c" + String(i).padStart(2,"0"));
+// WebOrganizer/TopicClassifier id2label (from the model config; cluster_24 index = label id).
+const TOPICS = ["Adult","Art & Design","Software Dev.","Crime & Law","Education & Jobs","Hardware",
+  "Entertainment","Social Life","Fashion & Beauty","Finance & Business","Food & Dining","Games",
+  "Health","History","Home & Hobbies","Industrial","Literature","Politics","Religion",
+  "Science & Tech.","Software","Sports & Fitness","Transportation","Travel"];
+const topicName = c => TOPICS[parseInt(c.slice(1), 10)] || c;
+// filename = <corpus>_R<r>_k20<tag>, tag optionally ending _lambda0pNN. Four dropdowns pick
+// (corpus, target, R, lambda); R and lambda options are filtered to variants that exist.
+const R_LABEL = { "3e10": "30B", "1e11": "100B" };
+const NO_TARGET = "(default bpb)", NO_LAMBDA = "(default 0.05)";
+function parseName(n) {
+  const m = n.match(/^(.*)_R([0-9]e[0-9]+)_k(\d+)(.*)$/);
+  if (!m) return null;
+  let tag = m[4], lam = NO_LAMBDA;
+  const lm = tag.match(/^(.*)_lambda0p(\d+)$/);
+  if (lm) { tag = lm[1]; lam = "0." + lm[2]; }
+  return { name: n, corpus: m[1], R: m[2], k: m[3], target: tag || NO_TARGET, lam };
+}
+let ENTRIES = [];
+const sel = id => document.getElementById(id);
+function currentEntry() {
+  return ENTRIES.find(e => e.corpus === sel("corpus").value && e.target === sel("target").value
+                        && e.R === sel("rsel").value && e.k === sel("ksel").value
+                        && e.lam === sel("lsel").value);
+}
+
+function fmt(x) { return x >= 0.01 ? (100*x).toFixed(1) : x > 0 ? (100*x).toFixed(2) : "0"; }
+
+function heat(v, vmax) {                       // sequential: one hue, light -> dark
+  const t = vmax > 0 ? Math.pow(Math.min(1, v / vmax), 0.5) : 0;
+  return `rgba(74, 111, 165, ${ (0.06 + 0.94*t).toFixed(3) })`;
+}
+function ratioHeat(w, n) {                     // diverging: down-orange / neutral / up-blue-green
+  if (!n) return "transparent";
+  const r = Math.log2((w + 1e-9) / (n + 1e-9)), t = Math.min(1, Math.abs(r) / 3);
+  return r >= 0 ? `rgba(26, 111, 60, ${(0.08 + 0.8*t).toFixed(3)})`
+                : `rgba(176, 80, 30, ${(0.08 + 0.8*t).toFixed(3)})`;
+}
+
+function render() {
+  const entry = currentEntry(), byRatio = document.getElementById("ratio").checked;
+  if (!entry) return;
+  const m = DATA[entry.name]; if (!m) return;
+  const w = m.weights, nat = m.natural || {};
+  const vmax = Math.max(...Object.values(w));
+  const meta = m.meta;
+  document.getElementById("meta").textContent =
+    `corpus ${meta.corpus} · λ=${meta.kl_reg} · R=${meta.requested_tokens} · k=${meta.repetition_factor}` +
+    ` · ${meta.swarm_runs} swarm runs · live domains ${meta.live_domains}`;
+  let html = "<tr><th></th>" + Q.map(q => `<th>${q}</th>`).join("") + "</tr>";
+  for (const c of C) {
+    html += `<tr><th style="text-align:right">${c} · ${topicName(c)}</th>` + Q.map(q => {
+      const key = `${c}_${q}`, v = w[key] || 0, n = nat[key] || 0;
+      const bg = byRatio ? ratioHeat(v, n) : heat(v, vmax);
+      const lum = v / vmax > 0.45 && !byRatio ? "#fff" : "inherit";
+      const tip = `${key}: ${fmt(v)}% (natural ${fmt(n)}%, ${n ? (v/n).toFixed(1) + "x" : "n/a"})`;
+      return `<td style="background:${bg};color:${lum}" title="${tip}">${v > 0.001 ? fmt(v) : ""}</td>`;
+    }).join("") + "</tr>";
+  }
+  document.getElementById("grid").innerHTML = html;
+  document.getElementById("legend").textContent = byRatio
+    ? "green = upweighted vs natural, orange = downweighted (log scale, ±8x saturates); number = mix %"
+    : "darker = more weight; numbers are % of the mixture";
+  const rows = Object.entries(w).sort((a,b) => b[1]-a[1]).slice(0,15);
+  document.getElementById("top").innerHTML =
+    "<tr><th>cell</th><th>mix %</th><th>natural %</th><th>ratio</th></tr>" +
+    rows.map(([k,v]) => {
+      const n = nat[k] || 0, r = n ? v/n : null;
+      const cls = r === null ? "" : r >= 1 ? "up" : "down";
+      return `<tr><td>${k} · ${topicName(k.split("_")[0])}</td><td>${fmt(v)}</td><td>${fmt(n)}</td>
+              <td class="delta ${cls}">${r === null ? "–" : r.toFixed(1) + "x"}</td></tr>`;
+    }).join("");
+}
+
+(async () => {
+  DATA = await (await fetch("/api/mixtures")).json();
+  ENTRIES = Object.keys(DATA).map(parseName).filter(Boolean);
+  const fill = (id, values, prefer, labeler) => {
+    const s = sel(id), prev = s.value;
+    s.innerHTML = values.map(v => `<option value="${v}">${labeler ? labeler(v) : v}</option>`).join("");
+    s.value = values.includes(prev) ? prev : (prefer && values.includes(prefer) ? prefer : values[0]);
+  };
+  // Cascade: corpus -> target -> (R, lambda) options that actually exist for that pair.
+  function refill(level) {
+    if (level <= 0) fill("corpus", [...new Set(ENTRIES.map(e => e.corpus))].sort(), "lpv11_10k");
+    const inCorpus = ENTRIES.filter(e => e.corpus === sel("corpus").value);
+    if (level <= 1) fill("target", [...new Set(inCorpus.map(e => e.target))].sort(), "_mmlu_stem_clp");
+    const inTarget = inCorpus.filter(e => e.target === sel("target").value);
+    fill("rsel", [...new Set(inTarget.map(e => e.R))].sort(), "3e10",
+         r => R_LABEL[r] ? `${R_LABEL[r]} tokens` : r);
+    const inR = inTarget.filter(e => e.R === sel("rsel").value);
+    fill("ksel", [...new Set(inR.map(e => e.k))].sort((a, b) => a - b), "20");
+    const inK = inR.filter(e => e.k === sel("ksel").value);
+    fill("lsel", [...new Set(inK.map(e => e.lam))].sort(), "0.01");
+  }
+  refill(0);
+  sel("corpus").onchange = () => { refill(1); render(); };
+  sel("target").onchange = () => { refill(2); render(); };
+  sel("rsel").onchange = () => { refill(3); render(); };
+  sel("ksel").onchange = () => { refill(4); render(); };
+  sel("lsel").onchange = render;
+  document.getElementById("ratio").onchange = render;
+  render();
+})();
+</script>
+</body>
+</html>

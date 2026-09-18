@@ -43,9 +43,9 @@ logger = logging.getLogger(__name__)
 # colour re-colours every corpus after it and breaks comparability with plots
 # already published. The 7th (brown) is resiliparse — chosen because the existing
 # six cover blue/orange/green/amber/pink/dark-green and brown is the clearest
-# remaining separation in both themes.
-CORPUS_LIGHT = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#8c564b"]
-CORPUS_DARK = ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#008300", "#a9756a"]
+# remaining separation in both themes. The 8th (purple) is lpv11_fastpipe_v2.
+CORPUS_LIGHT = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#8c564b", "#7b5fd6"]
+CORPUS_DARK = ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#008300", "#a9756a", "#a08ce8"]
 # Ordinal ramp for the five quality buckets: one hue, monotone lightness, and the
 # step nearest the surface clears 2:1 in each mode (light starts at step 250,
 # dark stops at step 600). Low quality sits nearest the page ground in both.
@@ -192,9 +192,8 @@ _STYLE = """<style>
 
 _BODY = """
   <h1>Quality &times; topic across the 10k-WARC corpora</h1>
-  <p class="lede">Exact 24 &times; 5 grids for the five corpora already scored, plus the projected grid for
-  the in-flight <code>llm_pipeline_v1_1</code> run. Same WebOrganizer topic classifier, same calibrated
-  quality scorer, same bucket edges, so the cells are directly comparable.</p>
+  <p class="lede">Exact 24 &times; 5 grids for every scored 10k-WARC corpus. Same WebOrganizer topic
+  classifier, same calibrated quality scorer, same bucket edges, so the cells are directly comparable.</p>
 
   <div class="tabs" role="tablist">
     <button role="tab" id="tab-quality" aria-selected="true" onclick="showTab('quality')">Quality buckets</button>
@@ -262,12 +261,10 @@ _BODY = """
       <li><strong>Tokens here are gte tokens, not llama3 tokens.</strong> grid_v1 recorded token mass with the
         topic model's own tokenizer, capped at its 8192-token context. That undercounts long documents, so it
         is not a training-token count &mdash; but it is the only unit measured identically for every corpus.
-        For <code>llm_pipeline_v1_1</code> the true llama3 projection is <b id="llama-note"></b>, about 13%
-        above its gte figure; expect a similar gap for the others.</li>
-      <li><strong>The corpora are at different pipeline stages.</strong> <code>high_quality</code> is
-        post-dedup and post-decontamination; the rest are pre-dedup; <code>llm_pipeline_v1_1</code> is a
-        projection from a partial run and is pre-dedup. Raw sizes are therefore not like-for-like &mdash;
-        the composition views are the fairer comparison.</li>
+        Llama3 counts run roughly 13% higher on this material.</li>
+      <li><strong>The corpora are at different pipeline stages.</strong> Each row's stage label says whether
+        it is post-dedup and post-decontamination or pre-dedup. Raw sizes are therefore not like-for-like
+        &mdash; the composition views are the fairer comparison.</li>
       <li><strong>q2 dominates everywhere.</strong> The calibrated scorer puts the bulk of general web text in
         the middle bucket for every corpus, so the interesting differences live in the q3/q4 tail and in the
         q0 junk share, not in q2.</li>
@@ -329,6 +326,9 @@ const bucketTotals = (c) => {
 };
 const topicTotals = (c) => grid(c).map(rowSum);
 const total = (c) => rowSum(bucketTotals(c));
+// Quality-tab rows run smallest to largest so the shared-scale bars grow down the
+// page. Colour is still looked up by the corpus's position in DATA.corpora.
+const bySize = () => [...DATA.corpora].sort((a, b) => total(a) - total(b));
 
 function showTab(name) {
   for (const t of ['quality', 'topics', 'grid']) {
@@ -350,17 +350,16 @@ function setTopicMode(m) {
 /* ---------- quality tab ---------- */
 function renderCards() {
   const el = document.getElementById('q-cards');
-  const proj = DATA.corpora[0];
-  const pooled = DATA.corpora.filter(c => !c.projected);
-  const pooledTot = pooled.reduce((s, c) => s + total(c), 0);
+  const pooledTot = DATA.corpora.reduce((s, c) => s + total(c), 0);
+  const largest = DATA.corpora.map(c => ({c, v: total(c)})).sort((a, b) => b.v - a.v)[0];
   const q4 = DATA.corpora.map(c => ({c, v: bucketTotals(c)[4] / total(c)}))
                          .sort((a, b) => b.v - a.v)[0];
   const q0 = DATA.corpora.map(c => ({c, v: bucketTotals(c)[0] / total(c)}))
                          .sort((a, b) => b.v - a.v)[0];
   el.innerHTML = `
-    <div class="card"><div class="v">${fmt(total(proj))}</div>
-      <div class="k">llm_pipeline_v1_1, projected</div>
-      <div class="n">vs ${fmt(pooledTot)} across the five scored corpora</div></div>
+    <div class="card"><div class="v">${fmt(largest.v)}</div>
+      <div class="k">largest &mdash; ${largest.c.label}</div>
+      <div class="n">of ${fmt(pooledTot)} ${METRIC} across all corpora</div></div>
     <div class="card"><div class="v">${pct(q4.v)}</div>
       <div class="k">best q4 share &mdash; ${q4.c.label}</div>
       <div class="n">the top bucket is scarce everywhere</div></div>
@@ -375,7 +374,7 @@ function renderCards() {
 function stackedRows(elId, normalise) {
   const pal = qualityPal();
   const maxTot = Math.max(...DATA.corpora.map(total));
-  document.getElementById(elId).innerHTML = DATA.corpora.map(c => {
+  document.getElementById(elId).innerHTML = bySize().map(c => {
     const bt = bucketTotals(c), tot = rowSum(bt);
     const width = normalise ? 100 : (tot / maxTot) * 100;
     const segs = bt.map((v, b) => {
@@ -402,7 +401,7 @@ function renderQualityLegend() {
 function renderQualityTable() {
   const head = `<tr><th class="rowh">Corpus</th>${DATA.buckets.map(b => `<th>${b}</th>`).join('')}
     <th class="tot">Total</th></tr>`;
-  const body = DATA.corpora.map(c => {
+  const body = bySize().map(c => {
     const bt = bucketTotals(c), tot = rowSum(bt);
     return `<tr><th class="rowh">${c.label}</th>${bt.map(v =>
       `<td>${fmt(v)}<br><span style="color:var(--ink-3);font-size:11px">${pct(v / tot)}</span></td>`).join('')}
@@ -416,8 +415,7 @@ function topicMatrix() {
   // columns = corpora, rows = topics; value depends on the chosen encoding.
   const cols = DATA.corpora.map(c => topicTotals(c));
   const totals = DATA.corpora.map((c, j) => rowSum(cols[j]));
-  const pooled = DATA.topics.map((_, i) =>
-    DATA.corpora.reduce((s, c, j) => c.projected ? s : s + cols[j][i], 0));
+  const pooled = DATA.topics.map((_, i) => DATA.corpora.reduce((s, c, j) => s + cols[j][i], 0));
   const pooledTot = rowSum(pooled);
   return DATA.topics.map((t, i) => ({
     topic: t,
@@ -616,9 +614,6 @@ function renderAll() {
   renderTopics();
   renderGridTab();
 }
-const proj = DATA.corpora[0];
-document.getElementById('llama-note').textContent =
-  (proj.llama_tokens.flat().reduce((s, v) => s + v, 0) / 1e9).toFixed(0) + 'B';
 renderAll();
 window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', renderAll);
 new MutationObserver(renderAll).observe(document.documentElement, {attributes: true,

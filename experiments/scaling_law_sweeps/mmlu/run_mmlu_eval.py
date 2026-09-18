@@ -5,8 +5,9 @@
 
 Structurally identical to `core_tasks/run_core_tasks_eval.py` and
 `olmes_base/run_olmes_eval.py`: offline dataset + hub caches wired in before any HF
-import, then `marin.evaluation.run.evaluate` with a `levanter_lm_evaluation_harness`
-config — the exact `default_eval` worker fn. Differences here:
+import, then Levanter's harness in-process via `levanter_lm_eval.run_levanter_lm_eval`
+(the marin `evaluate()` wrapper was removed by the 2026-08-13 upstream sync; the sibling
+runners still reference it). Differences here:
 
   * the task is `mmlu_sl_verb` at ONE shot count (see mmlu_tasks_set for why sl_verb,
     and why 0-shot and 5-shot must be separate runs rather than one `evals=[...]`);
@@ -28,8 +29,10 @@ Usage (as an iris child; launcher supplies HF_HUB_OFFLINE + region pin):
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import os
+import time
 
 from experiments.scaling_law_sweeps.core_tasks.run_core_tasks_eval import _sync_cache
 
@@ -80,11 +83,8 @@ def main():
     _prepare_hub_cache(args.hub_cache_gcs)
     _prepare_offline_dataset_cache(args.dataset_cache_gcs)
 
-    from fray.cluster import ResourceConfig
-    from marin.evaluation.evaluation_config import EvaluationConfig
-    from marin.evaluation.run import evaluate
-
-    from experiments.scaling_law_sweeps.mmlu.mmlu_tasks_set import task_for_shots
+    from experiments.scaling_law_sweeps.levanter_lm_eval import run_levanter_lm_eval  # noqa: PLC0415
+    from experiments.scaling_law_sweeps.mmlu.mmlu_tasks_set import task_for_shots  # noqa: PLC0415
 
     task = task_for_shots(args.num_fewshot)
     checkpoint = args.hf_checkpoint.rstrip("/")
@@ -96,22 +96,26 @@ def main():
     }
     logger.info("HF offline env: %s", hf_env)
 
-    config = EvaluationConfig(
-        evaluator="levanter_lm_evaluation_harness",
-        resource_config=ResourceConfig.with_tpu("v5p-8"),
-        model_name=args.run_name,
-        model_path=checkpoint,
-        evaluation_path=args.output_dir.rstrip("/"),
-        evals=[task],
-        discover_latest_checkpoint=False,
-        max_eval_instances=args.limit,
-    )
-    try:
-        evaluate(config)
-    except Exception:
-        import traceback
+    # lm-eval results.json carries no checkpoint provenance, which made the 2026-09-17
+    # stale-checkpoint audit unprovable for old evals. Record what THIS eval scores,
+    # before scoring, so verify_eval_integrity can hard-verify every future datapoint.
+    from rigging.filesystem import filesystem as marin_filesystem  # noqa: PLC0415
 
-        from rigging.filesystem import filesystem as marin_filesystem
+    provenance = {
+        "checkpoint": checkpoint,
+        "started_at": time.time(),
+        "task": task.name,
+        "num_fewshot": task.num_fewshot,
+    }
+    with marin_filesystem("gcs").open(f"{args.output_dir.rstrip('/')}/provenance.json", "w") as f:
+        json.dump(provenance, f)
+
+    try:
+        run_levanter_lm_eval(checkpoint, [task], args.output_dir, args.run_name, max_eval_instances=args.limit)
+    except Exception:
+        import traceback  # noqa: PLC0415
+
+        from rigging.filesystem import filesystem as marin_filesystem  # noqa: PLC0415
 
         err = f"HF env: {hf_env}\n\n{traceback.format_exc()}"
         try:

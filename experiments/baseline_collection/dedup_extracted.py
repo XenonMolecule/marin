@@ -23,7 +23,8 @@ Pipeline (StepRunner)::
                 ngram / seed 42). Co-partitioned 1:1 with normalize output.
     fuzzy     — global LSH + connected-components across all minhash shards.
                 Emits per-doc cluster markers
-                ``{id, attributes: {dup_cluster_id, is_cluster_canonical}}``;
+                ``{id, dup_cluster_id, is_cluster_canonical}`` (FLAT — the older
+                nested ``attributes`` shape is gone);
                 singletons get no row, exactly one row per cluster has
                 ``is_cluster_canonical=True``.
     deduped   — apply step: join normalize parquet with fuzzy attr parquet,
@@ -69,7 +70,7 @@ from collections.abc import Iterator
 import fsspec
 from fray.types import ResourceConfig
 from marin.datakit.normalize import NormalizedData, normalize_step
-from marin.execution.artifact import Artifact
+from marin.execution.artifact import read_artifact
 from marin.execution.step_runner import StepRunner
 from marin.execution.step_spec import StepSpec
 from marin.processing.classification.deduplication.fuzzy_dups import (
@@ -292,8 +293,8 @@ def _apply_fuzzy_dups(
     output_path: str,
 ) -> dict:
     """Filter normalized parquet by fuzzy-dup attrs; write jsonl.gz tree."""
-    norm = Artifact.load(normalize_step_obj, NormalizedData)
-    fuzzy = Artifact.load(fuzzy_step_obj, FuzzyDupsAttrData)
+    norm = read_artifact(normalize_step_obj.output_path, NormalizedData)
+    fuzzy = read_artifact(fuzzy_step_obj.output_path, FuzzyDupsAttrData)
 
     # There should be exactly one source (our normalize step).
     if len(fuzzy.sources) != 1:
@@ -329,13 +330,26 @@ def _apply_fuzzy_dups(
         # Load non-canonical IDs from attr file. Missing attr file => all
         # records in this shard are singletons (no rows emitted).
         non_canonical_ids: set[str] = set()
+        saw_attr_rows = False
         try:
             for r in load_parquet(item["attr_shard"]):
-                attrs = r.get("attributes") or {}
-                if attrs.get("is_cluster_canonical") is False:
+                saw_attr_rows = True
+                # Attrs are FLAT: {id, dup_cluster_id, is_cluster_canonical}. They used to
+                # be nested under an "attributes" key; reading the old shape against the new
+                # writer silently matches nothing, drops 0, and yields a dedup that looks
+                # successful while doing nothing. Fail loudly instead if the column is gone.
+                if "is_cluster_canonical" not in r:
+                    raise KeyError(
+                        f"{item['attr_shard']}: expected flat fuzzy attrs with "
+                        f"'is_cluster_canonical', got columns {sorted(r)}"
+                    )
+                if r["is_cluster_canonical"] is False:
                     non_canonical_ids.add(r["id"])
         except FileNotFoundError:
-            pass
+            # A genuinely absent attr shard means every record here is a singleton.
+            saw_attr_rows = False
+        if not saw_attr_rows:
+            logger.info("  %s: no attr rows (all singletons)", item["basename"])
         kept = 0
         dropped = 0
         for r in load_parquet(item["source_shard"]):

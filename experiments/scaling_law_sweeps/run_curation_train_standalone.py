@@ -253,7 +253,10 @@ def _build_tags(plan: PlannedRun, method) -> list[str]:
     return [
         # --- coarse grouping (one-click filters) ---
         f"experiment={short_exp}",
-        f"method={plan.method_name}",
+        # W&B rejects tags over 64 chars; the longest arm names (e.g. fpv2 MMLU domain
+        # arms) overflow, which killed whole children on 2026-09-14. Truncate: the tag is
+        # a one-click filter, and the full name lives in the run name and config.
+        f"method={plan.method_name}"[:64],
         # --- budget / scale ---
         f"budget={plan.budget:.0e}",
         f"params={params_short}",

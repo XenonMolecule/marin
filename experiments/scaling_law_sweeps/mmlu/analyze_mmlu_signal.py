@@ -34,6 +34,11 @@ then the headline choice_logprob curve is a LANGUAGE-MODELING curve — the null
 knowledge in it by construction, so any rise it shows is not knowledge. The knowledge is
 exactly ``clp_gap``, and only that.
 
+`--by-category` adds one row per official MMLU category (the subject rows are grouped
+via `mmlu_olmes.category_of`) next to the whole-suite `all` row; `group` is a CSV column.
+`extract_samples` / `signal` are choice-count agnostic and are reused by
+`cultural/analyze_cultural_signal.py`.
+
 Runs IN-CLOUD: each results.json is ~226MB (lm-eval logs per-sample data for all 14042
 questions), so 181 runs is ~41GB — read it in-region, emit a small CSV.
 
@@ -52,14 +57,18 @@ import io
 import json
 import logging
 import re
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import numpy as np
 from rigging.filesystem import filesystem as marin_filesystem
 
+from experiments.scaling_law_sweeps.olmo_bpb.mmlu_olmes import category_of
+
 logger = logging.getLogger(__name__)
 
 NAT_TO_BIT = 1.4426950408889634  # 1/ln(2); matches lm_eval.api.task
+LETTERS = "ABCD"
 
 BUCKETS = ["marin-us-east5", "marin-eu-west4", "marin-us-central1", "marin-us-central2", "marin-us-east1"]
 RESULTS_PREFIX = "metadata/mmlu_sl_verb_results"
@@ -73,6 +82,7 @@ FIELDS = [
     "method",
     "hidden_dim",
     "budget",
+    "group",
     "n",
     "obs_acc",
     "null_acc",
@@ -96,43 +106,69 @@ FIELDS = [
 ]
 
 
-def _extract(doc: dict) -> tuple[np.ndarray, np.ndarray, np.ndarray] | None:
-    """Per-question (log_softmax lls, choice_prob_norm dist, gold index) for one run."""
+ALL_GROUP = "all"
+MAX_CHOICES = 4  # pick_A..pick_D columns; 2-way tasks leave C/D at 0
+
+
+def extract_samples(
+    doc: dict,
+    group_of: Callable[[str], str | None] | None = None,
+    all_group: str | None = ALL_GROUP,
+) -> dict[str, tuple[np.ndarray, np.ndarray, np.ndarray]]:
+    """Per-group (log_softmax lls, choice_prob_norm dist, gold index) arrays for one run.
+
+    `group_of` maps a samples task key to a group label (None = skip the task); every kept
+    question also lands in `all_group` unless that is None. Choice count is inferred per
+    task, so 2-way and 4-way tasks both work, but a group's arrays are stacked, so tasks of
+    mixed choice counts must not share a group (pass `all_group=None` for such suites).
+    """
     samples = doc.get("samples")
     if not samples:
-        return None
-    logps: list[np.ndarray] = []
-    cpns: list[np.ndarray] = []
-    golds: list[int] = []
-    letters = "ABCD"
-    for _task, recs in samples.items():
+        return {}
+    buckets: dict[str, tuple[list, list, list]] = {}
+    for task_key, recs in samples.items():
+        labels = [all_group] if all_group is not None else []
+        if group_of is not None:
+            label = group_of(task_key)
+            if label is None:
+                continue
+            labels.append(label)
         for r in recs:
             resp = r.get("filtered_resps")
-            if not resp or len(resp) != 4:
+            choices = r["doc"]["choices"]
+            if not resp or len(resp) != len(choices):
                 continue
             lls = np.array([x[0] for x in resp], dtype=np.float64)
-            logps.append(lls - np.logaddexp.reduce(lls))
+            logp = lls - np.logaddexp.reduce(lls)
             # choice_prob_norm's distribution, rebuilt exactly as lm_eval does: softmax
             # over NEGATIVE per-byte bits, with byte lengths of the FULL "A. <text>" string.
-            choices = [f"{letters[i]}. {c}" for i, c in enumerate(r["doc"]["choices"])]
-            blen = np.array([max(1, len(c.encode("utf-8"))) for c in choices], dtype=np.float64)
+            lettered = [f"{LETTERS[i]}. {c}" for i, c in enumerate(choices)]
+            blen = np.array([max(1, len(c.encode("utf-8"))) for c in lettered], dtype=np.float64)
             w = np.exp(-((-lls / blen) * NAT_TO_BIT))
-            cpns.append(w / max(w.sum(), 1e-8))
-            golds.append(int(r["target"]))
-    if not golds:
-        return None
-    return np.array(logps), np.array(cpns), np.array(golds)
+            cpn = w / max(w.sum(), 1e-8)
+            for label in labels:
+                logps, cpns, golds = buckets.setdefault(label, ([], [], []))
+                logps.append(logp)
+                cpns.append(cpn)
+                golds.append(int(r["target"]))
+    out = {}
+    for label, (logps, cpns, golds) in buckets.items():
+        if golds:
+            out[label] = (np.array(logps), np.array(cpns), np.array(golds))
+    return out
 
 
-def _signal(logps: np.ndarray, cpns: np.ndarray, golds: np.ndarray, seed: int) -> dict:
-    """Observed vs zero-knowledge null for acc and choice_logprob."""
+def signal(logps: np.ndarray, cpns: np.ndarray, golds: np.ndarray, seed: int) -> dict:
+    """Observed vs zero-knowledge null for acc and choice_logprob; k = logps.shape[1]."""
     rng = np.random.default_rng(seed)
-    n = len(golds)
+    n, k = logps.shape
     idx = np.arange(n)
     picks = logps.argmax(axis=1)
 
-    pick_marg = np.bincount(picks, minlength=4) / n
-    gold_marg = np.bincount(golds, minlength=4) / n
+    pick_marg = np.bincount(picks, minlength=k) / n
+    gold_marg = np.bincount(golds, minlength=k) / n
+    pick_padded = np.zeros(MAX_CHOICES)
+    pick_padded[:k] = pick_marg
 
     obs_acc = float((picks == golds).mean())
     null_acc = float((pick_marg * gold_marg).sum())  # exact E[acc | pick ⟂ gold]
@@ -176,44 +212,64 @@ def _signal(logps: np.ndarray, cpns: np.ndarray, golds: np.ndarray, seed: int) -
         obs_clpn=obs_clpn,
         null_clpn=null_clpn,
         clpn_gap=obs_clpn - null_clpn,
-        pick_A=pick_marg[0],
-        pick_B=pick_marg[1],
-        pick_C=pick_marg[2],
-        pick_D=pick_marg[3],
+        pick_A=pick_padded[0],
+        pick_B=pick_padded[1],
+        pick_C=pick_padded[2],
+        pick_D=pick_padded[3],
     )
 
 
-def _one(path: str, shots: int, seed: int) -> dict | None:
+def subject_category(task_key: str) -> str | None:
+    """`mmlu_sl_verb_<subject>_<N>shot` -> its MMLU category; None for the group row."""
+    m = re.match(r"^mmlu_sl_verb_(?P<subject>.+)_\d+shot$", task_key)
+    if m is None:
+        return None
+    try:
+        return category_of(m["subject"])
+    except KeyError:
+        return None
+
+
+def _one(path: str, shots: int, seed: int, by_category: bool) -> list[dict]:
     stem = path.split(f"/{shots}shot/")[1].split("/")[0]
     m = RUN_RE.match(stem)
     if m is None:
         logger.warning("unparsed: %s", stem)
-        return None
+        return []
     fs = marin_filesystem("gcs")
     uri = path if path.startswith("gs://") else f"gs://{path}"
     with fs.open(uri, "r") as fh:
         doc = json.load(fh)
-    got = _extract(doc)
+    groups = extract_samples(doc, subject_category if by_category else None)
     del doc
-    if got is None:
+    if not groups:
         logger.warning("no usable samples: %s", stem)
-        return None
-    logps, cpns, golds = got
-    row = dict(run_stem=stem, method=m.group("method"), hidden_dim=int(m.group("hidden")), budget=m.group("budget"))
-    row.update(_signal(logps, cpns, golds, seed))
-    logger.info(
-        "%s: acc %.4f vs null %.4f (%+.4f, %+.1f sd) | clp %.4f vs null %.4f (%+.4f, %+.1f sd)",
-        stem,
-        row["obs_acc"],
-        row["null_acc"],
-        row["acc_gap"],
-        row["acc_sigma"],
-        row["obs_clp"],
-        row["null_clp"],
-        row["clp_gap"],
-        row["clp_sigma"],
-    )
-    return row
+        return []
+    rows = []
+    for group, (logps, cpns, golds) in groups.items():
+        row = dict(
+            run_stem=stem,
+            method=m.group("method"),
+            hidden_dim=int(m.group("hidden")),
+            budget=m.group("budget"),
+            group=group,
+        )
+        row.update(signal(logps, cpns, golds, seed))
+        rows.append(row)
+        logger.info(
+            "%s [%s]: acc %.4f vs null %.4f (%+.4f, %+.1f sd) | clp %.4f vs null %.4f (%+.4f, %+.1f sd)",
+            stem,
+            group,
+            row["obs_acc"],
+            row["null_acc"],
+            row["acc_gap"],
+            row["acc_sigma"],
+            row["obs_clp"],
+            row["null_clp"],
+            row["clp_gap"],
+            row["clp_sigma"],
+        )
+    return rows
 
 
 def main() -> None:
@@ -222,6 +278,11 @@ def main() -> None:
     ap.add_argument("--shots", type=int, default=5)
     ap.add_argument("--out", required=True, help="Small CSV to write.")
     ap.add_argument("--workers", type=int, default=6, help="Concurrent results.json (each ~226MB).")
+    ap.add_argument(
+        "--by-category",
+        action="store_true",
+        help="Also emit one row per MMLU category (stem/humanities/social_sciences/other) next to `all`.",
+    )
     args = ap.parse_args()
 
     fs = marin_filesystem("gcs")
@@ -232,18 +293,19 @@ def main() -> None:
 
     rows = []
     with ThreadPoolExecutor(max_workers=args.workers) as ex:
-        futs = {ex.submit(_one, p, args.shots, i): p for i, p in enumerate(paths)}
+        futs = {ex.submit(_one, p, args.shots, i, args.by_category): p for i, p in enumerate(paths)}
         for f in as_completed(futs):
             try:
-                if (r := f.result()) is not None:
-                    rows.append(r)
+                rows.extend(f.result())
             except Exception as e:
                 logger.error("FAILED %s: %s", futs[f], e)
 
     buf = io.StringIO()
     w = csv.DictWriter(buf, fieldnames=FIELDS)
     w.writeheader()
-    w.writerows(sorted(rows, key=lambda r: (r["method"], r["hidden_dim"], float(r["budget"].replace("e+", "e")))))
+    w.writerows(
+        sorted(rows, key=lambda r: (r["method"], r["hidden_dim"], float(r["budget"].replace("e+", "e")), r["group"]))
+    )
     with fs.open(args.out, "w") as fh:
         fh.write(buf.getvalue())
     logger.info("wrote %s (%d rows)", args.out, len(rows))

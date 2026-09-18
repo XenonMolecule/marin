@@ -27,16 +27,21 @@ from experiments.fast_curation.spec import get_spec
 
 logger = logging.getLogger(__name__)
 
-# Keep text (the payload) + provenance; drop the ragged input_ids and its n_tokens. `read_table`
-# projects at read time, so input_ids is never even pulled off disk.
-KEEP_COLUMNS = ["doc_id", "url", "warc_hash", "snapshot", "fasttext_score", "text", "modernbert_prob"]
+# Drop the ragged input_ids and its n_tokens; keep text (the payload) + provenance + every stage
+# score the spec's kept schema carries (pooled specs add pooled_prob). `read_table` projects at read
+# time, so input_ids is never even pulled off disk.
+DROP_COLUMNS = ("input_ids", "n_tokens")
 
 
-def _project_one(paths: tuple[str, str]) -> int:
-    src, dst = paths
+def keep_columns(spec) -> list[str]:
+    return [name for name in batch_format.kept_schema_for(spec).names if name not in DROP_COLUMNS]
+
+
+def _project_one(paths: tuple[str, str, tuple[str, ...]]) -> int:
+    src, dst, columns = paths
     if fsspec.filesystem("gcs").exists(dst):
         return 0  # already projected (resumable)
-    table = batch_format.read_table(src, columns=KEEP_COLUMNS)
+    table = batch_format.read_table(src, columns=list(columns))
     batch_format.write_table(dst, table)
     return table.num_rows
 
@@ -54,7 +59,8 @@ def main() -> None:
     out_prefix = spec.namespace(args.bucket) + "/kept_text"
     listing = fsspec.filesystem("gcs").ls(kept_prefix.removeprefix("gs://"))
     files = [f"gs://{p}" for p in listing if p.endswith(".parquet")]
-    jobs = [(f, f"{out_prefix}/{f.rsplit('/', 1)[1]}") for f in files]
+    columns = tuple(keep_columns(spec))
+    jobs = [(f, f"{out_prefix}/{f.rsplit('/', 1)[1]}", columns) for f in files]
     logger.info("projecting %d kept files -> kept_text (drop input_ids) in %s", len(jobs), args.bucket)
 
     # spawn (not fork): the workers create fresh gcsfs handles; forking a live gcsfs event loop deadlocks.

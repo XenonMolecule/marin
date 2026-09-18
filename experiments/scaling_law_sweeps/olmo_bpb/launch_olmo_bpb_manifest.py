@@ -44,7 +44,8 @@ from iris.cluster.constraints import (
     device_variant_constraint,
     preemptible_constraint,
 )
-from iris.cluster.types import Entrypoint, EnvironmentSpec, ResourceSpec, tpu_device
+from iris.cluster.tpu_topology import get_tpu_topology
+from iris.cluster.types import CoschedulingConfig, Entrypoint, EnvironmentSpec, ResourceSpec, tpu_device
 from iris.rpc import job_pb2
 
 from experiments.scaling_law_sweeps.dclm_core.launch_dclm_core_sweep import (
@@ -105,6 +106,24 @@ def rows_from_manifest(manifest_path: str, results_subpath: str = RESULTS_SUBPAT
                 )
             )
     return rows
+
+
+def slice_vm_count(variants: tuple[str, ...]) -> int:
+    """VMs per slice for ``variants``, which must all share one ``(chips_per_vm, vm_count)``.
+
+    Multi-VM slices are usable because ``run_olmo_bpb_eval`` is already multi-host: it holds
+    the device mesh open and ranks above 0 serve ``worker.worker_message_loop()`` while rank 0
+    drives the harness. Without this the suite could only ever land on 1-VM slices, leaving
+    idle v5p-16/32/64 capacity unusable while the 4-chip pools were saturated.
+
+    A heterogeneous list is refused rather than guessed at: the shape decides both the
+    coscheduling decision and the device request, and Iris additionally mis-counts committed
+    TPU when one constraint mixes ``chips_per_vm`` (see ``iris.cluster.constraints``).
+    """
+    shapes = {(get_tpu_topology(v).chips_per_vm, get_tpu_topology(v).vm_count) for v in variants}
+    if len(shapes) != 1:
+        raise ValueError(f"--tpu-variants must share one (chips_per_vm, vm_count); got {sorted(shapes)}")
+    return shapes.pop()[1]
 
 
 def submit_one(
@@ -178,6 +197,16 @@ def submit_one(
     constraints = [preemptible_constraint(True), region_constraint]
     if len(set(tpu_variants)) > 1:
         constraints.append(device_variant_constraint(list(tpu_variants)))
+    # Multi-host TPU jobs must land every task on ONE physical slice, so libtpu can wire the
+    # hosts together; `replicas` alone lets Iris place them partially and the started hosts
+    # then block forever in the JAX rendezvous waiting for a peer that never arrives (observed:
+    # a v5p-32 gang stuck at 3 running / 1 pending, squatting 3 VMs with no log output). For
+    # single-host we omit BOTH keys — setting coscheduling at vm_count==1 caused /dev/vfio
+    # libtpu collisions; see launch_curation_sweep.py for the canonical justification.
+    submit_kwargs: dict = {}
+    if slice_vm_count(tpu_variants) > 1:
+        submit_kwargs["replicas"] = 1
+        submit_kwargs["coscheduling"] = CoschedulingConfig(group_by="tpu-name")
 
     job = client.submit(
         entrypoint=Entrypoint.from_command(*cmd_args),
@@ -189,6 +218,7 @@ def submit_one(
         max_retries_failure=5,
         # iris job-level budget defaults to 0 (fail on first task failure); match per-task retries.
         max_task_failures=5,
+        **submit_kwargs,
         priority_band=priority_band,
     )
     return str(job.job_id)

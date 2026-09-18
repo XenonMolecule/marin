@@ -71,6 +71,10 @@ CORE_V2_ROOT = "metadata/olmix_swarm_core_v2"
 # diagnostic, and fitting a mixture on it is an explicit opt-in via --metric blend, never
 # something a default `--tasks all` can pull in.
 BLEND_ROOT = "metadata/olmix_swarm_blend"
+# Domain evals over the swarm (launch_swarm_mmlu / launch_swarm_cultural): mmlu_sl_verb and
+# the cultural suite, both scored as soft metrics. Fit objectives read raw choice_logprob.
+MMLU_CLPN_ROOT = "metadata/olmix_swarm_mmlu/5shot"
+CULTURAL_CLPN_ROOT = "metadata/olmix_swarm_cultural/5shot"
 
 
 def task_core_v2_error(summary_doc: dict) -> dict[str, float]:
@@ -93,6 +97,27 @@ def task_core_v2_error(summary_doc: dict) -> dict[str, float]:
     if not isinstance(centered, dict):
         raise ValueError(f"no 'dclm.centered_results' map (dclm keys: {sorted(dclm)})")
     return {task: 1.0 - float(v) for task, v in centered.items() if isinstance(v, (int, float))}
+
+
+def task_neg_choice_logprob(doc: dict) -> dict[str, float]:
+    """Pull ``{task: -choice_logprob}`` out of a Levanter sl_verb results.json.
+
+    INVERTED like ``task_core_v2_error``: ``olmix_solve`` minimises ``sum(exp(t @ x))``,
+    so the target must be lower-is-better. choice_logprob is a (negative) log probability
+    where higher is better; negating it makes the argmin over mixtures the argmax of
+    choice_logprob, and keeps the fitted quantity strictly positive so the log-linear
+    law's log stays real. Raw choice_logprob (not the length-normalised _norm variant)
+    by user decision 2026-09-11.
+    """
+    results = doc.get("results")
+    if not isinstance(results, dict):
+        raise ValueError(f"no 'results' map (keys: {sorted(doc)}); not a Levanter harness results.json")
+    out: dict[str, float] = {}
+    for task, row in results.items():
+        v = row.get("choice_logprob,none") if isinstance(row, dict) else None
+        if isinstance(v, (int, float)):
+            out[task] = -float(v)
+    return out
 
 
 def task_bpb_scores(bpb_doc: dict) -> dict[str, float]:
@@ -131,6 +156,7 @@ class RegionSource:
     # "bpb"      -> <bpb_prefix>/<run>/results.json, read task_bpb_scores
     # "blend"    -> same shape as "bpb"; only sources_from_regions' prefix differs
     # "core_v2"  -> <bpb_prefix>/<run>_summary.json, read task_core_v2_error
+    # "mmlu_*" / "cultural" -> same shape as "bpb", read task_neg_choice_logprob
     metric: str = "bpb"
 
     def score_path(self, run_name: str) -> str:
@@ -138,7 +164,11 @@ class RegionSource:
         return f"{base}/{run_name}_summary.json" if self.metric == "core_v2" else f"{base}/{run_name}/results.json"
 
     def read_scores(self, doc: dict) -> dict[str, float]:
-        return task_core_v2_error(doc) if self.metric == "core_v2" else task_bpb_scores(doc)
+        if self.metric == "core_v2":
+            return task_core_v2_error(doc)
+        if self.metric.startswith("mmlu_") or self.metric == "cultural":
+            return task_neg_choice_logprob(doc)
+        return task_bpb_scores(doc)
 
 
 def _list_result_paths(results_prefix: str) -> list[str]:
@@ -253,7 +283,15 @@ def load_swarm_rows(
             if bpb_path is None:
                 skipped["no_bpb"] += 1
                 continue
-            scores = source.read_scores(_read_json(bpb_path))
+            try:
+                scores = source.read_scores(_read_json(bpb_path))
+            except FileNotFoundError:
+                # The index lists RUN DIRECTORIES; a child mid-eval has created its dir but
+                # not yet written results.json. Racing a live wave must skip the run, not
+                # kill the whole collection.
+                skipped["no_bpb"] += 1
+                logger.warning("%s: score dir exists but %s is not written yet; excluded", run_name, bpb_path)
+                continue
             missing = [t for t in task_names if t not in scores]
             if missing:
                 skipped["incomplete_bpb"] += 1
@@ -374,7 +412,14 @@ def collect(
 
 def sources_from_regions(regions: list[str], corpus: str, metric: str = "bpb") -> list[RegionSource]:
     """Pair each region's swarm results with that same bucket's per-run scores."""
-    root = {"core_v2": CORE_V2_ROOT, "blend": BLEND_ROOT}.get(metric, SWARM_BPB_ROOT)
+    root = {
+        "core_v2": CORE_V2_ROOT,
+        "blend": BLEND_ROOT,
+        "mmlu_stem": MMLU_CLPN_ROOT,
+        "mmlu_humanities": MMLU_CLPN_ROOT,
+        "mmlu_social_sciences": MMLU_CLPN_ROOT,
+        "cultural": CULTURAL_CLPN_ROOT,
+    }.get(metric, SWARM_BPB_ROOT)
     sources = []
     for region in regions:
         bucket = REGION_TO_BUCKET[region]

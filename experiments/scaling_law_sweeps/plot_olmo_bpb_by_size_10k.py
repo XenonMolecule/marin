@@ -37,6 +37,7 @@ import argparse
 import json
 import logging
 import math
+import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
@@ -50,12 +51,12 @@ from experiments.scaling_law_sweeps.olmo_bpb.olmo_bpb_tasks_set import (
     QA_RC_MC_BPB,
 )
 from experiments.scaling_law_sweeps.plot_core_v2_by_size_10k import (
+    _FASTPIPE_RE,
     _STEM_RE,
     FASTPIPE_COLORS,
     LPV11_COMPARE_METHODS,
-    OLMIXEXACT_COMPARE_METHODS,
     METHOD_COLORS,
-    _FASTPIPE_RE,
+    OLMIXEXACT_COMPARE_METHODS,
     _is_fastpipe,
     _method_label,
     _method_sort_key,
@@ -109,23 +110,39 @@ def _open_gcs(path: str):
 
 
 def _category_bpb(results: dict) -> dict[str, float]:
-    """Average bpb per category. A category with no scored task is omitted.
+    """Average bpb per category — COMPLETE task sets only.
 
-    Missing tasks are skipped rather than treated as zero: a partially-evaluated
-    run must not manufacture an artificially low (better-looking) bpb.
+    NEVER average over a partial task set: a run whose eval died mid-suite writes the
+    tasks it finished, and the surviving subset skews the mean (26 such results made
+    fastpipe_v2 look 0.25 bpb better than physically possible on 2026-09-15). A category
+    with ANY missing task is omitted, and the harness's own macro_bpb is trusted only
+    when every category is complete.
     """
     tasks = results.get("tasks") or {}
     out: dict[str, float] = {}
-    macro = (results.get("averages") or {}).get("macro_bpb")
-    if macro is not None:
-        out["macro_bpb"] = float(macro)
+    all_complete = True
     for name, keys in CATEGORIES.items():
         if keys is None:
             continue
         vals = [tasks[k]["bpb"] for k in keys if k in tasks and tasks[k].get("bpb") is not None]
-        if vals:
+        if len(vals) == len(keys):
             out[name] = sum(vals) / len(vals)
+        else:
+            all_complete = False
+            logger.warning("partial eval (%d/%d tasks for %s) — omitting category and macro", len(vals), len(keys), name)
+    macro = (results.get("averages") or {}).get("macro_bpb")
+    if macro is not None and all_complete:
+        out["macro_bpb"] = float(macro)
     return out
+
+
+# Deterministically diverged training runs, excluded from every plot (user decision
+# 2026-09-17). The fpv2 2e+19-d512 cell reproduces train loss 4.1188 / uncheatable
+# macro 1.2873 bit-identically across independent retrains: the model, not the eval,
+# is broken, and neighboring budgets bracket the gap.
+EXCLUDED_RUN_STEMS = {
+    "curation-lpv11_fastpipe_v2_10k_mix_olmixexact_lambda0p01-expFM_natural-2e+19-d512-L6-B128",
+}
 
 
 def _load_records(include_methods: set[str] | None) -> list[BpbRecord]:
@@ -145,6 +162,8 @@ def _load_records(include_methods: set[str] | None) -> list[BpbRecord]:
 
     def _load_one(path: str) -> BpbRecord | None:
         stem = path.rstrip("/").rsplit("/", 2)[-2]
+        if stem in EXCLUDED_RUN_STEMS:
+            return None  # deterministically diverged cell — see EXCLUDED_RUN_STEMS
         m = _STEM_RE.match(stem)
         if m is None:
             return None  # random-ladder / other sweeps share this prefix
@@ -152,7 +171,8 @@ def _load_records(include_methods: set[str] | None) -> list[BpbRecord]:
         if include_methods is not None and method not in include_methods:
             return None
         with _open_gcs(path) as fh:
-            bpb = _category_bpb(json.load(fh))
+            results_doc = json.load(fh)
+        bpb = _category_bpb(results_doc)
         if not bpb:
             logger.warning("No usable bpb in %s", stem)
             return None
@@ -161,6 +181,15 @@ def _load_records(include_methods: set[str] | None) -> list[BpbRecord]:
                 natural = json.load(fh)
         except FileNotFoundError:
             logger.warning("No tokens summary joined for %s", stem)
+            return None
+        # An eval must score the FINAL checkpoint. Stale region dirs held mid-training hf
+        # exports (step-10000 of a 57k-step run), and evals against them plotted as wild
+        # spikes (fastpipe_v2, 2026-09-16). Drop any result whose eval'd step is not the
+        # run's last step.
+        step_m = re.search(r"step-(\d+)$", results_doc.get("checkpoint", ""))
+        want = (natural.get("plan") or {}).get("train_steps")
+        if step_m and want and int(step_m.group(1)) not in (int(want), int(want) - 1):
+            logger.warning("STALE-STEP eval (step-%s of %s) dropped: %s", step_m.group(1), want, stem)
             return None
         tokens = (natural.get("tokens") or {}).get("tokens_trained")
         total_params = (natural.get("model") or {}).get("total_trainable_params")

@@ -355,3 +355,46 @@ faster. That needs a one-time interactive
 `CLOUDSDK_CONFIG=/juice2/scr2/nlp/personal-rm/.gcloud gcloud auth login` on
 scdt, which is now DONE — future checkpoint moves are a direct
 `gcloud storage cp` on scdt, no relay.
+
+## Scale-down ladder (2026-09-06 → 09-07): four smaller rungs, same four arms
+
+Same corpus, same frozen block index (`build/index.json`, 2026-08-04), same
+`mix_conditioned` rule, same delphi hyperparameters per cell, one epoch per arm.
+Because `select_blocks` walks labeled blocks in ascending order, every rung's A
+docs are an exact prefix of the 998M A set, and D's coin flip is content-keyed,
+so a doc conditioned at one rung is conditioned at all of them. All runs
+single-host v5p-8 in us-central1-a, launched via
+`launch_sysprompt30b_ablation.py --tag <tag> --budget <b> --hidden-dim <d> --memory-gb 128`.
+
+| rung (tag) | cell | A tokens | B | C | D | steps A/B/C/D |
+|---|---|---|---|---|---|---|
+| 210M (`210m_3e18`) | d640 L7 B16 @ 3e18 | 3.027B | 3.030B | 2.979B | 3.003B | 46193/46229/45449/45822 |
+| 358M (`358m_9e18`) | d896 L10 B32 @ 9e18 | 4.707B | 4.709B | 4.631B | 4.669B | 35913/35923/35331/35622 |
+| 447M (`447m_1p8e19`) | d1024 L11 B32 @ 1.8e19 | 7.280B | 7.283B | 7.160B | 7.220B | 55538/55564/54626/55082 |
+| 669M (`669m_3e19`) | d1280 L13 B32 @ 3e19 | 7.722B | 7.724B | 7.595B | 7.659B | 58912/58928/57946/58429 |
+
+### RESULT — final eval/bpb (bare eval, no [S]), one seed each
+
+| | A sysprompt | B token-matched | C doc-matched | D mix50 | A − B | D − C |
+|---|---|---|---|---|---|---|
+| 210M @ 3e18 | 1.2180 | **1.1880** | 1.1897 | 1.1922 | +0.030 | +0.0025 |
+| 358M @ 9e18 | 1.1626 | **1.1040** | 1.1056 | 1.1075 | +0.059 | +0.0019 |
+| 447M @ 1.8e19 | 1.0998 | **1.0605** | 1.0605 | 1.0651 | +0.039 | +0.0046 |
+| 669M @ 3e19 | 1.0561 | **1.0280** | 1.0294 | 1.0302 | +0.028 | +0.0008 |
+| 998M @ 9e19 | 1.0102 | **0.9705** | 0.9716 | 0.9717 | +0.040 | +0.0001 |
+
+Same ordering on lima, paloma and uncheatable at every rung. Reading: the
+100%-conditioned penalty is present at every scale (0.03–0.06 bpb, no monotone
+trend with size, one seed), B and C tie within 0.0017 everywhere (the noise
+floor), and mix50 stays within 0.005 of C at every rung — the train/eval
+mismatch explanation holds down the ladder.
+
+Storage (one dir per run, HF export at `hf/step-<final>`):
+`gs://marin-us-central1/checkpoints/isoflop-curation/curation-sysprompt30b_<tag>_<arm>-expFM_natural-<budget>-d<hd>-L<L>-B<B>/`.
+Per-run result JSONs: `gs://marin-us-central1/metadata/sysprompt30b_<tag>_results/`.
+wandb groups `sysprompt30b-<tag>`.
+
+Ops notes: the CPU pool is 8c/16GB (32-core emit request pends forever); the
+default 256 GB child RAM request could not co-locate with CPU jobs the scheduler
+had placed on v5p-8 hosts, hence `--memory-gb 128`; two preemption waves
+(11:08 and 22:40 UTC 09-06) were absorbed by the 15-min checkpoints.

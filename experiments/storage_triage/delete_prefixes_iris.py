@@ -60,7 +60,7 @@ def _delete_stage(list_url: str, log_dir: str, workers: int) -> None:
             if fs.exists(path):
                 fs.rm(path, recursive=True)
             done_lines.append(f"{time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())} {p}")
-        except Exception as e:  # noqa: BLE001 - record and continue; the failed list is the retry input
+        except Exception as e:
             failed_lines.append(f"{p}\t{type(e).__name__}: {e}")
 
     def flush() -> None:

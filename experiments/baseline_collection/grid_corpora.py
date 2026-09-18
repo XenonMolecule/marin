@@ -40,7 +40,7 @@ COMPUTE_REGION = "us-central1"
 # Every OUTPUT path is built from this, so a test (or a smoke run via
 # --output-base) can redirect the whole result tree by patching one name. fsspec
 # treats a local path the same as a gs:// one, so nothing else has to change.
-OUTPUT_BASE = f"gs://marin-{COMPUTE_REGION}"
+OUTPUT_BASE: str = f"gs://marin-{COMPUTE_REGION}"
 # Deliberately separate from OUTPUT_BASE. The mirror is an INPUT, and folding it
 # into the output root means redirecting results also redirects where the scorer
 # looks for source shards — which silently turns a smoke run into "no shards
@@ -103,8 +103,11 @@ class GridCorpus:
 
 # The document layer for each corpus: the one that carries BOTH url and text.
 # Topic classification needs the url ("{url}\n\n{text}" is WebOrganizer's input
-# template), and every `_deduped`/`_decon` tree except high_quality's is url-less
-# because dedup_extracted.py projects records to {text}.
+# template). Trees built BEFORE dedup_extracted.py gained `_carry_provenance` are
+# url-less, because that dedup projected records to {text} -- that is a property of
+# WHEN a tree was built, not of `_deduped`/`_decon` paths in general. Current
+# dedup_extracted.py carries every source column through dedup and decon, so trees
+# built with it (e.g. llm_pipeline_v1_1) are URL-bearing and need no recovery join.
 #
 # high_quality is the exception and the reason it is the only post_decon=True
 # entry: build_high_quality_hf_export.py re-joined the decon_deduped survivors
@@ -175,6 +178,46 @@ GRID_CORPORA: dict[str, GridCorpus] = {
     # `--region us-east5 --output-base gs://marin-us-east5 --source native`.
     "lpv11_fastpipe_v1_10k": GridCorpus(
         "gs://marin-us-east5/documents/baseline_lpv11_fastpipe_v1_decon_deduped_urls/10364warcs/deduped",
+        "us-east5",
+        Format.JSONL_GZ,
+        native_id_field="doc_id",
+        post_decon=True,
+    ),
+    # llm_pipeline_v1_1: the ORIGINAL vLLM two-stage extraction over the same 10,364
+    # WARCs (distinct from the fastpipe reimplementations above). Its dedup ran on the
+    # current dedup_extracted.py, so the deduped tree carries url/warc_record_id
+    # natively -- verified on a reshape record: keys are
+    # {num_chunks, pipeline_id, snapshot, text, url, warc_file, warc_record_id}.
+    # post_decon=True: CORE v2 decon is mark-only (writes eval_contamination spans,
+    # drops nothing), so the deduped tree IS the survivor set being labelled.
+    # Labelled in us-east5, not us-central1: us-central1 is v5p-only and was down to a
+    # single ready v5p-8 slice with 24 jobs queued, while us-east5 had 27 idle v6e-4.
+    # The deduped tree was copied there (165.4 GB, ~$3.31 intra-US) -- which also puts
+    # this corpus beside the other corpora's grid stores, all of which live in us-east5.
+    # Label with: --region us-east5 --output-base gs://marin-us-east5 --source native --tpu v6e-4
+    "lpv11_10k": GridCorpus(
+        "gs://marin-us-east5/documents/baseline_llm_pipeline_v1_1_deduped/10364warcs/deduped",
+        "us-east5",
+        Format.JSONL_GZ,
+        native_id_field="warc_record_id",
+        post_decon=True,
+    ),
+    # lpv11_fastpipe_v2 (TEXTONLY-7d cascade; same corpus semantics as the 8M-scale v2_1 run) over the
+    # same 10,364 WARCs. fast_curation/dedup.py carries every kept_text column, so the deduped tree is
+    # URL-bearing and needs no provenance recovery.
+    "lpv11_fastpipe_v2_10k": GridCorpus(
+        "gs://marin-us-east5/documents/baseline_lpv11_fastpipe_v2_decon_deduped/10364warcs/deduped",
+        "us-east5",
+        Format.JSONL_GZ,
+        native_id_field="doc_id",
+        post_decon=True,
+    ),
+    # Extractor ablation, arm B: exactly lpv11_fastpipe_v2_10k's post-decon documents with the text
+    # re-extracted by upstream resiliparse (experiments/fast_curation/swap_extractor.py). Its topic
+    # and quality tables are copied from lpv11_fastpipe_v2_10k by doc_id at extraction time, so
+    # NEVER run `grid_label label` on it -- only merge/tokenize/store.
+    "lpv11_fastpipe_v2_upstreamrs_10k": GridCorpus(
+        "gs://marin-us-east5/documents/baseline_lpv11_fastpipe_v2_upstreamrs_decon_deduped/10364warcs/deduped",
         "us-east5",
         Format.JSONL_GZ,
         native_id_field="doc_id",

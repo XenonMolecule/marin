@@ -408,7 +408,8 @@ def _make_train_step(
 
     params = model_config.total_trainable_params(completed_adamh_heuristic.vocab_size)
     tags = (
-        f"method={method.name}",
+        # W&B caps tags at 64 chars; long domain-arm names overflow (2026-09-14).
+        f"method={method.name}"[:64],
         f"exp={experiment_tag}",
         f"FLOPs={budget:.1e}",
         f"N={params:.1e}",

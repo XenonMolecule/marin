@@ -24,9 +24,15 @@ import re
 import subprocess
 import time
 
-CORPORA = ("dclm_10k", "high_quality_10k", "resiliparse_10k", "lpv11_fastpipe_v1_10k")
-SHORT = {"dclm_10k": "dclm", "high_quality_10k": "hq", "resiliparse_10k": "resil", "lpv11_fastpipe_v1_10k": "lpv11"}
-BUCKETS = ("marin-us-east5", "marin-us-central1", "marin-eu-west4", "marin-us-west4")
+CORPORA = ("dclm_10k", "high_quality_10k", "resiliparse_10k", "lpv11_fastpipe_v1_10k", "lpv11_fastpipe_v2_10k")
+SHORT = {
+    "dclm_10k": "dclm",
+    "high_quality_10k": "hq",
+    "resiliparse_10k": "resil",
+    "lpv11_fastpipe_v1_10k": "lpv11",
+    "lpv11_fastpipe_v2_10k": "lpv11v2",
+}
+BUCKETS = ("marin-us-east5", "marin-us-central1", "marin-eu-west4", "marin-us-west4", "marin-us-east1")
 SWARM_TOTAL = 363
 
 

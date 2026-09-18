@@ -41,6 +41,7 @@ Regression check (a correct pipeline produces ZERO U+FFFD)::
 
 import argparse
 import codecs
+import hashlib
 import io
 import logging
 import re
@@ -49,6 +50,7 @@ from dataclasses import dataclass
 
 import charset_normalizer
 import fsspec
+import pyarrow.parquet as pq
 import requests
 import warcio
 from fray.types import ResourceConfig
@@ -134,8 +136,6 @@ def _s3_to_https(s3_path: str) -> str:
 
 def _warc_path_hash(warc_path: str) -> str:
     """Deterministic short hash of a WARC path for stable output filenames."""
-    import hashlib
-
     return hashlib.sha256(warc_path.encode()).hexdigest()[:12]
 
 
@@ -284,6 +284,21 @@ def _iter_decoded_records(raw_stream, warc_path: str, warc_hash: str, snapshot: 
         logger.warning(f"Skipped {parse_errors} corrupt records in {warc_path}")
 
 
+def _check_content_length(response, n_bytes: int, warc_path: str) -> None:
+    """Raise a retryable error when a 200 response delivered fewer bytes than it announced.
+
+    A truncated body is otherwise accepted as a whole WARC and parses cleanly up to the cut, which
+    is the most likely cause of the record-count drift seen between parses of the same WARC
+    (a fresh parse of ``01274ce4988a`` once yielded 11.8% fewer records). Skipped when the server
+    applied a transfer encoding, since ``Content-Length`` then counts the encoded bytes.
+    """
+    if response.headers.get("Content-Encoding"):
+        return
+    expected = response.headers.get("Content-Length")
+    if expected is not None and int(expected) != n_bytes:
+        raise requests.exceptions.RequestException(f"truncated download of {warc_path}: {n_bytes} of {expected} bytes")
+
+
 def _decode_one_warc_stream(warc_path: str, chunk_records: int = 2000):
     """Download one WARC (with retries) and yield decoded records in ``chunk_records`` lists.
 
@@ -324,6 +339,7 @@ def _decode_one_warc_stream(warc_path: str, chunk_records: int = 2000):
                     raise requests.exceptions.RequestException(
                         f"download exceeded {DOWNLOAD_DEADLINE_SECONDS}s ({len(buf)} bytes so far)"
                     )
+            _check_content_length(response, len(buf), warc_path)
         except requests.exceptions.RequestException as e:
             delay = RETRY_BASE_DELAY * (2**attempt)
             if attempt < MAX_RETRIES - 1:
@@ -376,7 +392,9 @@ def _decode_one_warc(warc_path: str, with_text_body: bool = True) -> list[dict]:
 
             response.raise_for_status()
 
-            raw_stream = io.BytesIO(response.content)
+            body = response.content
+            _check_content_length(response, len(body), warc_path)
+            raw_stream = io.BytesIO(body)
             records = list(_iter_decoded_records(raw_stream, warc_path, warc_hash, snapshot, with_text_body))
             if not records:
                 logger.warning(f"WARC yielded 0 clean HTML records: {warc_path}")
@@ -439,8 +457,6 @@ def decode_warcs(config: DecodeConfig) -> None:
 
 def scan_fffd(output_path: str, sample: int | None) -> None:
     """Regression check: count U+FFFD across decoded parquet. A correct run yields 0."""
-    import pyarrow.parquet as pq
-
     fs, root = fsspec.core.url_to_fs(output_path)
     files = sorted(fs.glob(f"{root}/data-*.parquet"))
     if sample is not None:

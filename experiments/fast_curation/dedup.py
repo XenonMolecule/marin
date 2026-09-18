@@ -45,6 +45,7 @@ import argparse
 import hashlib
 import json
 import logging
+import math
 import os
 import sys
 from collections.abc import Iterator
@@ -113,14 +114,29 @@ def _kept_text_shard_paths(spec_id: str, region: str, warc_hashes: set[str] | No
 _DATAKIT_INTERNAL_FIELDS = ("id", "source_id")
 
 
+def _finite_or_none(value: float | None) -> float | None:
+    """A float, or ``None`` for a missing/NaN score.
+
+    The TEXT line stores NaN ``modernbert_prob`` for docs the pooled band accepted outright (the
+    terminal model never scored them). JSON has no NaN: the JSONL writer emits ``null`` and the
+    parquet read-back yields ``None``, so reshape (parquet -> jsonl) and apply (parquet -> jsonl)
+    must agree on ONE representation or apply crashes on ``float(None)`` after the expensive
+    minhash/fuzzy stages have already run.
+    """
+    if value is None:
+        return None
+    value = float(value)
+    return None if math.isnan(value) else value
+
+
 def _carry_provenance(record: dict) -> dict:
     """Project ``record`` to ``{text, <every other column>}`` minus datakit-internal ids.
 
-    ``modernbert_prob`` is coerced to float so the reshape and apply outputs agree on its type
-    regardless of how the source parquet stored it. Everything else is carried verbatim.
+    ``modernbert_prob`` is normalized to ``float | None`` so the reshape and apply outputs agree
+    on its type regardless of how the source stored it. Everything else is carried verbatim.
     """
     out = {k: v for k, v in record.items() if k not in _DATAKIT_INTERNAL_FIELDS}
-    out["modernbert_prob"] = float(record["modernbert_prob"])
+    out["modernbert_prob"] = _finite_or_none(record["modernbert_prob"])
     return out
 
 
@@ -231,6 +247,7 @@ def build_steps(
     target_partition_bytes: int,
     warc_hashes: set[str] | None = None,
     reshape_shards: int = NUM_RESHAPE_SHARDS,
+    normalize_ram: str = "96g",
 ) -> list[StepSpec]:
     kept_files = _kept_text_shard_paths(spec_id, region, warc_hashes)
     n = len(kept_files)
@@ -254,7 +271,12 @@ def build_steps(
         # spills to tmpfs (=RAM), so a worker pays ~2x the decompressed partition against its
         # cgroup. 14g and 28g both OOM-killed at 154k-WARC scale (2026-09-04); pair this with
         # --target-partition-bytes <= 256MB so partitions stay comfortably under the ceiling.
-        worker_resources=ResourceConfig(cpu=1, ram="48g", disk="10g"),
+        # 96g: content-hash grouping concentrates mega-duplicated docs into single "whale"
+        # reduce shards (shard 5045 OOM-killed twice at 48g on the 154k-WARC corpus while every
+        # other shard passed). The whale needs the headroom; the fleet is fine far below it.
+        # The whale grows with corpus size: 96g OOMed at 500k WARCs (2026-09-08), so the ceiling
+        # is a CLI knob (--normalize-ram; 192g cleared 500k).
+        worker_resources=ResourceConfig(cpu=1, ram=normalize_ram, disk="10g"),
         override_output_path=f"{bucket}/normalize",
     )
     minhash = compute_minhash_attrs_step(
@@ -305,7 +327,8 @@ def build_steps(
                 "kept_text_glob": f"{get_spec(spec_id).namespace(_REGION_TO_BUCKET[region])}/kept_text/data-*.parquet",
                 "deduped_path": deduped.output_path,
                 "preserved_columns": (
-                    "all kept_text columns (text, url, doc_id, warc_hash, snapshot, " "fasttext_score, modernbert_prob)"
+                    "all kept_text columns (text, url, doc_id, warc_hash, snapshot, fasttext_score, "
+                    "modernbert_prob, and pooled_prob for pooled specs)"
                 ),
                 "fuzzy_params": {
                     "num_perms": 286,
@@ -341,14 +364,24 @@ def main() -> int:
         "N-of-pool run. Output tree becomes baseline_{spec}_deduped/{len(subset)}warcs/. "
         "Manifest must contain only WARC paths (no comment lines beyond '#').",
     )
+    parser.add_argument(
+        "--normalize-ram",
+        default="96g",
+        help="Normalize worker RAM ceiling. The whale reduce shard grows with corpus size: "
+        "96g clears 154k WARCs, 500k needs 192g.",
+    )
     args = parser.parse_args()
     warc_hashes = None
     if args.warc_manifest:
-        with open(args.warc_manifest) as f:
+        with fsspec.open(args.warc_manifest, "rt") as f:
             lines = [ln.strip() for ln in f if ln.strip() and not ln.startswith("#")]
         warc_hashes = {hashlib.sha256(ln.encode()).hexdigest()[:12] for ln in lines}
         logger.info("Subsetting kept_text to %d WARCs from %s", len(warc_hashes), args.warc_manifest)
-    StepRunner().run(build_steps(args.spec, args.region, args.target_partition_bytes, warc_hashes, args.reshape_shards))
+    StepRunner().run(
+        build_steps(
+            args.spec, args.region, args.target_partition_bytes, warc_hashes, args.reshape_shards, args.normalize_ram
+        )
+    )
     return 0
 
 

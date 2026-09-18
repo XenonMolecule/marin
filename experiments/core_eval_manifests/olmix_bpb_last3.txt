@@ -1,0 +1,4 @@
+run_name,region,output_path
+curation-fineweb_cc_10k_mix_olmixexact_lambda0p01-expFM_natural-9e+20-d2432-L24-B256,us-east5,gs://marin-us-east5/checkpoints/isoflop-curation/curation-fineweb_cc_10k_mix_olmixexact_lambda0p01-expFM_natural-9e+20-d2432-L24-B256
+curation-lpv11_fastpipe_v2_10k_mix_olmixexact_lambda0p01-expFM_natural-2e+20-d1536-L16-B128,us-east5,gs://marin-us-east5/checkpoints/isoflop-curation/curation-lpv11_fastpipe_v2_10k_mix_olmixexact_lambda0p01-expFM_natural-2e+20-d1536-L16-B128
+curation-lpv11_fastpipe_v2_10k_mix_olmixexact_lambda0p01-expFM_natural-9e+20-d2432-L24-B256,us-east5,gs://marin-us-east5/checkpoints/isoflop-curation/curation-lpv11_fastpipe_v2_10k_mix_olmixexact_lambda0p01-expFM_natural-9e+20-d2432-L24-B256

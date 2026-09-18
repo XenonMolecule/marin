@@ -70,7 +70,9 @@ ARM_DESC = {
 PIN_REGION = "us-central1"
 
 
-def build_plans(tag: str, budget: float, hidden_dim: int, arms: tuple[str, ...]) -> list[curation_plan.PlannedRun]:
+def build_plans(
+    tag: str, budget: float, hidden_dim: int, arms: tuple[str, ...], memory_gb: int | None = None
+) -> list[curation_plan.PlannedRun]:
     candidate = _candidate_for_fixed_model(hidden_dim, budget, seq_len=SEQ_LEN)
     if candidate is None:
         raise SystemExit(f"no candidate config for hidden_dim={hidden_dim} at budget={budget:.3g}")
@@ -96,7 +98,10 @@ def build_plans(tag: str, budget: float, hidden_dim: int, arms: tuple[str, ...])
         # Exactly one epoch of THIS arm's cache — floor, so no document is ever
         # seen twice. This is the only field that differs between arms.
         one_epoch = int(method.d_obs_tokens // (plan.batch_size * SEQ_LEN))
-        plans.append(dataclasses.replace(plan, train_steps=one_epoch, t_exp=t_exp))
+        plan = dataclasses.replace(plan, train_steps=one_epoch, t_exp=t_exp)
+        if memory_gb is not None:
+            plan = dataclasses.replace(plan, memory_gb=memory_gb)
+        plans.append(plan)
     return plans
 
 
@@ -110,6 +115,11 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     # the TPU scales with the budget automatically: 9e19 -> v5p-16,
     # 1.8e20 -> v5p-32, 3e20 -> v5p-64. Pass --tpu only to override.
     p.add_argument("--tpu", default=None, help="Override primary TPU shape (default: the plan's v5p shape).")
+    # The plan default (256 GB) was sized for d4096 multi-host smokes. On a
+    # shared preemptible host, CPU-only jobs land on the same VM and eat RAM, so
+    # a 256 GB request can pend on "Insufficient memory" while 4 idle chips sit
+    # there. Sub-1B single-host runs peak well under 100 GB.
+    p.add_argument("--memory-gb", type=int, default=None, help="Override the child container RAM limit (GB).")
     # User granted interactive for this ablation. NOTE: while the account is over
     # budget the scheduler demotes the effective band to BATCH anyway — asking for
     # interactive costs nothing and takes effect the moment the budget eases.
@@ -132,13 +142,13 @@ def main(argv: list[str] | None = None) -> None:
     bad = set(arms) - set(ARMS)
     if bad:
         raise SystemExit(f"unknown arms: {sorted(bad)}")
-    plans = build_plans(args.tag, args.budget, args.hidden_dim, arms)
+    plans = build_plans(args.tag, args.budget, args.hidden_dim, arms, memory_gb=args.memory_gb)
 
     for arm, plan in zip(arms, plans, strict=True):
         tokens = plan.batch_size * plan.seq_len * plan.train_steps
         logger.info(
             "ARM %s (%s): %s | B=%d steps=%d -> %.4fB tokens = %.4f epochs of %.4fB | "
-            "lr=%.10g adam_lr=%.10g beta2=%.8g eps=%.4e | tpu=%s tp=%d",
+            "lr=%.10g adam_lr=%.10g beta2=%.8g eps=%.4e | tpu=%s tp=%d mem=%dGB",
             arm,
             ARM_DESC[arm],
             plan.run_name_core,
@@ -153,6 +163,7 @@ def main(argv: list[str] | None = None) -> None:
             plan.epsilon,
             args.tpu or plan.v5p_tpu,
             plan.tensor_parallel,
+            plan.memory_gb,
         )
 
     if args.dry_run:

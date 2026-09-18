@@ -120,7 +120,13 @@ OLMIXEXACT_COMPARE_METHODS = {
     "dclm_10k_mix_olmixexact_lambda0p01",
     "high_quality_10k_mix_olmixexact_lambda0p01",
     "lpv11_fastpipe_v1_10k_mix_olmixexact_lambda0p01",
+    "lpv11_10k_mix_olmixexact_lambda0p01",
+    # fastpipe_v2's olmixexact mix (fit 2026-09-12).
+    "lpv11_fastpipe_v2_10k_mix_olmixexact_lambda0p01",
     "resiliparse_10k_mix_olmixexact_lambda0p01",
+    "nemotron_full_10k_mix_olmixexact_lambda0p01",
+    "fineweb_cc_10k_mix_olmixexact_lambda0p01",
+    "fineweb_edu_10k_mix_olmixexact_lambda0p01",
 }
 
 # The 3000-WARC sweeps name their runs differently from the canonical 10k method

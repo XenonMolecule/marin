@@ -144,6 +144,12 @@ python -m experiments.baseline_collection.grid_projection_page \
     --projection report/projection.json --out report/index.html
 ```
 
+`grid_compare.py` no longer consumes `projection.json`: since 2026-09-15 the
+llm_pipeline_v1_1 row of the cross-corpus comparison is the exact grid_v1 grid of
+the finished run (`gs://marin-us-east5/metadata/grid_v1/lpv11_10k/distribution.json`,
+92.9B gte, post-dedup + decon). The projection stays as a historical estimate
+(121.5B gte pre-dedup at 5.5% coverage; 122.2B at the final 6.5%).
+
 ## Operational notes
 
 * Jobs run **in the region their data lives in** and write only kilobyte tallies

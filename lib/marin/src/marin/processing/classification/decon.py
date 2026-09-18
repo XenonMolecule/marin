@@ -94,6 +94,14 @@ class DeconConfig:
     worker_cpu: float = 2.0
     worker_ram: str = "8g"
     worker_disk: str = "10g"
+    # Zephyr COORDINATOR resources. `resources` above sizes workers only; the
+    # coordinator has its own default of 1 GB, which OOM-kills (exit 137) once the
+    # task plan is large -- the same failure that killed the dedup reshape
+    # coordinator on a 10k-WARC corpus. 8g and not more: coordinators run
+    # preemptible=False, and an on-demand pool of e2-highmem-2 (16 GB total, less
+    # allocatable) makes a 16g ask register ZERO scheduler demand and never place.
+    coordinator_cpu: float = 1.0
+    coordinator_ram: str = "8g"
 
 
 def _bloom_hash(x: str) -> int:
@@ -171,6 +179,7 @@ def build_filter(
     ctx = ZephyrContext(
         name="decon-build",
         resources=ResourceConfig(cpu=config.worker_cpu, ram=config.worker_ram, disk=config.worker_disk),
+        coordinator_resources=ResourceConfig(cpu=config.coordinator_cpu, ram=config.coordinator_ram, preemptible=False),
     )
     # Build bloom filters for all shards in parallel
     shard_blooms_data = ctx.execute(
@@ -264,6 +273,7 @@ def mark_duplicates_bloom(
     zephyr_ctx = ZephyrContext(
         name="decon-mark",
         resources=ResourceConfig(cpu=config.worker_cpu, ram=config.worker_ram, disk=config.worker_disk),
+        coordinator_resources=ResourceConfig(cpu=config.coordinator_cpu, ram=config.coordinator_ram, preemptible=False),
     )
     return zephyr_ctx.execute(
         Dataset.from_iterable(all_files)

@@ -94,7 +94,11 @@ def vendor_mixture(src: str, grid_corpus: str, mixture_tag: str) -> pathlib.Path
     vendored["swarm_runs"] = solve.get("runs")
     vendored["weights"] = weights
 
-    out = MIXTURES_DIR / f"{grid_corpus}_R3e10_k20{mixture_tag}.json"
+    # Derive the R/k stem from the SOURCE filename (mix_R3e+10_k20.json -> R3e10_k20) so a
+    # non-default requested-tokens solve cannot silently overwrite another R's vendored file
+    # (R=1e11 solves clobbered the R=3e10 files this way on 2026-09-13).
+    src_stem = pathlib.Path(src.rsplit("/", 1)[-1]).stem.removeprefix("mix_").replace("e+", "e")
+    out = MIXTURES_DIR / f"{grid_corpus}_{src_stem}{mixture_tag}.json"
     out.write_text(json.dumps(vendored, indent=2, sort_keys=True) + "\n")
     logger.info("wrote %s (%d cells, %d swarm runs)", out, len(weights), vendored["swarm_runs"] or -1)
     return out

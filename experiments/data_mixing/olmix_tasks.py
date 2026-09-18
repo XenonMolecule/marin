@@ -172,6 +172,15 @@ def build_olmix_exact_tasks(
     2. **GSM8K is dropped** (:data:`GSM8K_VARIANT`); Table 9's Math family is Minerva's
        7 subject splits alone.
 
+    **Why the paper says n=52 and this suite is 51** (resolved 2026-09-13 against the
+    released artifacts -- HF ``allenai/olmix`` ``dclm_swarm/metrics.csv`` and the repo's
+    fit configs): the paper's count keeps the parent ``basic_skills:rc::olmes`` aggregate
+    ALONGSIDE its 6 subskill columns; every other entry matches this suite one-for-one
+    (17 standalone QA/code + 7 Minerva + 17 mt_mbpp + 4 MMLU categories). The parent is
+    the mean of its subsets, so including both double-weights basic_skills in the flat
+    1/n objective; we deliberately keep only the 6 subsets. GSM8K is absent from their
+    metrics too -- it does not explain the difference.
+
     Minerva needs no change: the staged ``gold_bpb_0shot`` directories are misnamed. Their
     ``config.json`` is ``num_shots=4``, ``fewshot_source="Minerva:MATH:fixed"``,
     ``compute_gold_bpb=true``, alias ``minerva_math_*::bpb`` -- i.e. olmes'

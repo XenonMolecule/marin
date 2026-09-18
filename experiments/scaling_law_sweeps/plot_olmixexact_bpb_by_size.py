@@ -45,7 +45,24 @@ METHOD_DISPLAY: dict[str, tuple[str, str]] = {
     "dclm_10k_mix_olmixexact_lambda0p01": ("DCLM-baseline", "#1f77b4"),
     "high_quality_10k_mix_olmixexact_lambda0p01": ("Old Spec (HQ)", "#2ca02c"),
     "lpv11_fastpipe_v1_10k_mix_olmixexact_lambda0p01": ("New Spec (lpv11)", "#d62728"),
+    # The TRUE llm_pipeline_v1_1 LLM extraction (not the fastpipe cascade); brown is the
+    # only unclaimed tab10 hue that reads against the locked assignments above.
+    "lpv11_10k_mix_olmixexact_lambda0p01": ("lpv11 (LLM extract)", "#74c476"),
+    "lpv11_fastpipe_v2_10k_mix_olmixexact_lambda0p01": ("fastpipe_v2", "#006d2c"),
     "resiliparse_10k_mix_olmixexact_lambda0p01": ("Resiliparse", "#9467bd"),
+    # Locked convention gives nemotron orange; its paper red would collide with lpv11 here.
+    "nemotron_full_10k_mix_olmixexact_lambda0p01": ("Nemotron-CC", "#ff7f0e"),
+    # Paper pink for fineweb_cc; cyan for fineweb_edu (its paper orange is taken by nemotron here).
+    "fineweb_cc_10k_mix_olmixexact_lambda0p01": ("FineWeb-CC", "#e377c2"),
+    "fineweb_edu_10k_mix_olmixexact_lambda0p01": ("FineWeb-Edu", "#17becf"),
+}
+
+
+# GC/Distilled-GC draw thicker than the field (user 2026-09-15 palette revision:
+# lpv11 true = light green, fastpipe_v2 = dark green, both emphasized).
+METHOD_LINEWIDTH = {
+    "lpv11_10k_mix_olmixexact_lambda0p01": 4.2,
+    "lpv11_fastpipe_v2_10k_mix_olmixexact_lambda0p01": 4.2,
 }
 
 
@@ -71,6 +88,17 @@ def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--metric", default=DEFAULT_METRIC, choices=sorted(METRIC_LABEL))
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
+    parser.add_argument("--methods", nargs="+", default=None, help="Subset of METHOD_DISPLAY keys (default: all).")
+    parser.add_argument("--dims", type=int, nargs="+", default=None, help="Widths to plot (default: all present).")
+    parser.add_argument("--legend-size", type=float, default=None, help="Legend font size override.")
+    parser.add_argument("--suffix", default="", help="Filename suffix for filtered variants.")
+    parser.add_argument(
+        "--relabel",
+        nargs="+",
+        default=[],
+        metavar="METHOD=LABEL",
+        help="Override legend labels, e.g. lpv11_fastpipe_v1_10k_mix_olmixexact_lambda0p01='Generative Curation (ours)'.",
+    )
     args = parser.parse_args(argv)
 
     records = [r for r in _load_records(OLMIXEXACT_COMPARE_METHODS) if args.metric in r.bpb]
@@ -78,18 +106,42 @@ def main(argv: list[str] | None = None) -> None:
         raise SystemExit("No bpb records loaded.")
 
     plt.rcParams.update(PAPER_RCPARAMS)
+    display = METHOD_DISPLAY
+    overrides = dict(kv.split("=", 1) for kv in args.relabel)
+    unknown_r = [m for m in overrides if m not in METHOD_DISPLAY]
+    if unknown_r:
+        raise SystemExit(f"unknown --relabel methods: {unknown_r}")
+    display = {m: (overrides.get(m, lbl), c) for m, (lbl, c) in display.items()}
+    if args.methods:
+        unknown = [m for m in args.methods if m not in METHOD_DISPLAY]
+        if unknown:
+            raise SystemExit(f"unknown methods: {unknown}")
+        display = {m: display[m] for m in args.methods}
+        records = [r for r in records if r.method in display]
     dims = sorted({r.hidden_dim for r in records})
+    if args.dims:
+        dims = [d for d in dims if d in set(args.dims)]
+        records = [r for r in records if r.hidden_dim in set(dims)]
     fig, axes = plt.subplots(1, len(dims), figsize=(7.2 * len(dims), 7.0), sharey=True, squeeze=False)
     axes = axes[0]
 
     for ax, dim in zip(axes, dims):
         params = next(r.total_params for r in records if r.hidden_dim == dim)
-        for method, (label, color) in METHOD_DISPLAY.items():
+        for method, (label, color) in display.items():
             pts = sorted((r.tokens, r.bpb[args.metric]) for r in records if r.method == method and r.hidden_dim == dim)
             if not pts:
                 continue
             x, y = np.array([p[0] for p in pts]), np.array([p[1] for p in pts])
-            ax.plot(x, y, "-", color=color, linewidth=3.0, alpha=0.95, label=_legend_label(method, label), zorder=3)
+            ax.plot(
+                x,
+                y,
+                "-",
+                color=color,
+                linewidth=METHOD_LINEWIDTH.get(method, 3.0),
+                alpha=0.95,
+                label=_legend_label(method, label),
+                zorder=3,
+            )
             ax.scatter(x, y, color=color, s=85, edgecolors="white", linewidths=0.8, zorder=4)
         ax.set_xscale("log")
         # 1-2-5 ticks collide once a panel spans more than ~1.6 decades; widen to decades.
@@ -109,10 +161,18 @@ def main(argv: list[str] | None = None) -> None:
             if ll not in labels:
                 handles.append(h)
                 labels.append(ll)
-    fig.legend(handles, labels, loc="lower center", ncol=len(labels), bbox_to_anchor=(0.5, -0.12))
+    ncol = len(labels) if args.legend_size is None else max(1, min(len(labels), 2))
+    fig.legend(
+        handles,
+        labels,
+        loc="lower center",
+        ncol=ncol,
+        bbox_to_anchor=(0.5, -0.12 if args.legend_size is None else -0.22),
+        fontsize=args.legend_size,
+    )
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    stem = args.output_dir / f"olmixexact_{args.metric}_by_size"
+    stem = args.output_dir / f"olmixexact_{args.metric}_by_size{args.suffix}"
     fig.savefig(stem.with_suffix(".png"), dpi=200, bbox_inches="tight", pad_inches=0.3)
     fig.savefig(stem.with_suffix(".pdf"), bbox_inches="tight", pad_inches=0)
     logger.info("Wrote %s.{png,pdf}", stem)

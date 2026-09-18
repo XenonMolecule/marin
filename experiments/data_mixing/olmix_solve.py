@@ -138,9 +138,16 @@ def solve_mixture(
         constraints.append(x <= caps)
 
     problem = cp.Problem(cp.Minimize(objective), constraints)
-    problem.solve(solver=SOLVER)
+    try:
+        problem.solve(solver=SOLVER)
+    except cp.error.SolverError:
+        # ECOS occasionally fails on ill-conditioned instances (first seen: fineweb_cc
+        # mmlu_stem at R=3e10, lambda=0.01). SCS solves the same convex program with a
+        # first-order method; tighten its tolerance so the fallback matches ECOS quality.
+        logger.warning("%s failed; retrying with SCS", SOLVER)
+        problem.solve(solver="SCS", eps=1e-9, max_iters=100000)
     if x.value is None:
-        raise RuntimeError(f"{SOLVER} failed to solve the mixture problem: status={problem.status}")
+        raise RuntimeError(f"{SOLVER}+SCS failed to solve the mixture problem: status={problem.status}")
     logger.info("solved mixture: objective=%.6g status=%s", problem.value, problem.status)
 
     solution = np.asarray(x.value, dtype=float)

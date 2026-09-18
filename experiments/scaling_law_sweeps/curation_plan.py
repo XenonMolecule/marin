@@ -241,6 +241,28 @@ _D_OBS_DEFAULTS: dict[str, int] = {
     "sysprompt30b_998m_9e19_B-64d3a5": 14815377151,
     "sysprompt30b_998m_9e19_C-c94a3d": 14565835827,
     "sysprompt30b_998m_9e19_D-mix50v1": 14688250300,
+    # --- scale-DOWN ladder of the same four arms (2026-09-06). Same corpus and
+    # block index as 998m_9e19, so each rung's docs are a prefix of the 998M set.
+    # 210M @ 3e18 (d640, B16). From train/.stats.json.
+    "sysprompt30b_210m_3e18_A-v1": 3027332255,
+    "sysprompt30b_210m_3e18_B-v1": 3029722065,
+    "sysprompt30b_210m_3e18_C-v1": 2978601589,
+    "sysprompt30b_210m_3e18_D-v1": 3002996400,
+    # 358M @ 9e18 (d896, B32)
+    "sysprompt30b_358m_9e18_A-v1": 4707303084,
+    "sysprompt30b_358m_9e18_B-v1": 4708573974,
+    "sysprompt30b_358m_9e18_C-v1": 4630912721,
+    "sysprompt30b_358m_9e18_D-v1": 4669153379,
+    # 447M @ 1.8e19 (d1024, B32)
+    "sysprompt30b_447m_1p8e19_A-v1": 7279537958,
+    "sysprompt30b_447m_1p8e19_B-v1": 7282910213,
+    "sysprompt30b_447m_1p8e19_C-v1": 7159996938,
+    "sysprompt30b_447m_1p8e19_D-v1": 7219830074,
+    # 669M @ 3e19 (d1280, B32)
+    "sysprompt30b_669m_3e19_A-v1": 7721753037,
+    "sysprompt30b_669m_3e19_B-v1": 7723866931,
+    "sysprompt30b_669m_3e19_C-v1": 7595137729,
+    "sysprompt30b_669m_3e19_D-v1": 7658511785,
     # --- WARC-scaling sweep subsamples (N ∈ {100, 500, 1000, 2000}) ---
     # Read 2026-04-29 from {bucket}/tokenized/{key}/train/.stats.json.
     # dclm: source us-central2; mirrored to us-central1.
@@ -338,6 +360,25 @@ _D_OBS_DEFAULTS: dict[str, int] = {
     # -> llama3. 77,051,628 docs. Cache is us-east5 ONLY (post-merge explicit path; -a16e729 =
     # parity-merge commit). Token count read from the cache ledger, not hand-derived.
     "lpv11_fastpipe_v1_decon_10364warcs-a16e729": 89_109_695_474,
+    # lpv11_fastpipe_v2 (TEXTONLY-7d cascade; same corpus semantics as the 8M-scale v2_1 run),
+    # 10,364 WARCs: dedup 286/26/5/seed42 (text_cap_chars=None) -> CORE v2 decon -> llama3.
+    # 79,582,522 docs. Cache is us-east5 ONLY (-41e20bf = HEAD when tokenized, 2026-09-06).
+    # Token count from the cache ledger (train/shard_ledger.json), not hand-derived.
+    "lpv11_fastpipe_v2_decon_10364warcs-41e20bf": 91_653_647_234,
+    # lpv11 (llm_pipeline_v1_1 LLM extraction, NOT the fastpipe cascade), full 10,364 WARCs:
+    # dedup 286/26/5/seed42 (text_cap_chars=None) -> CORE v2 decon n=15 -> marin-tokenizer.
+    # 80,728,641 docs. **No flat single-corpus cache was ever built for this corpus** -- only the
+    # 24x5 grid store (gs://marin-us-east5/datakit/store/lpv11_10k_gridv1, 205.45 GB, verified
+    # "120/120 cells, every cell loadable"). The `-gridonly` suffix says so explicitly: the
+    # tokenized/ path below does NOT exist and is never read, because GridMixCurationMethod drops
+    # the parent's single-cache component and trains purely on grid cells. d_obs is therefore the
+    # grid total from `grid_store`, which IS this corpus under the same tokenizer.
+    "llm_pipeline_v1_1_decon_10364warcs-gridonly": 111_324_334_812,
+    # Extractor ablation, arm B: exactly the lpv11_fastpipe_v2 post-decon document set with the
+    # text re-extracted by upstream resiliparse (experiments/fast_curation/swap_extractor.py; no
+    # dedup/decon of its own). 75,625,394 docs = A's 79,582,522 minus 3,957,128 pages whose
+    # upstream extraction is under 50 chars. us-east5 ONLY. Ledger count, 2026-09-07.
+    "lpv11_fastpipe_v2_upstreamrs_decon_10364warcs-41e20bf": 84_181_817_101,
 }
 _SOURCE_BUCKET: str = "gs://marin-us-central2"
 # BOS-fixed rebuilds were only tokenized on us-central1 (see rebuild_bos_fixed.py)
@@ -388,7 +429,9 @@ def _method(
     )
 
 
-def _grid_mix_method(name: str, base_cache_hash: str, grid_corpus: str, mixture_tag: str = "") -> GridMixCurationMethod:
+def _grid_mix_method(
+    name: str, base_cache_hash: str, grid_corpus: str, mixture_tag: str = "", r_stem: str = "R3e10_k20"
+) -> GridMixCurationMethod:
     """An OLMIX-mixture arm over `grid_corpus`'s 24x5 grid.
 
     Reuses the BASE corpus's `d_obs` verbatim -- the grid cells partition exactly that corpus
@@ -408,7 +451,7 @@ def _grid_mix_method(name: str, base_cache_hash: str, grid_corpus: str, mixture_
         d_obs_tokens=_D_OBS_DEFAULTS[base_cache_hash],
         sampled_warcs=EXPC_SAMPLED_WARCS,
         grid_corpus=grid_corpus,
-        mixture_rel_path=f"experiments/data_mixing/mixtures/{grid_corpus}_R3e10_k20{mixture_tag}.json",
+        mixture_rel_path=f"experiments/data_mixing/mixtures/{grid_corpus}_{r_stem}{mixture_tag}.json",
     )
 
 
@@ -664,6 +707,443 @@ METHODS: dict[str, CurationMethod] = {
         "lpv11_fastpipe_v1_10k",
         mixture_tag="_olmixexact_lambda0p01",
     ),
+    # lpv11 olmixexact arm — the LLM-extraction corpus (llm_pipeline_v1_1), distinct from the
+    # lpv11_fastpipe_* cascades above. Grid store: us-east5 + us-east1 + us-central1 (byte-identical
+    # copies, 3,056 objects / 205,453,014,248 bytes each), so launch with
+    # `--allowed-regions us-east5 us-east1 us-central1`.
+    #
+    # UNLIKE every other arm here there is NO natural arm for this corpus -- no flat tokenized cache
+    # exists, so `mix vs natural` is NOT measurable for lpv11 as registered. The mixture trains, but
+    # any comparison must be against another corpus's arm, not lpv11's own natural distribution.
+    # Building `lpv11_10k` as a base method (tokenize the deduped+decon corpus) is what would make
+    # the usual cell-for-cell comparison possible.
+    "lpv11_10k_mix_olmixexact_lambda0p01": _grid_mix_method(
+        "lpv11_10k_mix_olmixexact_lambda0p01",
+        "llm_pipeline_v1_1_decon_10364warcs-gridonly",
+        "lpv11_10k",
+        mixture_tag="_olmixexact_lambda0p01",
+    ),
+    # Nemotron olmixexact arm (fit solved 2026-09-04, 363/363 swarm runs, status=optimal).
+    # Grid partitions the nemotron_10k base cache: grid total 10,130,086,891 vs base
+    # d_obs 10,130,086,896 — a 5-token (5e-10 relative) per-cell rounding gap, same corpus.
+    # Grid store lives in us-east5 + us-central1 only; launch with --allowed-regions.
+    "nemotron_full_10k_mix_olmixexact_lambda0p01": _grid_mix_method(
+        "nemotron_full_10k_mix_olmixexact_lambda0p01",
+        "dclm_400m_1x_10k_nemotron_full-3dcb75",
+        "nemotron_full_10k",
+        mixture_tag="_olmixexact_lambda0p01",
+    ),
+    # Cultural-targeted mixes (choice_logprob over the 19-task cultural_sl_verb suite,
+    # lambda=0.01, fits on full 363-run swarms). Same grid stores and base caches as each
+    # corpus's olmixexact arm — only the vendored mixture file differs.
+    "dclm_10k_mix_cultural_clp_lambda0p01": _grid_mix_method(
+        "dclm_10k_mix_cultural_clp_lambda0p01",
+        "dclm_400m_1x_10k_dclm-3df0ba",
+        "dclm_10k",
+        mixture_tag="_cultural_clp_lambda0p01",
+    ),
+    "lpv11_10k_mix_cultural_clp_lambda0p01": _grid_mix_method(
+        "lpv11_10k_mix_cultural_clp_lambda0p01",
+        "llm_pipeline_v1_1_decon_10364warcs-gridonly",
+        "lpv11_10k",
+        mixture_tag="_cultural_clp_lambda0p01",
+    ),
+    "nemotron_full_10k_mix_cultural_clp_lambda0p01": _grid_mix_method(
+        "nemotron_full_10k_mix_cultural_clp_lambda0p01",
+        "dclm_400m_1x_10k_nemotron_full-3dcb75",
+        "nemotron_full_10k",
+        mixture_tag="_cultural_clp_lambda0p01",
+    ),
+    # fineweb_cc locked arms (user 2026-09-14): k=20 R=100B lambda=0.05 (max amp 5.6x).
+    "fineweb_cc_10k_mix_cultural_clp_r100k20_lambda0p05": _grid_mix_method(
+        "fineweb_cc_10k_mix_cultural_clp_r100k20_lambda0p05",
+        "fineweb_cc_10364warcs-ddfeda",
+        "fineweb_cc_10k",
+        mixture_tag="_cultural_clp_lambda0p05",
+        r_stem="R1e11_k20",
+    ),
+    "fineweb_cc_10k_mix_mmlu_stem_clp_r100k20_lambda0p05": _grid_mix_method(
+        "fineweb_cc_10k_mix_mmlu_stem_clp_r100k20_lambda0p05",
+        "fineweb_cc_10364warcs-ddfeda",
+        "fineweb_cc_10k",
+        mixture_tag="_mmlu_stem_clp_lambda0p05",
+        r_stem="R1e11_k20",
+    ),
+    "fineweb_cc_10k_mix_mmlu_humanities_clp_r100k20_lambda0p05": _grid_mix_method(
+        "fineweb_cc_10k_mix_mmlu_humanities_clp_r100k20_lambda0p05",
+        "fineweb_cc_10364warcs-ddfeda",
+        "fineweb_cc_10k",
+        mixture_tag="_mmlu_humanities_clp_lambda0p05",
+        r_stem="R1e11_k20",
+    ),
+    "fineweb_cc_10k_mix_mmlu_social_sciences_clp_r100k20_lambda0p05": _grid_mix_method(
+        "fineweb_cc_10k_mix_mmlu_social_sciences_clp_r100k20_lambda0p05",
+        "fineweb_cc_10364warcs-ddfeda",
+        "fineweb_cc_10k",
+        mixture_tag="_mmlu_social_sciences_clp_lambda0p05",
+        r_stem="R1e11_k20",
+    ),
+    # k=20 R=100B lambda=0.05 arms for the large-pool corpora (user 2026-09-14): trained
+    # in parallel with the k=5 arms for a head-to-head repetition-cap comparison.
+    "lpv11_10k_mix_cultural_clp_r100k20_lambda0p05": _grid_mix_method(
+        "lpv11_10k_mix_cultural_clp_r100k20_lambda0p05",
+        "llm_pipeline_v1_1_decon_10364warcs-gridonly",
+        "lpv11_10k",
+        mixture_tag="_cultural_clp_lambda0p05",
+        r_stem="R1e11_k20",
+    ),
+    "lpv11_10k_mix_mmlu_stem_clp_r100k20_lambda0p05": _grid_mix_method(
+        "lpv11_10k_mix_mmlu_stem_clp_r100k20_lambda0p05",
+        "llm_pipeline_v1_1_decon_10364warcs-gridonly",
+        "lpv11_10k",
+        mixture_tag="_mmlu_stem_clp_lambda0p05",
+        r_stem="R1e11_k20",
+    ),
+    "lpv11_10k_mix_mmlu_humanities_clp_r100k20_lambda0p05": _grid_mix_method(
+        "lpv11_10k_mix_mmlu_humanities_clp_r100k20_lambda0p05",
+        "llm_pipeline_v1_1_decon_10364warcs-gridonly",
+        "lpv11_10k",
+        mixture_tag="_mmlu_humanities_clp_lambda0p05",
+        r_stem="R1e11_k20",
+    ),
+    "lpv11_10k_mix_mmlu_social_sciences_clp_r100k20_lambda0p05": _grid_mix_method(
+        "lpv11_10k_mix_mmlu_social_sciences_clp_r100k20_lambda0p05",
+        "llm_pipeline_v1_1_decon_10364warcs-gridonly",
+        "lpv11_10k",
+        mixture_tag="_mmlu_social_sciences_clp_lambda0p05",
+        r_stem="R1e11_k20",
+    ),
+    "resiliparse_10k_mix_cultural_clp_r100k20_lambda0p05": _grid_mix_method(
+        "resiliparse_10k_mix_cultural_clp_r100k20_lambda0p05",
+        "resiliparse_decon_10364warcs-beaaf5",
+        "resiliparse_10k",
+        mixture_tag="_cultural_clp_lambda0p05",
+        r_stem="R1e11_k20",
+    ),
+    "resiliparse_10k_mix_mmlu_stem_clp_r100k20_lambda0p05": _grid_mix_method(
+        "resiliparse_10k_mix_mmlu_stem_clp_r100k20_lambda0p05",
+        "resiliparse_decon_10364warcs-beaaf5",
+        "resiliparse_10k",
+        mixture_tag="_mmlu_stem_clp_lambda0p05",
+        r_stem="R1e11_k20",
+    ),
+    "resiliparse_10k_mix_mmlu_humanities_clp_r100k20_lambda0p05": _grid_mix_method(
+        "resiliparse_10k_mix_mmlu_humanities_clp_r100k20_lambda0p05",
+        "resiliparse_decon_10364warcs-beaaf5",
+        "resiliparse_10k",
+        mixture_tag="_mmlu_humanities_clp_lambda0p05",
+        r_stem="R1e11_k20",
+    ),
+    "resiliparse_10k_mix_mmlu_social_sciences_clp_r100k20_lambda0p05": _grid_mix_method(
+        "resiliparse_10k_mix_mmlu_social_sciences_clp_r100k20_lambda0p05",
+        "resiliparse_decon_10364warcs-beaaf5",
+        "resiliparse_10k",
+        mixture_tag="_mmlu_social_sciences_clp_lambda0p05",
+        r_stem="R1e11_k20",
+    ),
+    "lpv11_fastpipe_v2_10k_mix_cultural_clp_r100k20_lambda0p05": _grid_mix_method(
+        "lpv11_fastpipe_v2_10k_mix_cultural_clp_r100k20_lambda0p05",
+        "lpv11_fastpipe_v2_decon_10364warcs-41e20bf",
+        "lpv11_fastpipe_v2_10k",
+        mixture_tag="_cultural_clp_lambda0p05",
+        r_stem="R1e11_k20",
+    ),
+    "lpv11_fastpipe_v2_10k_mix_mmlu_stem_clp_r100k20_lambda0p05": _grid_mix_method(
+        "lpv11_fastpipe_v2_10k_mix_mmlu_stem_clp_r100k20_lambda0p05",
+        "lpv11_fastpipe_v2_decon_10364warcs-41e20bf",
+        "lpv11_fastpipe_v2_10k",
+        mixture_tag="_mmlu_stem_clp_lambda0p05",
+        r_stem="R1e11_k20",
+    ),
+    "lpv11_fastpipe_v2_10k_mix_mmlu_humanities_clp_r100k20_lambda0p05": _grid_mix_method(
+        "lpv11_fastpipe_v2_10k_mix_mmlu_humanities_clp_r100k20_lambda0p05",
+        "lpv11_fastpipe_v2_decon_10364warcs-41e20bf",
+        "lpv11_fastpipe_v2_10k",
+        mixture_tag="_mmlu_humanities_clp_lambda0p05",
+        r_stem="R1e11_k20",
+    ),
+    "lpv11_fastpipe_v2_10k_mix_mmlu_social_sciences_clp_r100k20_lambda0p05": _grid_mix_method(
+        "lpv11_fastpipe_v2_10k_mix_mmlu_social_sciences_clp_r100k20_lambda0p05",
+        "lpv11_fastpipe_v2_decon_10364warcs-41e20bf",
+        "lpv11_fastpipe_v2_10k",
+        mixture_tag="_mmlu_social_sciences_clp_lambda0p05",
+        r_stem="R1e11_k20",
+    ),
+    # k=5 R=100B lambda=0.05 arms for the large-pool corpora (user 2026-09-14 'plea for
+    # sanity'): max amp lpv11 5.6x / fpv2 4.6x / resiliparse 17x.
+    "lpv11_10k_mix_cultural_clp_r100k5_lambda0p05": _grid_mix_method(
+        "lpv11_10k_mix_cultural_clp_r100k5_lambda0p05",
+        "llm_pipeline_v1_1_decon_10364warcs-gridonly",
+        "lpv11_10k",
+        mixture_tag="_cultural_clp_lambda0p05",
+        r_stem="R1e11_k5",
+    ),
+    "lpv11_10k_mix_mmlu_stem_clp_r100k5_lambda0p05": _grid_mix_method(
+        "lpv11_10k_mix_mmlu_stem_clp_r100k5_lambda0p05",
+        "llm_pipeline_v1_1_decon_10364warcs-gridonly",
+        "lpv11_10k",
+        mixture_tag="_mmlu_stem_clp_lambda0p05",
+        r_stem="R1e11_k5",
+    ),
+    "lpv11_10k_mix_mmlu_humanities_clp_r100k5_lambda0p05": _grid_mix_method(
+        "lpv11_10k_mix_mmlu_humanities_clp_r100k5_lambda0p05",
+        "llm_pipeline_v1_1_decon_10364warcs-gridonly",
+        "lpv11_10k",
+        mixture_tag="_mmlu_humanities_clp_lambda0p05",
+        r_stem="R1e11_k5",
+    ),
+    "lpv11_10k_mix_mmlu_social_sciences_clp_r100k5_lambda0p05": _grid_mix_method(
+        "lpv11_10k_mix_mmlu_social_sciences_clp_r100k5_lambda0p05",
+        "llm_pipeline_v1_1_decon_10364warcs-gridonly",
+        "lpv11_10k",
+        mixture_tag="_mmlu_social_sciences_clp_lambda0p05",
+        r_stem="R1e11_k5",
+    ),
+    "resiliparse_10k_mix_cultural_clp_r100k5_lambda0p05": _grid_mix_method(
+        "resiliparse_10k_mix_cultural_clp_r100k5_lambda0p05",
+        "resiliparse_decon_10364warcs-beaaf5",
+        "resiliparse_10k",
+        mixture_tag="_cultural_clp_lambda0p05",
+        r_stem="R1e11_k5",
+    ),
+    "resiliparse_10k_mix_mmlu_stem_clp_r100k5_lambda0p05": _grid_mix_method(
+        "resiliparse_10k_mix_mmlu_stem_clp_r100k5_lambda0p05",
+        "resiliparse_decon_10364warcs-beaaf5",
+        "resiliparse_10k",
+        mixture_tag="_mmlu_stem_clp_lambda0p05",
+        r_stem="R1e11_k5",
+    ),
+    "resiliparse_10k_mix_mmlu_humanities_clp_r100k5_lambda0p05": _grid_mix_method(
+        "resiliparse_10k_mix_mmlu_humanities_clp_r100k5_lambda0p05",
+        "resiliparse_decon_10364warcs-beaaf5",
+        "resiliparse_10k",
+        mixture_tag="_mmlu_humanities_clp_lambda0p05",
+        r_stem="R1e11_k5",
+    ),
+    "resiliparse_10k_mix_mmlu_social_sciences_clp_r100k5_lambda0p05": _grid_mix_method(
+        "resiliparse_10k_mix_mmlu_social_sciences_clp_r100k5_lambda0p05",
+        "resiliparse_decon_10364warcs-beaaf5",
+        "resiliparse_10k",
+        mixture_tag="_mmlu_social_sciences_clp_lambda0p05",
+        r_stem="R1e11_k5",
+    ),
+    "lpv11_fastpipe_v2_10k_mix_cultural_clp_r100k5_lambda0p05": _grid_mix_method(
+        "lpv11_fastpipe_v2_10k_mix_cultural_clp_r100k5_lambda0p05",
+        "lpv11_fastpipe_v2_decon_10364warcs-41e20bf",
+        "lpv11_fastpipe_v2_10k",
+        mixture_tag="_cultural_clp_lambda0p05",
+        r_stem="R1e11_k5",
+    ),
+    "lpv11_fastpipe_v2_10k_mix_mmlu_stem_clp_r100k5_lambda0p05": _grid_mix_method(
+        "lpv11_fastpipe_v2_10k_mix_mmlu_stem_clp_r100k5_lambda0p05",
+        "lpv11_fastpipe_v2_decon_10364warcs-41e20bf",
+        "lpv11_fastpipe_v2_10k",
+        mixture_tag="_mmlu_stem_clp_lambda0p05",
+        r_stem="R1e11_k5",
+    ),
+    "lpv11_fastpipe_v2_10k_mix_mmlu_humanities_clp_r100k5_lambda0p05": _grid_mix_method(
+        "lpv11_fastpipe_v2_10k_mix_mmlu_humanities_clp_r100k5_lambda0p05",
+        "lpv11_fastpipe_v2_decon_10364warcs-41e20bf",
+        "lpv11_fastpipe_v2_10k",
+        mixture_tag="_mmlu_humanities_clp_lambda0p05",
+        r_stem="R1e11_k5",
+    ),
+    "lpv11_fastpipe_v2_10k_mix_mmlu_social_sciences_clp_r100k5_lambda0p05": _grid_mix_method(
+        "lpv11_fastpipe_v2_10k_mix_mmlu_social_sciences_clp_r100k5_lambda0p05",
+        "lpv11_fastpipe_v2_decon_10364warcs-41e20bf",
+        "lpv11_fastpipe_v2_10k",
+        mixture_tag="_mmlu_social_sciences_clp_lambda0p05",
+        r_stem="R1e11_k5",
+    ),
+    # Locked domain arms (user 2026-09-14): k=20 R=100B lambda=0.05 solves for the two
+    # small-pool corpora (max amp: dclm 1.46x, nemotron 2.0x -- inherently tame).
+    "dclm_10k_mix_cultural_clp_r100k20_lambda0p05": _grid_mix_method(
+        "dclm_10k_mix_cultural_clp_r100k20_lambda0p05",
+        "dclm_400m_1x_10k_dclm-3df0ba",
+        "dclm_10k",
+        mixture_tag="_cultural_clp_lambda0p05",
+        r_stem="R1e11_k20",
+    ),
+    "dclm_10k_mix_mmlu_stem_clp_r100k20_lambda0p05": _grid_mix_method(
+        "dclm_10k_mix_mmlu_stem_clp_r100k20_lambda0p05",
+        "dclm_400m_1x_10k_dclm-3df0ba",
+        "dclm_10k",
+        mixture_tag="_mmlu_stem_clp_lambda0p05",
+        r_stem="R1e11_k20",
+    ),
+    "dclm_10k_mix_mmlu_humanities_clp_r100k20_lambda0p05": _grid_mix_method(
+        "dclm_10k_mix_mmlu_humanities_clp_r100k20_lambda0p05",
+        "dclm_400m_1x_10k_dclm-3df0ba",
+        "dclm_10k",
+        mixture_tag="_mmlu_humanities_clp_lambda0p05",
+        r_stem="R1e11_k20",
+    ),
+    "dclm_10k_mix_mmlu_social_sciences_clp_r100k20_lambda0p05": _grid_mix_method(
+        "dclm_10k_mix_mmlu_social_sciences_clp_r100k20_lambda0p05",
+        "dclm_400m_1x_10k_dclm-3df0ba",
+        "dclm_10k",
+        mixture_tag="_mmlu_social_sciences_clp_lambda0p05",
+        r_stem="R1e11_k20",
+    ),
+    "nemotron_full_10k_mix_cultural_clp_r100k20_lambda0p05": _grid_mix_method(
+        "nemotron_full_10k_mix_cultural_clp_r100k20_lambda0p05",
+        "dclm_400m_1x_10k_nemotron_full-3dcb75",
+        "nemotron_full_10k",
+        mixture_tag="_cultural_clp_lambda0p05",
+        r_stem="R1e11_k20",
+    ),
+    "nemotron_full_10k_mix_mmlu_stem_clp_r100k20_lambda0p05": _grid_mix_method(
+        "nemotron_full_10k_mix_mmlu_stem_clp_r100k20_lambda0p05",
+        "dclm_400m_1x_10k_nemotron_full-3dcb75",
+        "nemotron_full_10k",
+        mixture_tag="_mmlu_stem_clp_lambda0p05",
+        r_stem="R1e11_k20",
+    ),
+    "nemotron_full_10k_mix_mmlu_humanities_clp_r100k20_lambda0p05": _grid_mix_method(
+        "nemotron_full_10k_mix_mmlu_humanities_clp_r100k20_lambda0p05",
+        "dclm_400m_1x_10k_nemotron_full-3dcb75",
+        "nemotron_full_10k",
+        mixture_tag="_mmlu_humanities_clp_lambda0p05",
+        r_stem="R1e11_k20",
+    ),
+    "nemotron_full_10k_mix_mmlu_social_sciences_clp_r100k20_lambda0p05": _grid_mix_method(
+        "nemotron_full_10k_mix_mmlu_social_sciences_clp_r100k20_lambda0p05",
+        "dclm_400m_1x_10k_nemotron_full-3dcb75",
+        "nemotron_full_10k",
+        mixture_tag="_mmlu_social_sciences_clp_lambda0p05",
+        r_stem="R1e11_k20",
+    ),
+    # MMLU-target mixes (user 2026-09-13): same d512+d1536 sweeps as the cultural arms.
+    "dclm_10k_mix_mmlu_stem_clp_lambda0p01": _grid_mix_method(
+        "dclm_10k_mix_mmlu_stem_clp_lambda0p01",
+        "dclm_400m_1x_10k_dclm-3df0ba",
+        "dclm_10k",
+        mixture_tag="_mmlu_stem_clp_lambda0p01",
+    ),
+    "dclm_10k_mix_mmlu_humanities_clp_lambda0p01": _grid_mix_method(
+        "dclm_10k_mix_mmlu_humanities_clp_lambda0p01",
+        "dclm_400m_1x_10k_dclm-3df0ba",
+        "dclm_10k",
+        mixture_tag="_mmlu_humanities_clp_lambda0p01",
+    ),
+    "dclm_10k_mix_mmlu_social_sciences_clp_lambda0p01": _grid_mix_method(
+        "dclm_10k_mix_mmlu_social_sciences_clp_lambda0p01",
+        "dclm_400m_1x_10k_dclm-3df0ba",
+        "dclm_10k",
+        mixture_tag="_mmlu_social_sciences_clp_lambda0p01",
+    ),
+    "lpv11_10k_mix_mmlu_stem_clp_lambda0p01": _grid_mix_method(
+        "lpv11_10k_mix_mmlu_stem_clp_lambda0p01",
+        "llm_pipeline_v1_1_decon_10364warcs-gridonly",
+        "lpv11_10k",
+        mixture_tag="_mmlu_stem_clp_lambda0p01",
+    ),
+    "lpv11_10k_mix_mmlu_humanities_clp_lambda0p01": _grid_mix_method(
+        "lpv11_10k_mix_mmlu_humanities_clp_lambda0p01",
+        "llm_pipeline_v1_1_decon_10364warcs-gridonly",
+        "lpv11_10k",
+        mixture_tag="_mmlu_humanities_clp_lambda0p01",
+    ),
+    "lpv11_10k_mix_mmlu_social_sciences_clp_lambda0p01": _grid_mix_method(
+        "lpv11_10k_mix_mmlu_social_sciences_clp_lambda0p01",
+        "llm_pipeline_v1_1_decon_10364warcs-gridonly",
+        "lpv11_10k",
+        mixture_tag="_mmlu_social_sciences_clp_lambda0p01",
+    ),
+    "nemotron_full_10k_mix_mmlu_stem_clp_lambda0p01": _grid_mix_method(
+        "nemotron_full_10k_mix_mmlu_stem_clp_lambda0p01",
+        "dclm_400m_1x_10k_nemotron_full-3dcb75",
+        "nemotron_full_10k",
+        mixture_tag="_mmlu_stem_clp_lambda0p01",
+    ),
+    "nemotron_full_10k_mix_mmlu_humanities_clp_lambda0p01": _grid_mix_method(
+        "nemotron_full_10k_mix_mmlu_humanities_clp_lambda0p01",
+        "dclm_400m_1x_10k_nemotron_full-3dcb75",
+        "nemotron_full_10k",
+        mixture_tag="_mmlu_humanities_clp_lambda0p01",
+    ),
+    "nemotron_full_10k_mix_mmlu_social_sciences_clp_lambda0p01": _grid_mix_method(
+        "nemotron_full_10k_mix_mmlu_social_sciences_clp_lambda0p01",
+        "dclm_400m_1x_10k_nemotron_full-3dcb75",
+        "nemotron_full_10k",
+        mixture_tag="_mmlu_social_sciences_clp_lambda0p01",
+    ),
+    "resiliparse_10k_mix_mmlu_stem_clp_lambda0p01": _grid_mix_method(
+        "resiliparse_10k_mix_mmlu_stem_clp_lambda0p01",
+        "resiliparse_decon_10364warcs-beaaf5",
+        "resiliparse_10k",
+        mixture_tag="_mmlu_stem_clp_lambda0p01",
+    ),
+    "resiliparse_10k_mix_mmlu_humanities_clp_lambda0p01": _grid_mix_method(
+        "resiliparse_10k_mix_mmlu_humanities_clp_lambda0p01",
+        "resiliparse_decon_10364warcs-beaaf5",
+        "resiliparse_10k",
+        mixture_tag="_mmlu_humanities_clp_lambda0p01",
+    ),
+    "resiliparse_10k_mix_mmlu_social_sciences_clp_lambda0p01": _grid_mix_method(
+        "resiliparse_10k_mix_mmlu_social_sciences_clp_lambda0p01",
+        "resiliparse_decon_10364warcs-beaaf5",
+        "resiliparse_10k",
+        mixture_tag="_mmlu_social_sciences_clp_lambda0p01",
+    ),
+    "lpv11_fastpipe_v2_10k_mix_mmlu_stem_clp_lambda0p01": _grid_mix_method(
+        "lpv11_fastpipe_v2_10k_mix_mmlu_stem_clp_lambda0p01",
+        "lpv11_fastpipe_v2_decon_10364warcs-41e20bf",
+        "lpv11_fastpipe_v2_10k",
+        mixture_tag="_mmlu_stem_clp_lambda0p01",
+    ),
+    "lpv11_fastpipe_v2_10k_mix_mmlu_humanities_clp_lambda0p01": _grid_mix_method(
+        "lpv11_fastpipe_v2_10k_mix_mmlu_humanities_clp_lambda0p01",
+        "lpv11_fastpipe_v2_decon_10364warcs-41e20bf",
+        "lpv11_fastpipe_v2_10k",
+        mixture_tag="_mmlu_humanities_clp_lambda0p01",
+    ),
+    "lpv11_fastpipe_v2_10k_mix_mmlu_social_sciences_clp_lambda0p01": _grid_mix_method(
+        "lpv11_fastpipe_v2_10k_mix_mmlu_social_sciences_clp_lambda0p01",
+        "lpv11_fastpipe_v2_decon_10364warcs-41e20bf",
+        "lpv11_fastpipe_v2_10k",
+        mixture_tag="_mmlu_social_sciences_clp_lambda0p01",
+    ),
+    "lpv11_fastpipe_v2_10k_mix_cultural_clp_lambda0p01": _grid_mix_method(
+        "lpv11_fastpipe_v2_10k_mix_cultural_clp_lambda0p01",
+        "lpv11_fastpipe_v2_decon_10364warcs-41e20bf",
+        "lpv11_fastpipe_v2_10k",
+        mixture_tag="_cultural_clp_lambda0p01",
+    ),
+    "resiliparse_10k_mix_cultural_clp_lambda0p01": _grid_mix_method(
+        "resiliparse_10k_mix_cultural_clp_lambda0p01",
+        "resiliparse_decon_10364warcs-beaaf5",
+        "resiliparse_10k",
+        mixture_tag="_cultural_clp_lambda0p01",
+    ),
+    # lpv11_fastpipe_v2 olmixexact arm (fit solved 2026-09-12: 363/363 runs, 82 live domains,
+    # status=optimal, TV vs natural 0.49). Grid partitions the lpv11_fastpipe_v2 base cache
+    # (91,652,911,542 grid tokens vs 91,653,647,234 base d_obs: the usual -8e-6 chunking gap).
+    # Grid store lives in us-east5 + us-central1 + us-east1; launch with --allowed-regions.
+    "lpv11_fastpipe_v2_10k_mix_olmixexact_lambda0p01": _grid_mix_method(
+        "lpv11_fastpipe_v2_10k_mix_olmixexact_lambda0p01",
+        "lpv11_fastpipe_v2_decon_10364warcs-41e20bf",
+        "lpv11_fastpipe_v2_10k",
+        mixture_tag="_olmixexact_lambda0p01",
+    ),
+    # fineweb_cc olmixexact arm (fit solved 2026-09-06, 363/363 swarm runs, status=optimal).
+    # Grid total 28,004,162,093 vs base d_obs 28,004,233,781 — 72k tokens (2.6e-6 relative)
+    # lost at grid materialization; same corpus. Grid store: us-east5/us-central1/us-central2.
+    "fineweb_cc_10k_mix_olmixexact_lambda0p01": _grid_mix_method(
+        "fineweb_cc_10k_mix_olmixexact_lambda0p01",
+        "fineweb_cc_10364warcs-ddfeda",
+        "fineweb_cc_10k",
+        mixture_tag="_olmixexact_lambda0p01",
+    ),
+    # fineweb_edu olmixexact arm (fit solved 2026-09-07, 363/363 swarm runs, status=optimal).
+    # Grid total exactly equals base d_obs (2,346,934,380 — a 2.35B-token pool, so the
+    # 9e+20/1.8e+21 extension cells run ~37-75 epochs; that repetition IS the experiment).
+    "fineweb_edu_10k_mix_olmixexact_lambda0p01": _grid_mix_method(
+        "fineweb_edu_10k_mix_olmixexact_lambda0p01",
+        "dclm_400m_1x_10k_fineweb_edu-0a3143",
+        "fineweb_edu_10k",
+        mixture_tag="_olmixexact_lambda0p01",
+    ),
     # --- Dilution-ablation variants of high_quality ---
     # Base hq cache + both variant caches (hq_dense, hq_epoch_sub344) exist in BOTH
     # us-central1 and us-east5, so pin_region=None lets runs float across those two
@@ -739,6 +1219,103 @@ METHODS: dict[str, CurationMethod] = {
     "sysprompt30b_998m_9e19_D": _method(
         "sysprompt30b_998m_9e19_D",
         "sysprompt30b_998m_9e19_D-mix50v1",
+        sampled_warcs=EXPC_SAMPLED_WARCS,
+        pin_region="us-central1",
+    ),
+    # --- scale-DOWN ladder rungs (same four arms, us-central1 only) ---
+    "sysprompt30b_210m_3e18_A": _method(
+        "sysprompt30b_210m_3e18_A",
+        "sysprompt30b_210m_3e18_A-v1",
+        sampled_warcs=EXPC_SAMPLED_WARCS,
+        pin_region="us-central1",
+    ),
+    "sysprompt30b_210m_3e18_B": _method(
+        "sysprompt30b_210m_3e18_B",
+        "sysprompt30b_210m_3e18_B-v1",
+        sampled_warcs=EXPC_SAMPLED_WARCS,
+        pin_region="us-central1",
+    ),
+    "sysprompt30b_210m_3e18_C": _method(
+        "sysprompt30b_210m_3e18_C",
+        "sysprompt30b_210m_3e18_C-v1",
+        sampled_warcs=EXPC_SAMPLED_WARCS,
+        pin_region="us-central1",
+    ),
+    "sysprompt30b_210m_3e18_D": _method(
+        "sysprompt30b_210m_3e18_D",
+        "sysprompt30b_210m_3e18_D-v1",
+        sampled_warcs=EXPC_SAMPLED_WARCS,
+        pin_region="us-central1",
+    ),
+    "sysprompt30b_358m_9e18_A": _method(
+        "sysprompt30b_358m_9e18_A",
+        "sysprompt30b_358m_9e18_A-v1",
+        sampled_warcs=EXPC_SAMPLED_WARCS,
+        pin_region="us-central1",
+    ),
+    "sysprompt30b_358m_9e18_B": _method(
+        "sysprompt30b_358m_9e18_B",
+        "sysprompt30b_358m_9e18_B-v1",
+        sampled_warcs=EXPC_SAMPLED_WARCS,
+        pin_region="us-central1",
+    ),
+    "sysprompt30b_358m_9e18_C": _method(
+        "sysprompt30b_358m_9e18_C",
+        "sysprompt30b_358m_9e18_C-v1",
+        sampled_warcs=EXPC_SAMPLED_WARCS,
+        pin_region="us-central1",
+    ),
+    "sysprompt30b_358m_9e18_D": _method(
+        "sysprompt30b_358m_9e18_D",
+        "sysprompt30b_358m_9e18_D-v1",
+        sampled_warcs=EXPC_SAMPLED_WARCS,
+        pin_region="us-central1",
+    ),
+    "sysprompt30b_447m_1p8e19_A": _method(
+        "sysprompt30b_447m_1p8e19_A",
+        "sysprompt30b_447m_1p8e19_A-v1",
+        sampled_warcs=EXPC_SAMPLED_WARCS,
+        pin_region="us-central1",
+    ),
+    "sysprompt30b_447m_1p8e19_B": _method(
+        "sysprompt30b_447m_1p8e19_B",
+        "sysprompt30b_447m_1p8e19_B-v1",
+        sampled_warcs=EXPC_SAMPLED_WARCS,
+        pin_region="us-central1",
+    ),
+    "sysprompt30b_447m_1p8e19_C": _method(
+        "sysprompt30b_447m_1p8e19_C",
+        "sysprompt30b_447m_1p8e19_C-v1",
+        sampled_warcs=EXPC_SAMPLED_WARCS,
+        pin_region="us-central1",
+    ),
+    "sysprompt30b_447m_1p8e19_D": _method(
+        "sysprompt30b_447m_1p8e19_D",
+        "sysprompt30b_447m_1p8e19_D-v1",
+        sampled_warcs=EXPC_SAMPLED_WARCS,
+        pin_region="us-central1",
+    ),
+    "sysprompt30b_669m_3e19_A": _method(
+        "sysprompt30b_669m_3e19_A",
+        "sysprompt30b_669m_3e19_A-v1",
+        sampled_warcs=EXPC_SAMPLED_WARCS,
+        pin_region="us-central1",
+    ),
+    "sysprompt30b_669m_3e19_B": _method(
+        "sysprompt30b_669m_3e19_B",
+        "sysprompt30b_669m_3e19_B-v1",
+        sampled_warcs=EXPC_SAMPLED_WARCS,
+        pin_region="us-central1",
+    ),
+    "sysprompt30b_669m_3e19_C": _method(
+        "sysprompt30b_669m_3e19_C",
+        "sysprompt30b_669m_3e19_C-v1",
+        sampled_warcs=EXPC_SAMPLED_WARCS,
+        pin_region="us-central1",
+    ),
+    "sysprompt30b_669m_3e19_D": _method(
+        "sysprompt30b_669m_3e19_D",
+        "sysprompt30b_669m_3e19_D-v1",
         sampled_warcs=EXPC_SAMPLED_WARCS,
         pin_region="us-central1",
     ),
@@ -1058,6 +1635,21 @@ METHODS: dict[str, CurationMethod] = {
     "lpv11_fastpipe_v1": _method(
         "lpv11_fastpipe_v1",
         "lpv11_fastpipe_v1_decon_10364warcs-a16e729",
+        sampled_warcs=EXPC_SAMPLED_WARCS,
+    ),
+    # lpv11_fastpipe_v2: the TEXTONLY-7d cascade over the same 10,364-WARC pool; the natural arm
+    # that the lpv11_fastpipe_v2_10k mix arm is compared against. Cache exists ONLY in us-east5
+    # (not mirrored) -> no pin; launches MUST pass --allowed-regions us-east5.
+    "lpv11_fastpipe_v2": _method(
+        "lpv11_fastpipe_v2",
+        "lpv11_fastpipe_v2_decon_10364warcs-41e20bf",
+        sampled_warcs=EXPC_SAMPLED_WARCS,
+    ),
+    # Extractor ablation arm B (see _D_OBS_DEFAULTS): lpv11_fastpipe_v2's documents, upstream
+    # resiliparse text. Compare against `lpv11_fastpipe_v2` at identical documents. us-east5 only.
+    "lpv11_fastpipe_v2_upstreamrs": _method(
+        "lpv11_fastpipe_v2_upstreamrs",
+        "lpv11_fastpipe_v2_upstreamrs_decon_10364warcs-41e20bf",
         sampled_warcs=EXPC_SAMPLED_WARCS,
     ),
 }
