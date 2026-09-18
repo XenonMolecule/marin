@@ -24,6 +24,7 @@ RESOURCES = ClusterStageResources(
     max_workers=2,
     worker_cpu=1,
     worker_ram="1g",
+    verify_worker_ram="1g",
     worker_disk="1g",
     task_ram="256m",
     task_disk="256m",

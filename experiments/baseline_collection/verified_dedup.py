@@ -92,6 +92,7 @@ class ClusterStageResources:
     max_workers: int
     worker_cpu: int
     worker_ram: str
+    verify_worker_ram: str
     worker_disk: str
     task_ram: str
     task_disk: str
@@ -107,6 +108,13 @@ def add_cluster_stage_arguments(parser: argparse.ArgumentParser) -> None:
     group.add_argument("--cluster-max-workers", type=int, default=64)
     group.add_argument("--cluster-worker-cpu", type=int, default=32)
     group.add_argument("--cluster-worker-ram", default="128g")
+    group.add_argument(
+        "--cluster-verify-worker-ram",
+        default="192g",
+        help="Worker RAM for the solve stage, which runs --cluster-task-ram tasks and never the big "
+        "cluster-text reduce. Large workers place badly: 128g workers reached 10 of 256 in us-east1 "
+        "where 64g workers reached 144, so size this for a few solve tasks, not for the shuffle.",
+    )
     group.add_argument("--cluster-worker-disk", default="512g")
     group.add_argument("--cluster-task-ram", default="12g", help="One map task: a group of shards or text files.")
     group.add_argument(
@@ -146,6 +154,7 @@ def cluster_stage_resources(args: argparse.Namespace) -> ClusterStageResources:
         max_workers=args.cluster_max_workers,
         worker_cpu=args.cluster_worker_cpu,
         worker_ram=args.cluster_worker_ram,
+        verify_worker_ram=args.cluster_verify_worker_ram,
         worker_disk=args.cluster_worker_disk,
         task_ram=args.cluster_task_ram,
         task_disk=args.cluster_task_disk,
@@ -235,7 +244,9 @@ def verified_dups_steps(*, fuzzy: StepSpec, bucket: str, resources: ClusterStage
         cluster_text_step=cluster_text,
         params=C075_PARAMS,
         max_workers=resources.max_workers,
-        worker_resources=ResourceConfig(cpu=resources.worker_cpu, ram=resources.worker_ram, disk=resources.worker_disk),
+        worker_resources=ResourceConfig(
+            cpu=resources.worker_cpu, ram=resources.verify_worker_ram, disk=resources.worker_disk
+        ),
         map_task_resources=task,
         reduce_task_resources=task,
         override_output_path=f"{root}/verified",
