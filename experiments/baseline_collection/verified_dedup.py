@@ -97,6 +97,7 @@ class ClusterStageResources:
     task_disk: str
     reduce_task_ram: str
     output_shards: int
+    groups_per_shard: int
     shards_per_task: int
 
 
@@ -123,7 +124,19 @@ def add_cluster_stage_arguments(parser: argparse.ArgumentParser) -> None:
         "--cluster-output-shards",
         type=int,
         default=4096,
-        help="Cluster-text reduce tasks. Raise it to shrink partitions instead of raising reduce RAM.",
+        help="Cluster-text reduce tasks. Every scatter chunk stores each reduce shard as its own row group, "
+        "and a reducer parses every chunk's footer, so one reduce task spends about 1.3 KB per "
+        "(chunk x reduce shard) before it reads a row: 4,013 chunks x 4,096 shards is 21 GB and "
+        "OOM-killed every 16g reducer on the 154k tree. Chunks are map tasks times flushes, and a flush "
+        "is a fifth of --cluster-task-ram, so lower this and raise map RAM together. Size "
+        "--cluster-reduce-task-ram for that overhead plus four times one partition's text.",
+    )
+    group.add_argument(
+        "--cluster-groups-per-shard",
+        type=int,
+        default=8,
+        help="Text files each reduce task writes. The solver maps over these files, so raise it when "
+        "--cluster-output-shards drops, to keep the file count and the solver's parallelism.",
     )
     group.add_argument("--cluster-shards-per-task", type=int, default=8)
 
@@ -138,6 +151,7 @@ def cluster_stage_resources(args: argparse.Namespace) -> ClusterStageResources:
         task_disk=args.cluster_task_disk,
         reduce_task_ram=args.cluster_reduce_task_ram,
         output_shards=args.cluster_output_shards,
+        groups_per_shard=args.cluster_groups_per_shard,
         shards_per_task=args.cluster_shards_per_task,
     )
 
@@ -182,6 +196,7 @@ def _cluster_text(fuzzy: StepSpec, large_clusters: StepSpec, resources: ClusterS
             *("--out", output_path),
             *("--max-cluster-size", str(MAX_CLUSTER_SIZE)),
             *("--output-shards", str(resources.output_shards)),
+            *("--groups-per-shard", str(resources.groups_per_shard)),
             *("--shards-per-task", str(resources.shards_per_task)),
             *("--max-workers", str(resources.max_workers)),
             *("--worker-cpu", str(resources.worker_cpu)),

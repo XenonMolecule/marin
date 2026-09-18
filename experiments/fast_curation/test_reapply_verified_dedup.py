@@ -29,6 +29,7 @@ RESOURCES = ClusterStageResources(
     task_disk="256m",
     reduce_task_ram="512m",
     output_shards=2,
+    groups_per_shard=2,
     shards_per_task=1,
 )
 
