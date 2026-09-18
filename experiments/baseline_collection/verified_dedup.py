@@ -28,6 +28,9 @@ import os
 from collections.abc import Callable, Iterator
 from enum import StrEnum
 
+import pyarrow as pa
+import pyarrow.compute as pc
+import pyarrow.parquet as pq
 from fray.types import ResourceConfig
 from marin.datakit.normalize import NormalizedData
 from marin.datakit.source_key import datakit_source_key
@@ -35,8 +38,9 @@ from marin.execution.artifact import read_artifact
 from marin.execution.step_spec import StepSpec
 from marin.processing.classification.deduplication.cluster_dedup import ClusterDedupParams
 from marin.processing.classification.deduplication.cluster_verify import COUNTER_PREFIX, cluster_verify_step
+from marin.processing.classification.deduplication.fuzzy_dups import FuzzyDupsAttrData
 from marin.processing.classification.deduplication.verify_fuzzy_dups import VerifiedFuzzyDupsAttrData
-from rigging.filesystem.storage_path import prefix_join
+from rigging.filesystem.storage_path import StoragePath, prefix_join
 from zephyr import counters
 from zephyr.dataset import Dataset
 from zephyr.execution import ZephyrContext
@@ -70,6 +74,15 @@ C075_PARAMS = ClusterDedupParams(
 MAX_CLUSTER_SIZE = 100_000
 LARGE_CLUSTER_STRIDE = 256
 _APPLY_COUNTER_PREFIX = "dedup/apply_verified"
+_SURVIVAL_FIELDS = (
+    "docs",
+    "chars",
+    "component_members",
+    "cc_canonical_removed_docs",
+    "cc_canonical_removed_chars",
+    "c075_removed_docs",
+    "c075_removed_chars",
+)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -215,18 +228,10 @@ def verified_dups_steps(*, fuzzy: StepSpec, bucket: str, resources: ClusterStage
     return [large_clusters, cluster_text, verified]
 
 
-def apply_verified_dups(
-    normalize: StepSpec,
-    verified: StepSpec,
-    output_path: str,
-    carry_provenance: Callable[[dict], dict],
-) -> dict:
-    """Drop every document the verifier marked and re-emit the rest as jsonl.gz.
+def _marker_shard_pairs(normalize: StepSpec, verified: StepSpec) -> tuple[list[dict], int]:
+    """Pair every normalized shard with its marker shard, or ``None`` where the verifier wrote none.
 
-    Marker files are sparse: a normalized shard with no removals has none, so an absent file
-    cannot be told from a lost one shard by shard. The total can. Every marker row is a removal,
-    so a fresh run must drop exactly the ``markers`` count on the verifier's artifact, and this
-    raises when it does not.
+    Returns the pairs and the removal count recorded on the verifier's artifact.
     """
     norm = read_artifact(normalize.output_path, NormalizedData)
     markers = read_artifact(verified.output_path, VerifiedFuzzyDupsAttrData)
@@ -243,7 +248,7 @@ def apply_verified_dups(
     unknown = marker_basenames - {os.path.basename(path) for path in source_shards}
     if unknown:
         raise RuntimeError(f"marker shards with no normalized shard under {main_dir}: {sorted(unknown)[:5]}")
-    shard_pairs = [
+    pairs = [
         {
             "source_shard": path,
             "marker_shard": (
@@ -252,15 +257,104 @@ def apply_verified_dups(
         }
         for path in source_shards
     ]
-    resumed = bool(fsspec_glob(f"{output_path}/data-*.jsonl.gz"))
     logger.info(
-        "apply: %d source shards under %s, %d marker shards under %s, %d removals expected",
-        len(shard_pairs),
+        "%d source shards under %s, %d marker shards under %s, %d removals recorded",
+        len(pairs),
         main_dir,
         len(marker_basenames),
         attr_dir,
         expected_drops,
     )
+    return pairs, expected_drops
+
+
+def _read_columns(path: str, columns: list[str]) -> pa.Table | None:
+    """Selected columns of one Parquet shard, or ``None`` for a shard written with no rows."""
+    with StoragePath(path).open("rb") as handle:
+        parquet = pq.ParquetFile(handle)
+        if parquet.metadata.num_rows == 0:
+            return None
+        return parquet.read(columns=columns)
+
+
+def _measure_shard(item: dict) -> dict[str, int]:
+    """Documents and characters one normalized shard loses under each rule."""
+    source = _read_columns(item["source_shard"], ["id", "text"])
+    if source is None:
+        return dict.fromkeys(_SURVIVAL_FIELDS, 0)
+    ids = source.column("id")
+    chars = pc.utf8_length(source.column("text"))
+
+    def removed_by(ids_to_remove: pa.Array | pa.ChunkedArray | None, label: str) -> tuple[int, int]:
+        if ids_to_remove is None or len(ids_to_remove) == 0:
+            return 0, 0
+        mask = pc.is_in(ids, value_set=ids_to_remove)
+        docs = int(pc.sum(mask).as_py() or 0)
+        if docs != len(ids_to_remove):
+            raise RuntimeError(f"{item['source_shard']}: {len(ids_to_remove)} {label} ids but {docs} found")
+        return docs, int(pc.sum(chars.filter(mask)).as_py() or 0)
+
+    components = _read_columns(item["component_shard"], ["id", "is_cluster_canonical"])
+    non_canonical = None
+    if components is not None:
+        non_canonical = components.column("id").filter(pc.invert(components.column("is_cluster_canonical")))
+    markers = None if item["marker_shard"] is None else _read_columns(item["marker_shard"], ["id"])
+    cc_docs, cc_chars = removed_by(non_canonical, "non-canonical")
+    c075_docs, c075_chars = removed_by(None if markers is None else markers.column("id"), "marked")
+    return {
+        "docs": source.num_rows,
+        "chars": int(pc.sum(chars).as_py() or 0),
+        "component_members": 0 if components is None else components.num_rows,
+        "cc_canonical_removed_docs": cc_docs,
+        "cc_canonical_removed_chars": cc_chars,
+        "c075_removed_docs": c075_docs,
+        "c075_removed_chars": c075_chars,
+    }
+
+
+def measure_survival(normalize: StepSpec, fuzzy: StepSpec, verified: StepSpec) -> dict[str, int]:
+    """Count what each rule removes from the same normalized documents, without writing a corpus.
+
+    Both rules read one set of fuzzy components, so the difference between them is the rule alone.
+    Characters are counted because near-duplicates skew long: document survival and size survival
+    differ by several points. Raises unless the ``c075`` removals found equal the verifier's count.
+    """
+    pairs, expected_drops = _marker_shard_pairs(normalize, verified)
+    components = read_artifact(fuzzy.output_path, FuzzyDupsAttrData)
+    if len(components.sources) != 1:
+        raise RuntimeError(f"expected 1 source in FuzzyDupsAttrData, got {len(components.sources)}")
+    component_dir = next(iter(components.sources.values())).attr_dir.rstrip("/")
+    for pair in pairs:
+        pair["component_shard"] = f"{component_dir}/{os.path.basename(pair['source_shard'])}"
+
+    ctx = ZephyrContext(
+        name="measure-dedup-survival",
+        max_workers=200,
+        resources=ResourceConfig(cpu=2, ram="16g", disk="10g"),
+        coordinator_resources=ResourceConfig(cpu=1, ram="8g", preemptible=False),
+    )
+    outcome = ctx.execute(Dataset.from_list(pairs).map(_measure_shard))
+    totals = {field: sum(result[field] for result in outcome.results) for field in _SURVIVAL_FIELDS}
+    if totals["c075_removed_docs"] != expected_drops:
+        raise RuntimeError(f"verifier wrote {expected_drops} markers but {totals['c075_removed_docs']} were found")
+    return totals
+
+
+def apply_verified_dups(
+    normalize: StepSpec,
+    verified: StepSpec,
+    output_path: str,
+    carry_provenance: Callable[[dict], dict],
+) -> dict:
+    """Drop every document the verifier marked and re-emit the rest as jsonl.gz.
+
+    Marker files are sparse: a normalized shard with no removals has none, so an absent file
+    cannot be told from a lost one shard by shard. The total can. Every marker row is a removal,
+    so a fresh run must drop exactly the ``markers`` count on the verifier's artifact, and this
+    raises when it does not.
+    """
+    shard_pairs, expected_drops = _marker_shard_pairs(normalize, verified)
+    resumed = bool(fsspec_glob(f"{output_path}/data-*.jsonl.gz"))
 
     def _process_one(item: dict) -> Iterator[dict]:
         removed_ids: set[str] = set()

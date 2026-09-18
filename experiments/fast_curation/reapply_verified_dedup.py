@@ -10,7 +10,8 @@ two steps the rule needs, pins them, and refuses to run if either is not already
 
     {tree}/normalize  {tree}/fuzzy                                   (pinned, never rebuilt)
       -> {tree}/dedup_c075/{large_clusters,cluster_text,verified}
-        -> {tree}/deduped_c075/    {tree}/stats_c075/dedup_stats.json
+        -> {tree}/stats_c075/survival.json      (--output counts and tree)
+        -> {tree}/deduped_c075/                 (--output tree only)
 
 ``{tree}/deduped/`` (the ``cc_canonical`` output) is never read or written. Because ``fuzzy`` is
 reused, both rules judge the same candidate components, and the survival difference between
@@ -24,19 +25,23 @@ one cluster-text partition near 1 GB instead of raising reduce RAM::
         --job-name reapply-c075-v2-10k -e WANDB_API_KEY "$WANDB_API_KEY" -e HF_TOKEN "$HF_TOKEN" \\
         -- python -m experiments.fast_curation.reapply_verified_dedup \\
             --tree gs://marin-us-east5/documents/baseline_lpv11_fastpipe_v2_deduped/10364warcs \\
-            --cluster-output-shards 512 ...
+            --output tree --cluster-output-shards 512 ...
+
+``survival.json`` counts documents and characters removed under ``cc_canonical`` and under ``c075``
+from one pass over the normalized shards. A scaling curve needs only that, so ``--output counts``
+skips writing a second copy of a multi-terabyte corpus.
 """
 
 import argparse
 import json
 import logging
 import sys
+from enum import StrEnum
 
 import fsspec
-from marin.execution.artifact import read_artifact, read_record
+from marin.execution.artifact import read_artifact
 from marin.execution.step_runner import StepRunner, step_is_built
 from marin.execution.step_spec import StepSpec
-from marin.processing.classification.deduplication.fuzzy_dups import FuzzyDupsAttrData
 from marin.processing.classification.deduplication.verify_fuzzy_dups import VerifiedFuzzyDupsAttrData
 from rigging.log_setup import configure_logging
 
@@ -48,13 +53,21 @@ from experiments.baseline_collection.verified_dedup import (
     add_cluster_stage_arguments,
     apply_verified_dups,
     cluster_stage_resources,
+    measure_survival,
     verified_dups_steps,
 )
 from experiments.fast_curation.dedup import _carry_provenance
 
 logger = logging.getLogger(__name__)
 
-_FUZZY_DOCUMENT_COUNTERS = "dedup/fuzzy/document"
+SURVIVAL_FILENAME = "survival.json"
+
+
+class ReapplyOutput(StrEnum):
+    """What a re-apply leaves behind besides the verified markers."""
+
+    COUNTS = "counts"
+    TREE = "tree"
 
 
 def _pinned_step(name: str, output_path: str) -> StepSpec:
@@ -69,14 +82,9 @@ def _pinned_step(name: str, output_path: str) -> StepSpec:
     return step
 
 
-def _write_stats(tree: str, fuzzy: StepSpec, verified: StepSpec, deduped: StepSpec, output_path: str) -> dict:
-    components = read_artifact(fuzzy.output_path, FuzzyDupsAttrData).counters
+def _write_survival(tree: str, normalize: StepSpec, fuzzy: StepSpec, verified: StepSpec, output_path: str) -> dict:
+    totals = measure_survival(normalize, fuzzy, verified)
     markers = read_artifact(verified.output_path, VerifiedFuzzyDupsAttrData)
-    applied = read_record(deduped.output_path)
-    if applied is None or applied.result is None:
-        raise FileNotFoundError(f"no apply result recorded at {deduped.output_path}")
-    members = int(components[f"{_FUZZY_DOCUMENT_COUNTERS}/cluster_members"])
-    canonicals = int(components[f"{_FUZZY_DOCUMENT_COUNTERS}/canonicals"])
     payload = {
         "tree": tree,
         "dedup_rule": {
@@ -84,50 +92,60 @@ def _write_stats(tree: str, fuzzy: StepSpec, verified: StepSpec, deduped: StepSp
             "max_cluster_size": MAX_CLUSTER_SIZE,
             **C075_PARAMS.model_dump(mode="json"),
         },
-        "deduped_path": deduped.output_path,
         "verified_path": verified.output_path,
-        "component_members": members,
-        "removed_by_cc_canonical": members - canonicals,
-        "removed_by_c075": applied.result["dropped"],
-        "kept_by_c075": applied.result["kept"],
-        "apply_resumed": applied.result["resumed"],
+        # Counts are over the normalized documents, which exact dedup has already thinned.
+        **totals,
+        "cc_canonical_doc_survival": 1 - totals["cc_canonical_removed_docs"] / totals["docs"],
+        "cc_canonical_char_survival": 1 - totals["cc_canonical_removed_chars"] / totals["chars"],
+        "c075_doc_survival": 1 - totals["c075_removed_docs"] / totals["docs"],
+        "c075_char_survival": 1 - totals["c075_removed_chars"] / totals["chars"],
         "verifier_counters": dict(sorted(markers.counters.items())),
     }
-    stats_path = f"{output_path}/dedup_stats.json"
-    with fsspec.open(stats_path, "w") as handle:
+    survival_path = f"{output_path}/{SURVIVAL_FILENAME}"
+    with fsspec.open(survival_path, "w") as handle:
         json.dump(payload, handle, indent=2)
-    logger.info("Stats -> %s\n%s", stats_path, json.dumps(payload, indent=2))
-    return {"success": True, "path": stats_path}
+    logger.info("Survival -> %s\n%s", survival_path, json.dumps(payload, indent=2))
+    return {"success": True, "path": survival_path}
 
 
-def build_steps(tree: str, resources: ClusterStageResources) -> list[StepSpec]:
+def build_steps(tree: str, output: ReapplyOutput, resources: ClusterStageResources) -> list[StepSpec]:
     tree = tree.rstrip("/")
     normalize = _pinned_step("normalize", f"{tree}/normalize")
     fuzzy = _pinned_step("fuzzy", f"{tree}/fuzzy")
     verification = verified_dups_steps(fuzzy=fuzzy, bucket=tree, resources=resources)
     verified = verification[-1]
+    survival = StepSpec(
+        name="survival",
+        override_output_path=f"{tree}/stats_{DedupRule.C075}",
+        deps=[normalize, fuzzy, verified],
+        fn=lambda op: _write_survival(tree, normalize, fuzzy, verified, op),
+    )
+    if output == ReapplyOutput.COUNTS:
+        return [*verification, survival]
     deduped = StepSpec(
         name="deduped",
         override_output_path=f"{tree}/deduped_{DedupRule.C075}",
         deps=[normalize, verified],
         fn=lambda op: apply_verified_dups(normalize, verified, op, _carry_provenance),
     )
-    stats = StepSpec(
-        name="stats",
-        override_output_path=f"{tree}/stats_{DedupRule.C075}",
-        deps=[fuzzy, verified, deduped],
-        fn=lambda op: _write_stats(tree, fuzzy, verified, deduped, op),
-    )
-    return [*verification, deduped, stats]
+    return [*verification, survival, deduped]
 
 
 def main() -> int:
     configure_logging()
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--tree", required=True, help="Dedup tree root holding built normalize/ and fuzzy/ steps.")
+    parser.add_argument(
+        "--output",
+        required=True,
+        type=ReapplyOutput,
+        choices=list(ReapplyOutput),
+        help="counts: verified markers plus stats_c075/survival.json, which holds documents and characters "
+        "removed under both rules. tree: also write deduped_c075/, a second full copy of the survivors.",
+    )
     add_cluster_stage_arguments(parser)
     args = parser.parse_args()
-    StepRunner().run(build_steps(args.tree, cluster_stage_resources(args)))
+    StepRunner().run(build_steps(args.tree, args.output, cluster_stage_resources(args)))
     return 0
 
 
