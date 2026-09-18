@@ -2,7 +2,7 @@
 
 Status: Step 1 (code port) DONE 2026-09-18, commits f47919338b, 3bda144cb7, 6b3edbee30. Local three-stage smoke passed (synthetic chained component of two unrelated
 families: old rule keeps 1 of 4, hero rule keeps 2, markers land beside the
-right normalized shards). Steps 2 and 4 done (params pinned in `verified_dedup.C075_PARAMS`, drivers wired). Step 5 open; nothing launched on Iris.
+right normalized shards). Steps 2 and 4 done (params pinned in `verified_dedup.C075_PARAMS`, drivers wired). Step 5 done for 10k / 154k / 500k; see Results.
 
 ## Goal
 
@@ -230,6 +230,36 @@ plus ~3 TB of cluster-text scratch and comparable shuffle scratch at $2-4 per da
 until deleted. `--output tree` would add ~5-6 TB of `deduped_c075/`, about
 $110 per month. Use `--output counts` for the curve and delete
 `dedup_c075/cluster_text/` once `survival.json` lands.
+
+## Results (2026-09-18)
+
+Survival after exact dedup, from `stats_c075/survival.json` (10k, 154k: exact and
+validated against the old deduped trees to the character) and
+`stats_c075/survival_partial.json` (500k: 300 of 27,932 finished marker shards;
+its old-rule document survival reproduces the exact value to 1e-5 and its scaled
+old-rule characters land within 0.09% of the known total).
+
+| WARCs | cc_canonical docs / chars kept | c075 docs / chars kept | cc_canonical tokens | c075 tokens |
+|---|---|---|---|---|
+| 10,364 | 88.8% / 77.9% | 91.8% / 88.0% | 0.09T | 0.10T |
+| 154,117 | 73.5% / 57.2% | 80.0% / 78.2% | 0.69T | 0.95T |
+| 500,000 | 60.6% / 44.0% | 69.6% / 70.3% | 1.49T | 2.37T |
+
+Components with at least 100k members (sampled): none at 10k; 31 holding 28.5M
+documents at 154k (largest 8.4M); 154 holding 142.9M at 500k (largest 35.9M).
+
+Unique characters grow as a power of the WARC count. Between neighbouring points
+the exponent is 0.762 then 0.647 under cc_canonical and 0.833 then 0.779 under
+c075: most of the old curve's bend was the chaining artifact. Projected c075
+corpus at 8M WARCs: 23.5T tokens from the all-point fit, 20.6T from the last two
+points, about 17.6T if the exponent keeps falling at the observed 0.064 per
+decade. At 2M: 7.0T to 7.5T. The same three methods give cc_canonical 11.8T,
+8.9T and 6.5T at 8M.
+
+The 500k exact run stalled at verify reduce 1,905 of 2,048 when us-east1 ran out
+of both preemptible v6e hosts and on-demand CPU VMs (capped at 6 per zone). Its
+shuffle scratch has a one-day TTL, so it cannot finish after about 13:05Z on
+2026-09-19. A 2M point needs a full dedup of 14.8B documents and was not run.
 
 ## Step 5: validate, smallest first
 
