@@ -24,19 +24,26 @@ Stages::
 
     reshape (kept_text/*.parquet -> {text, <provenance>} 200-shard tree)
       -> normalize (parquet + exact-doc dedup; provenance passthrough)
-        -> minhash -> fuzzy CC -> apply (drop non-canonical near-dups, re-emit {text, <provenance>})
+        -> minhash -> fuzzy CC -> apply (re-emit {text, <provenance>})
           -> deduped/data-*.jsonl.gz   <- decon (preserves columns) then the percentile split read here
+
+``--dedup-rule`` picks what ``apply`` removes (see ``baseline_collection/verified_dedup.py``).
+``cc_canonical`` drops every non-canonical member of a MinHash component; every tree the paper
+reports was built with it. ``c075`` adds ``large_clusters -> cluster_text -> verified`` after
+``fuzzy CC`` and drops only documents that a longer survivor in the component contains.
 
 Output::
 
-    {bucket}/documents/baseline_{spec_id}_deduped/{n}warcs/deduped/data-*.jsonl.gz
+    {bucket}/documents/baseline_{spec_id}_deduped/{n}warcs/deduped/data-*.jsonl.gz        cc_canonical
+    {bucket}/documents/baseline_{spec_id}_deduped/{n}warcs/deduped_c075/data-*.jsonl.gz   c075
 
 Run inside an Iris CPU job in the region holding the consolidated kept_text tree::
 
     uv run iris --cluster marin job run --no-wait --cpu 4 --memory 16GB --disk 20GB \\
         --priority interactive --extra cpu --enable-extra-resources --region us-east5 \\
         --job-name fastcur-dedup-$(date +%s) -e WANDB_API_KEY <key> -e HF_TOKEN <token> \\
-        -- python -m experiments.fast_curation.dedup --spec fastpipe_v3 --region us-east5
+        -- python -m experiments.fast_curation.dedup --spec fastpipe_v3 --region us-east5 \\
+            --dedup-rule cc_canonical
 """
 
 from __future__ import annotations
@@ -66,6 +73,15 @@ from zephyr.dataset import Dataset
 from zephyr.execution import ZephyrContext
 from zephyr.readers import load_parquet
 
+from experiments.baseline_collection.verified_dedup import (
+    C075_PARAMS,
+    ClusterStageResources,
+    DedupRule,
+    add_cluster_stage_arguments,
+    apply_verified_dups,
+    cluster_stage_resources,
+    verified_dups_steps,
+)
 from experiments.fast_curation.spec import get_spec
 from experiments.fsspec_paths import fsspec_glob
 
@@ -245,6 +261,8 @@ def build_steps(
     spec_id: str,
     region: str,
     target_partition_bytes: int,
+    dedup_rule: DedupRule,
+    cluster_resources: ClusterStageResources,
     warc_hashes: set[str] | None = None,
     reshape_shards: int = NUM_RESHAPE_SHARDS,
     normalize_ram: str = "96g",
@@ -308,16 +326,33 @@ def build_steps(
         cc_resume=True,
         override_output_path=f"{bucket}/fuzzy",
     )
-    deduped = StepSpec(
-        name="deduped",
-        override_output_path=f"{bucket}/deduped",
-        deps=[normalize, fuzzy],
-        fn=lambda op: _apply_fuzzy_dups(normalize, fuzzy, op),
-    )
+    # Both rules share every step above, so they judge the same candidate components. They write
+    # separate trees: `deduped/` holds what the paper reports and must never change under it.
+    if dedup_rule == DedupRule.CC_CANONICAL:
+        verification: list[StepSpec] = []
+        deduped = StepSpec(
+            name="deduped",
+            override_output_path=f"{bucket}/deduped",
+            deps=[normalize, fuzzy],
+            fn=lambda op: _apply_fuzzy_dups(normalize, fuzzy, op),
+        )
+        stats_dir = f"{bucket}/stats"
+        rule_params: dict = {"rule": dedup_rule}
+    else:
+        verification = verified_dups_steps(fuzzy=fuzzy, bucket=bucket, resources=cluster_resources)
+        verified = verification[-1]
+        deduped = StepSpec(
+            name="deduped",
+            override_output_path=f"{bucket}/deduped_{dedup_rule}",
+            deps=[normalize, verified],
+            fn=lambda op: apply_verified_dups(normalize, verified, op, _carry_provenance),
+        )
+        stats_dir = f"{bucket}/stats_{dedup_rule}"
+        rule_params = {"rule": dedup_rule, "verified_path": verified.output_path, **C075_PARAMS.model_dump(mode="json")}
     stats = StepSpec(
         name="stats",
-        override_output_path=f"{bucket}/stats",
-        deps=[reshape, normalize, minhash, fuzzy, deduped],
+        override_output_path=stats_dir,
+        deps=[reshape, normalize, minhash, fuzzy, *verification, deduped],
         fn=lambda op: _write_stats(
             f"{op}/dedup_stats.json",
             {
@@ -337,11 +372,12 @@ def build_steps(
                     "seed": 42,
                     "approx_jaccard_threshold": 0.75,
                 },
+                "dedup_rule": rule_params,
                 "target_partition_bytes": target_partition_bytes,
             },
         ),
     )
-    return [reshape, normalize, minhash, fuzzy, deduped, stats]
+    return [reshape, normalize, minhash, fuzzy, *verification, deduped, stats]
 
 
 def main() -> int:
@@ -350,6 +386,16 @@ def main() -> int:
     parser.add_argument("--spec", default="fastpipe_v3")
     parser.add_argument("--region", default="us-east5", choices=sorted(_REGION_TO_BUCKET))
     parser.add_argument("--target-partition-bytes", type=int, default=64 * 1024 * 1024)
+    parser.add_argument(
+        "--dedup-rule",
+        required=True,
+        type=DedupRule,
+        choices=list(DedupRule),
+        help="cc_canonical: drop every non-canonical member of a MinHash component, into deduped/ "
+        "(the paper's rule). c075: drop only documents a longer survivor in the component contains "
+        "at >= 0.75 word 3-gram containment, into deduped_c075/ (the Harrier hero rule).",
+    )
+    add_cluster_stage_arguments(parser)
     parser.add_argument(
         "--reshape-shards",
         type=int,
@@ -379,7 +425,14 @@ def main() -> int:
         logger.info("Subsetting kept_text to %d WARCs from %s", len(warc_hashes), args.warc_manifest)
     StepRunner().run(
         build_steps(
-            args.spec, args.region, args.target_partition_bytes, warc_hashes, args.reshape_shards, args.normalize_ram
+            args.spec,
+            args.region,
+            args.target_partition_bytes,
+            args.dedup_rule,
+            cluster_stage_resources(args),
+            warc_hashes,
+            args.reshape_shards,
+            args.normalize_ram,
         )
     )
     return 0

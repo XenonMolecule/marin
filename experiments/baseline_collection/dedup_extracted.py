@@ -31,6 +31,11 @@ Pipeline (StepRunner)::
                 drop rows where ``is_cluster_canonical=False``; keep canonicals
                 and singletons. Write deduped jsonl.gz carrying text + all
                 provenance columns, ready to tokenize (decon preserves columns).
+                This is ``--dedup-rule cc_canonical``, the rule behind every
+                tree the paper reports. ``--dedup-rule c075`` instead runs
+                ``large_clusters -> cluster_text -> verified`` after ``fuzzy``
+                and drops only documents a longer survivor in the component
+                contains, into ``deduped_c075/``. See ``verified_dedup.py``.
     stats     — JSON summary with all step output paths and counters.
 
 Output paths::
@@ -54,7 +59,7 @@ Usage::
         --job-name dedup-{spec}-{n}warcs \\
         -e WANDB_API_KEY <key> -e HF_TOKEN <token> \\
         -- python experiments/baseline_collection/dedup_extracted.py \\
-           --spec {spec} --n {N}
+           --spec {spec} --n {N} --dedup-rule cc_canonical
 """
 
 from __future__ import annotations
@@ -82,6 +87,16 @@ from rigging.log_setup import configure_logging
 from zephyr.dataset import Dataset
 from zephyr.execution import ZephyrContext
 from zephyr.readers import load_jsonl, load_parquet
+
+from experiments.baseline_collection.verified_dedup import (
+    C075_PARAMS,
+    ClusterStageResources,
+    DedupRule,
+    add_cluster_stage_arguments,
+    apply_verified_dups,
+    cluster_stage_resources,
+    verified_dups_steps,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -404,6 +419,9 @@ def build_steps(
     region: str = "us-central1",
     fuzzy_ram_gb: int = 64,
     fuzzy_preemptible: bool = True,
+    *,
+    dedup_rule: DedupRule,
+    cluster_resources: ClusterStageResources,
 ) -> list[StepSpec]:
     hashes_ordered = _load_manifest_hashes(manifest_path, n)
     logger.info("Building Marin FUZZY dedup pipeline for spec=%s n=%d region=%s", spec, n, region)
@@ -492,17 +510,36 @@ def build_steps(
         override_output_path=f"{bucket}/fuzzy",
     )
 
-    deduped = StepSpec(
-        name="deduped",
-        override_output_path=f"{bucket}/deduped",
-        deps=[normalize, fuzzy],
-        fn=lambda op: _apply_fuzzy_dups(normalize, fuzzy, op),
-    )
+    # Both rules share every step above, so they judge the same candidate components. They write
+    # separate trees: `deduped/` holds what the paper reports and must never change under it.
+    if dedup_rule == DedupRule.CC_CANONICAL:
+        verification: list[StepSpec] = []
+        deduped = StepSpec(
+            name="deduped",
+            override_output_path=f"{bucket}/deduped",
+            deps=[normalize, fuzzy],
+            fn=lambda op: _apply_fuzzy_dups(normalize, fuzzy, op),
+        )
+        stats_dir = f"{bucket}/stats"
+        rule_params: dict = {"rule": dedup_rule}
+    else:
+        verification = verified_dups_steps(fuzzy=fuzzy, bucket=bucket, resources=cluster_resources)
+        verified = verification[-1]
+        deduped = StepSpec(
+            name="deduped",
+            override_output_path=f"{bucket}/deduped_{dedup_rule}",
+            deps=[normalize, verified],
+            fn=lambda op: apply_verified_dups(
+                normalize, verified, op, lambda record: _carry_provenance(record, record["text"])
+            ),
+        )
+        stats_dir = f"{bucket}/stats_{dedup_rule}"
+        rule_params = {"rule": dedup_rule, "verified_path": verified.output_path, **C075_PARAMS.model_dump(mode="json")}
 
     stats = StepSpec(
         name="stats",
-        override_output_path=f"{bucket}/stats",
-        deps=[normalize, minhash, fuzzy, deduped],
+        override_output_path=stats_dir,
+        deps=[normalize, minhash, fuzzy, *verification, deduped],
         fn=lambda op: _write_stats(
             f"{op}/dedup_stats.json",
             {
@@ -522,11 +559,12 @@ def build_steps(
                     "text_cap_chars": None,
                     "approx_jaccard_threshold": 0.75,
                 },
+                "dedup_rule": rule_params,
             },
         ),
     )
 
-    return [reshape, normalize, minhash, fuzzy, deduped, stats]
+    return [reshape, normalize, minhash, fuzzy, *verification, deduped, stats]
 
 
 def main() -> None:
@@ -578,6 +616,18 @@ def main() -> None:
             "the fuzzy/ output first so it restarts from a clean it_0."
         ),
     )
+    parser.add_argument(
+        "--dedup-rule",
+        required=True,
+        type=DedupRule,
+        choices=list(DedupRule),
+        help=(
+            "cc_canonical: drop every non-canonical member of a MinHash component, into deduped/ "
+            "(the paper's rule). c075: drop only documents a longer survivor in the component "
+            "contains at >= 0.75 word 3-gram containment, into deduped_c075/ (the Harrier hero rule)."
+        ),
+    )
+    add_cluster_stage_arguments(parser)
     args = parser.parse_args()
 
     # CONSOLIDATED_ROOT is used by _archive_prefix / _resolved_manifest_path /
@@ -595,6 +645,8 @@ def main() -> None:
         args.region,
         args.fuzzy_ram_gb,
         args.fuzzy_preemptible,
+        dedup_rule=args.dedup_rule,
+        cluster_resources=cluster_stage_resources(args),
     )
     StepRunner().run(steps)
     logger.info("Done. Deduped tree at %s/deduped_*/", steps[-1].output_path.rsplit("/", 1)[0])

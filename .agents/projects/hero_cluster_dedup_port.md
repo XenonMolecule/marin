@@ -2,7 +2,7 @@
 
 Status: Step 1 (code port) DONE 2026-09-18, commits f47919338b, 3bda144cb7, 6b3edbee30. Local three-stage smoke passed (synthetic chained component of two unrelated
 families: old rule keeps 1 of 4, hero rule keeps 2, markers land beside the
-right normalized shards). Steps 2-5 open; nothing launched on Iris.
+right normalized shards). Steps 2 and 4 done (params pinned in `verified_dedup.C075_PARAMS`, drivers wired). Step 5 open; nothing launched on Iris.
 
 ## Goal
 
@@ -153,32 +153,42 @@ reduce tasks 26g, 512g disk. Our Iris CPU pool tops out at 8 core / 16 GB, so a
 - Coordinators `--no-preemptible`; `max_task_failures` > 0; region-pin to the
   bucket holding the normalized tree; `--submit-parallelism 1`.
 
-## Step 4: wire the drivers
+## Step 4: wire the drivers (DONE 2026-09-18)
 
-Current DAG: `reshape -> normalize -> minhash -> fuzzy CC -> apply`.
-New DAG:
+Both drivers take a required `--dedup-rule {cc_canonical,c075}`. Shared code is
+`experiments/baseline_collection/verified_dedup.py`.
 
 ```
-... -> fuzzy CC -> large_clusters -> cluster_text -> cluster_verify -> apply_verified
+cc_canonical   ... -> fuzzy -> deduped/                      unchanged; every tree the paper reports
+c075           ... -> fuzzy -> dedup_c075/large_clusters
+                            -> dedup_c075/cluster_text
+                            -> dedup_c075/verified
+                            -> deduped_c075/   stats_c075/
 ```
 
-- Wrap the three scripts' entry functions as `StepSpec`s (`cluster_verify_step`
-  already exists). Put the full `ClusterDedupParams` and `max_cluster_size` in
-  `hash_attrs` so a threshold change moves the output path.
-- New `_apply_verified_dups`: join normalized shards to the sparse marker tree by
-  basename and drop rows where `dup_doc` is true. Markers are sparse: a missing
-  marker row or file means keep. A missing file for a shard that the manifest
-  says has markers must raise, not read as "no dups"
-  (`feedback_never_encode_failure_as_zero`). Keep `_carry_provenance` intact.
-- Write to a new tree (`.../deduped_c075/`); never overwrite `deduped/`. The old
-  dedup trees stay until results are verified (`project_dedup_verify_fix_todo`).
-- Replace the old apply rather than flag-switching it, once Step 5 passes.
-  `dedup_extracted.py` gets the same change; factor the shared steps into one
-  module both drivers import instead of copying.
+Paper replicability: tag `paper-dedup-cc-canonical` (38da2431d2) is the driver
+code before wiring. After wiring, `--dedup-rule cc_canonical` runs the same
+`_apply_fuzzy_dups` into the same `deduped/` path; the only diff against the tag
+inside that branch is indentation. The rule is a required flag so no launch
+picks one silently. A frozen copy of the drivers was considered and rejected: it
+would still import the live `lib/marin` dedup code, so only the tag freezes it.
 
-Cost note: minhash and CC outputs are reused as-is. Only cluster_text (one
-shuffle of candidate text) and cluster_verify (map) are new work, so existing
-10k / 154k / 500k candidate trees do not need recomputing.
+Both rules share every step through `fuzzy`, so existing reshape / normalize /
+minhash / fuzzy outputs are reused and the two rules judge identical candidates.
+
+`apply_verified_dups` integrity: marker files are sparse (a shard with no
+removals has none), so a lost file is invisible per shard. The run instead
+requires total drops == the `markers` counter on the verifier artifact, and each
+shard requires every marked id to be found. A resumed apply (`skip_existing`)
+cannot check the total and logs that it did not.
+
+`--cluster-*` flags size the c075 stages; defaults are the hero run's. These
+drivers already run 96-192g Zephyr workers, so the 8c/16g ceiling in Step 3
+applies to the Iris job that hosts the coordinator, not to the worker pool.
+
+Not wired: `dedup_resiliparse_warc_scaling.py` and
+`baseline_collection/dedup/*.py`, which copy the old apply step. Wire them the
+same way before comparing those arms against a c075 arm.
 
 ## Step 5: validate, smallest first
 
