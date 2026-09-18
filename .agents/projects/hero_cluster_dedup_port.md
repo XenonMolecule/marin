@@ -190,6 +190,47 @@ Not wired: `dedup_resiliparse_warc_scaling.py` and
 `baseline_collection/dedup/*.py`, which copy the old apply step. Wire them the
 same way before comparing those arms against a c075 arm.
 
+## Step 4b: re-apply entry point (DONE 2026-09-18)
+
+`experiments/fast_curation/reapply_verified_dedup.py --tree <root> --output {counts,tree}`
+pins a tree's finished `normalize/` and `fuzzy/` and runs only the c075 stages.
+It exists because `dedup.py` rebuilds from `kept_text`, and the 154k / 500k fused
+trees had `reshape/`, `minhash/`, `fuzzy/metadata/` and `kept_text/` pruned on
+2026-09-14. All three validation runs go through it so they share one path.
+
+`--output counts` writes markers plus `stats_c075/survival.json`: documents and
+characters removed under cc_canonical and under c075, from one pass over the
+normalized shards and the same fuzzy components. `--output tree` also writes
+`deduped_c075/`.
+
+Inputs verified on GCS 2026-09-18 (status SUCCESS, artifacts present, attr shards
+1:1 with normalize shards):
+
+| tree | region | normalize shards | docs after exact dedup | component members | cc_canonical removes |
+|---|---|---|---|---|---|
+| `baseline_lpv11_fastpipe_v2_deduped/10364warcs` | us-east5 | 3,042 | 89.6M | 13.76M | 10.04M (11.2%) |
+| `baseline_lpv11_fastpipe_v2_1_fused_deduped/154117warcs` | us-east1 | 9,171 | 973.7M | 356.5M | 258.5M (26.5%) |
+| `baseline_lpv11_fastpipe_v2_1_fused_deduped/500000warcs` | us-east1 | 29,084 | 2.69B | 1.42B | 1.06B (39.4%) |
+
+Sizing rule: sort spill is tmpfs, so keep a cluster-text partition well under the
+reduce task's in-memory budget by raising `--cluster-output-shards`. Workers must
+be bin-packable (the CPU VM group is 8 core / 16 GB); hero's 32-core workers never
+schedule. The Iris parent only orchestrates: `--cpu 2 --memory 8GB`. A 4-core
+non-preemptible parent sat pending 20 min in us-east5 on 2026-09-18.
+
+| tree | workers | task / reduce RAM | output shards | shards per task |
+|---|---|---|---|---|
+| v2 10k | 64 x (4 cpu, 32g) | 6g / 8g | 512 | 8 |
+| 154k (planned) | 256 x (8 cpu, 64g) | 6g / 16g | 4096 | 16 |
+| 500k (planned) | 512 x (8 cpu, 64g) | 6g / 16g | 16384 | 32 |
+
+Cost of the two east1 runs (needs user confirmation, over the $10 rule): about
+$12-15 of GCS operations (the shuffle reads maps x reduces chunks: ~15M at 500k),
+plus ~3 TB of cluster-text scratch and comparable shuffle scratch at $2-4 per day
+until deleted. `--output tree` would add ~5-6 TB of `deduped_c075/`, about
+$110 per month. Use `--output counts` for the curve and delete
+`dedup_c075/cluster_text/` once `survival.json` lands.
+
 ## Step 5: validate, smallest first
 
 1. 10k fused tree. Expect survival above the old ~90%. Emit: old CC removals,
