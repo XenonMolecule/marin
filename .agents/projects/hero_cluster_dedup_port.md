@@ -1,6 +1,6 @@
 # Port the hero-run fuzzy cluster dedup into this fork
 
-Status: PLANNED 2026-09-18. Nothing ported or launched yet.
+Status: Step 1 (code port) DONE 2026-09-18, commits f47919338b, 3bda144cb7, 6b3edbee30. Steps 2-5 open; nothing launched.
 
 ## Goal
 
@@ -72,15 +72,24 @@ change (`verification` / `local_representatives` become optional, new
 which this fork does not have, and the cluster path never touches the memory
 store.
 
-Cherry-pick (all apply to HEAD with 0 conflicts in `git merge-tree` dry run).
-The hero reduce waves needed these at scale; the clean stack lacks them:
+Zephyr commits from the hero branch: only `edfb6de79b` (cache one pyarrow
+filesystem per process) was taken. It is backend-agnostic: a fresh connection
+pool per written file exhausts ephemeral ports on GCS as well as S3.
 
-- `9714d891db` retry shuffle sidecar read
-- `fecb414201` retry scatter scan against Polars' object store
-- `b841b8d7ae` cut scatter read pool (reduce wave refused connections)
-- `60962a2622` retry the shared-data read
-- `edfb6de79b` reuse the pyarrow filesystem
-- `642fcc8aad` retry budget for cluster verification (check it applies)
+Dropped after inspection:
+
+- `9714d891db`, `fecb414201`, `60962a2622` (retries): they classify errors with
+  `rigging.filesystem.s3_errors`, which arrives with the #8305 rigging refactor
+  this fork lacks, and they target CoreWeave S3 failures. We run on GCS. The
+  hero branch's own later commit says they treated the symptom.
+- `b841b8d7ae` (sidecar read pool 32 -> 8): sized for 2,048-reducer waves
+  offering ~65k connections to one endpoint. It would slow sidecar reads for
+  every Zephyr job here. If cluster_text reduce waves show connection-level
+  errors, lower `_SIDECAR_READ_CONCURRENCY` in `zephyr/shuffle.py` first.
+- `642fcc8aad` (verify retry budget): already inside the tip `cluster_verify.py`.
+
+Also ported: `experiments/datakit/scripts/fuzzy_cluster_sizes.py`, which
+`fuzzy_large_clusters.py` imports (`candidate_shard_paths`).
 
 Do not port: `datakit_store.py`, `produce_store.py`, `hero_data*`,
 `repack_fuzzy_dups.py` (Focus Crawl layout repair), the source exemption list
@@ -88,11 +97,11 @@ Do not port: `datakit_store.py`, `produce_store.py`, `hero_data*`,
 changes, and the analysis scripts. Revisit `fuzzy_marker_compare.py` and
 `fuzzy_verification_cluster_sample.py` in Step 4 if hand sampling gets tedious.
 
-One required deviation: hero `build_shards` takes `--verified`, an old pipeline
-verifier artifact, only to pin multi-source order so `file_idx` matches
-production numbering. We have one source and no such artifact. Replace it with
-the stack's `build_shards` (sources ordered from the candidate artifact). This
-changes `file_idx` numbering only, never a removal decision.
+One deviation (done, 6b3edbee30): hero `build_shards` took `--verified`, a
+pipeline-verifier artifact, only to pin source order and tags. Tags are now
+rebuilt by the rule that artifact used (`source_{rank:03d}` over sorted source
+keys, as `build_copartitioned_shards` assigns), so numbering matches and no
+removal decision changes.
 
 Gate: `uv run pyrefly check`, the two ported test files, `./infra/pre-commit.py --all-files --fix`.
 
