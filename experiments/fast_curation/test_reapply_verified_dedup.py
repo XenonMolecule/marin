@@ -102,7 +102,11 @@ def _built_tree(root: Path) -> Path:
         FuzzyDupsAttrData(
             params=MinHashParams(num_perms=286, num_bands=26, ngram_size=5, seed=42),
             sources={str(main.relative_to(root)): FuzzyDupsPerSource(attr_dir=str(attrs))},
-            counters={"dedup/fuzzy/document/cluster_members": 6, "dedup/fuzzy/document/canonicals": 2},
+            counters={
+                "dedup/fuzzy/document/cluster_members": 6,
+                "dedup/fuzzy/document/canonicals": 2,
+                "dedup/fuzzy/document/singletons_skipped": 1,
+            },
         ),
         str(tree / "fuzzy"),
     )
