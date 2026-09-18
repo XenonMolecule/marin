@@ -96,6 +96,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--worker-disk", default="64g")
     parser.add_argument("--task-cpu", type=float, default=1)
     parser.add_argument("--task-ram", default="7g")
+    # FORK: upstream hardcodes 32g, above the worker disk this fork's pools offer.
+    parser.add_argument("--task-disk", default="32g")
     return parser.parse_args(argv)
 
 
@@ -118,7 +120,7 @@ def main(argv: list[str] | None = None) -> None:
     logger.info("Counting %d shards in %d map tasks at stride %d", len(paths), len(tasks), args.stride)
 
     worker = ResourceConfig(cpu=args.worker_cpu, ram=args.worker_ram, disk=args.worker_disk)
-    task_resources = ResourceConfig(cpu=args.task_cpu, ram=args.task_ram, disk="32g")
+    task_resources = ResourceConfig(cpu=args.task_cpu, ram=args.task_ram, disk=args.task_disk)
     context = ZephyrContext(name="fuzzy-large-clusters", resources=worker, max_workers=args.max_workers)
     outcome = context.execute(
         Dataset.from_list(tasks).map(_count_group),

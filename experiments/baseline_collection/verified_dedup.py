@@ -69,10 +69,6 @@ C075_PARAMS = ClusterDedupParams(
 )
 MAX_CLUSTER_SIZE = 100_000
 LARGE_CLUSTER_STRIDE = 256
-# fuzzy_large_clusters.py gives each map task 32g of disk, and Zephyr rejects a task larger than
-# its worker.
-LARGE_CLUSTERS_WORKER_DISK = "64g"
-
 _APPLY_COUNTER_PREFIX = "dedup/apply_verified"
 
 
@@ -85,6 +81,7 @@ class ClusterStageResources:
     worker_ram: str
     worker_disk: str
     task_ram: str
+    task_disk: str
     reduce_task_ram: str
     output_shards: int
     shards_per_task: int
@@ -98,6 +95,12 @@ def add_cluster_stage_arguments(parser: argparse.ArgumentParser) -> None:
     group.add_argument("--cluster-worker-ram", default="128g")
     group.add_argument("--cluster-worker-disk", default="512g")
     group.add_argument("--cluster-task-ram", default="12g", help="One map task: a group of shards or text files.")
+    group.add_argument(
+        "--cluster-task-disk",
+        default="48g",
+        help="Disk for one task. Zephyr rejects a task larger than its worker, so keep it under "
+        "--cluster-worker-disk. Sort spill lands on tmpfs, so this is not where a big partition goes.",
+    )
     group.add_argument(
         "--cluster-reduce-task-ram",
         default="26g",
@@ -119,6 +122,7 @@ def cluster_stage_resources(args: argparse.Namespace) -> ClusterStageResources:
         worker_ram=args.cluster_worker_ram,
         worker_disk=args.cluster_worker_disk,
         task_ram=args.cluster_task_ram,
+        task_disk=args.cluster_task_disk,
         reduce_task_ram=args.cluster_reduce_task_ram,
         output_shards=args.cluster_output_shards,
         shards_per_task=args.cluster_shards_per_task,
@@ -147,7 +151,9 @@ def _large_clusters(fuzzy: StepSpec, resources: ClusterStageResources, output_pa
             *("--max-workers", str(resources.max_workers)),
             *("--worker-cpu", str(resources.worker_cpu)),
             *("--worker-ram", resources.worker_ram),
-            *("--worker-disk", LARGE_CLUSTERS_WORKER_DISK),
+            *("--worker-disk", resources.worker_disk),
+            *("--task-ram", resources.task_ram),
+            *("--task-disk", resources.task_disk),
         ]
     )
     return {"success": True}
@@ -169,6 +175,7 @@ def _cluster_text(fuzzy: StepSpec, large_clusters: StepSpec, resources: ClusterS
             *("--worker-ram", resources.worker_ram),
             *("--worker-disk", resources.worker_disk),
             *("--task-ram", resources.task_ram),
+            *("--task-disk", resources.task_disk),
             *("--reduce-task-ram", resources.reduce_task_ram),
         ]
     )
@@ -194,15 +201,13 @@ def verified_dups_steps(*, fuzzy: StepSpec, bucket: str, resources: ClusterStage
         deps=[fuzzy, large_clusters],
         fn=lambda op: _cluster_text(fuzzy, large_clusters, resources, op),
     )
-    task = ResourceConfig(cpu=1, ram=resources.task_ram, disk="48g")
+    task = ResourceConfig(cpu=1, ram=resources.task_ram, disk=resources.task_disk)
     verified = cluster_verify_step(
         name="verified",
         cluster_text_step=cluster_text,
         params=C075_PARAMS,
         max_workers=resources.max_workers,
-        worker_resources=ResourceConfig(
-            cpu=resources.worker_cpu, ram=resources.worker_ram, disk=resources.worker_disk
-        ),
+        worker_resources=ResourceConfig(cpu=resources.worker_cpu, ram=resources.worker_ram, disk=resources.worker_disk),
         map_task_resources=task,
         reduce_task_resources=task,
         override_output_path=f"{root}/verified",
@@ -241,9 +246,9 @@ def apply_verified_dups(
     shard_pairs = [
         {
             "source_shard": path,
-            "marker_shard": f"{attr_dir}/{os.path.basename(path)}"
-            if os.path.basename(path) in marker_basenames
-            else None,
+            "marker_shard": (
+                f"{attr_dir}/{os.path.basename(path)}" if os.path.basename(path) in marker_basenames else None
+            ),
         }
         for path in source_shards
     ]

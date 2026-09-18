@@ -50,7 +50,9 @@ def _corpus(root: Path, markers: dict[str, list[str]], recorded_markers: int) ->
     for name, ids in SHARDS.items():
         pq.write_table(pa.table({"id": ids, "text": [f"text of {i}" for i in ids], "url": ids}), main / name)
     write_artifact(
-        NormalizedData(main_output_dir=str(main), dup_output_dir=str(root / "normalize" / "outputs" / "dups"), counters={}),
+        NormalizedData(
+            main_output_dir=str(main), dup_output_dir=str(root / "normalize" / "outputs" / "dups"), counters={}
+        ),
         str(root / "normalize"),
     )
 
@@ -114,4 +116,3 @@ def test_a_marker_shard_without_a_normalized_shard_is_rejected(tmp_path, monkeyp
 def test_step_paths_split_into_the_prefix_and_key_the_hero_scripts_take():
     path = "gs://marin-us-east5/documents/baseline_x_deduped/10000warcs/fuzzy"
     assert _marin_prefix_and_key(path) == ("gs://marin-us-east5", "documents/baseline_x_deduped/10000warcs/fuzzy")
-
