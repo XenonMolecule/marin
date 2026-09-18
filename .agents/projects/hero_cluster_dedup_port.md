@@ -1,6 +1,8 @@
 # Port the hero-run fuzzy cluster dedup into this fork
 
-Status: Step 1 (code port) DONE 2026-09-18, commits f47919338b, 3bda144cb7, 6b3edbee30. Steps 2-5 open; nothing launched.
+Status: Step 1 (code port) DONE 2026-09-18, commits f47919338b, 3bda144cb7, 6b3edbee30. Local three-stage smoke passed (synthetic chained component of two unrelated
+families: old rule keeps 1 of 4, hero rule keeps 2, markers land beside the
+right normalized shards). Steps 2-5 open; nothing launched on Iris.
 
 ## Goal
 
@@ -145,6 +147,9 @@ reduce tasks 26g, 512g disk. Our Iris CPU pool tops out at 8 core / 16 GB, so a
   component before we commit to a size. If 500k has a component that cannot fit
   after the two-level split, lower `--max-cluster-size`; that is a recorded
   deviation (the MinHash split has a containment-recall limit).
+- `fuzzy_large_clusters.py` hardcodes map-task `disk="32g"` with no flag, and
+  Zephyr rejects a task larger than its worker. Launch that stage with worker
+  disk >= 32g, or add a `--task-disk` flag to match the other two scripts.
 - Coordinators `--no-preemptible`; `max_task_failures` > 0; region-pin to the
   bucket holding the normalized tree; `--submit-parallelism 1`.
 
