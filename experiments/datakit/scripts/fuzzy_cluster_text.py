@@ -27,7 +27,6 @@ minimum hash by construction. Both are deterministic functions of the document.
         --no-wait --priority batch --cpu 16 --memory 96GB \
         -- python experiments/datakit/scripts/fuzzy_cluster_text.py \
             --prefix s3://.../marin --candidates datakit/dedup_709f5997 \
-            --verified datakit/verify_fuzzy_dups_c757e4f0 \
             --large-clusters s3://.../user/rav/dedup/large_clusters/v1/large_clusters.parquet \
             --out s3://.../user/rav/dedup/cluster_text/v6 \
             --output-shards 8192 --shards-per-task 96 --max-workers 96
@@ -377,32 +376,22 @@ def _write_markers(file_idx: int, records: Iterator[dict[str, Any]], output_path
     return {**result, "file_idx": file_idx, "markers": written}
 
 
-def build_shards(prefix: str, candidates: str, verified: str) -> list[TextShard]:
+def build_shards(prefix: str, candidates: str) -> list[TextShard]:
     """Pair every normalized shard with its candidate attribute shard.
 
-    Source order and tags come from the verified artifact, so ``file_idx``
-    reproduces the numbering the production verifier used.
+    FORK: upstream's hero run read source order and tags from a pipeline-verifier
+    artifact, which this fork never produces. Tags are rebuilt by the rule that
+    artifact was written with (``build_copartitioned_shards``: rank over sorted
+    source keys), so ``file_idx`` and ``source_tag`` come out the same.
     """
-    candidate_artifact = json.loads(
+    candidate_sources = json.loads(
         StoragePath(prefix_join(prefix_join(prefix, candidates), ".artifact.json")).read_bytes()
-    )["result"]
-    verified_artifact = json.loads(
-        StoragePath(prefix_join(prefix_join(prefix, verified), ".artifact.json")).read_bytes()
-    )["result"]
-
-    # The two artifacts share every source key but one: the candidate tree
-    # names the Focus Crawl by its pre-#8111 extraction. Pair the leftovers.
-    candidate_sources = dict(candidate_artifact["sources"])
-    only_candidate = sorted(set(candidate_sources) - set(verified_artifact["sources"]))
-    only_verified = sorted(set(verified_artifact["sources"]) - set(candidate_sources))
-    if len(only_candidate) != len(only_verified) or len(only_candidate) > 1:
-        raise ValueError(f"cannot pair sources: candidate_only={only_candidate!r}, verified_only={only_verified!r}")
-    for verified_key, candidate_key in zip(only_verified, only_candidate, strict=True):
-        candidate_sources[verified_key] = candidate_sources[candidate_key]
+    )["result"]["sources"]
 
     fs, _ = url_to_fs(prefix)
     shards: list[TextShard] = []
-    for source_key, entry in sorted(verified_artifact["sources"].items(), key=lambda item: item[1]["source_tag"]):
+    for source_rank, source_key in enumerate(sorted(candidate_sources)):
+        source_tag = f"source_{source_rank:03d}"
         normalized_dir = prefix_join(prefix, source_key)
         candidate_dir = prefix_join(prefix, str(candidate_sources[source_key]["attr_dir"]))
         _, root = url_to_fs(normalized_dir)
@@ -416,7 +405,7 @@ def build_shards(prefix: str, candidates: str, verified: str) -> list[TextShard]
                     normalized_path=prefix_join(normalized_dir, name),
                     candidate_path=prefix_join(candidate_dir, name),
                     source_key=source_key,
-                    source_tag=entry["source_tag"],
+                    source_tag=source_tag,
                     basename=name,
                 )
             )
@@ -440,7 +429,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--prefix", required=True)
     parser.add_argument("--candidates", required=True)
-    parser.add_argument("--verified", required=True, help="Verified artifact that pins the source order")
     parser.add_argument("--large-clusters", required=True, help="large_clusters.parquet from fuzzy_large_clusters.py")
     parser.add_argument("--out", required=True)
     parser.add_argument("--max-cluster-size", type=int, default=100_000)
@@ -465,7 +453,7 @@ def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
-    shards = build_shards(args.prefix, args.candidates, args.verified)
+    shards = build_shards(args.prefix, args.candidates)
     if args.limit_shards:
         shards = shards[: args.limit_shards]
     oversized = load_oversized(args.large_clusters, args.max_cluster_size)
@@ -479,7 +467,6 @@ def main(argv: list[str] | None = None) -> None:
     manifest = {
         "version": "v1",
         "candidates": args.candidates,
-        "verified": args.verified,
         "max_cluster_size": args.max_cluster_size,
         "output_shards": args.output_shards,
         "groups_per_shard": args.groups_per_shard,
