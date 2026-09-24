@@ -74,13 +74,15 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import random
 import sys
 from collections.abc import Iterator
+from enum import StrEnum
 
 import fsspec
 from fray.types import ResourceConfig
 from marin.datakit.normalize import NormalizedData, normalize_step
-from marin.execution.artifact import Artifact
+from marin.execution.artifact import read_artifact
 from marin.execution.step_runner import StepRunner
 from marin.execution.step_spec import StepSpec
 from marin.processing.classification.deduplication.fuzzy_dups import (
@@ -92,6 +94,16 @@ from rigging.log_setup import configure_logging
 from zephyr.dataset import Dataset
 from zephyr.execution import ZephyrContext
 from zephyr.readers import load_jsonl, load_parquet
+
+from experiments.baseline_collection.verified_dedup import (
+    C075_PARAMS,
+    ClusterStageResources,
+    DedupRule,
+    add_cluster_stage_arguments,
+    apply_verified_dups,
+    cluster_stage_resources,
+    verified_dups_steps,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -112,6 +124,16 @@ DEFAULT_EXTRACTION_NAME = "baseline_resiliparse-19bdaa"
 DEFAULT_OUTPUT_NAME = "baseline_resiliparse_deduped"
 DEFAULT_TOTAL_WARC_SHARDS = 3000
 NUM_RESHAPE_SHARDS = 200
+# Seed of the nested random shard order. Every ``--shard-order random`` run of one extraction
+# draws the same permutation, so its N-WARC subsets nest: 300 is a subset of 3000 of 10364.
+SHARD_SAMPLE_SEED = 0
+
+
+class ShardOrder(StrEnum):
+    """Which N of an extraction's shards a run reads."""
+
+    PREFIX = "prefix"
+    RANDOM = "random"
 
 
 def _raw_path(region: str, extraction_name: str) -> str:
@@ -122,12 +144,24 @@ def _output_prefix(region: str, output_name: str) -> str:
     return f"{_REGION_TO_BUCKET[region]}/documents/{output_name}"
 
 
-def _input_shard_paths(n: int, region: str, extraction_name: str, total_shards: int) -> list[str]:
-    """Return the first-N raw resiliparse shard paths (lexicographic = WARC order)."""
+def shard_indices(n: int, total_shards: int, shard_order: ShardOrder) -> list[int]:
+    """The N shards a run reads: the first N in WARC order, or a seeded nested random draw."""
     if n > total_shards:
         raise ValueError(f"--n {n} exceeds available {total_shards} resiliparse shards")
+    if shard_order == ShardOrder.PREFIX:
+        return list(range(n))
+    order = list(range(total_shards))
+    random.Random(SHARD_SAMPLE_SEED).shuffle(order)
+    return sorted(order[:n])
+
+
+def _input_shard_paths(
+    n: int, region: str, extraction_name: str, total_shards: int, shard_order: ShardOrder
+) -> list[str]:
     raw_path = _raw_path(region, extraction_name)
-    return [f"{raw_path}/data-{i:05d}-of-{total_shards:05d}.jsonl.gz" for i in range(n)]
+    return [
+        f"{raw_path}/data-{i:05d}-of-{total_shards:05d}.jsonl.gz" for i in shard_indices(n, total_shards, shard_order)
+    ]
 
 
 # --------------------------------------------------------------------------
@@ -144,11 +178,18 @@ def _reshape_records(path: str) -> Iterator[dict]:
         yield {"text": text}
 
 
-def _reshape(n: int, region: str, output_path: str, extraction_name: str, total_shards: int) -> dict:
-    files = _input_shard_paths(n, region, extraction_name, total_shards)
-    logger.info("Reshape input: %d raw resiliparse shards", len(files))
+def _reshape(
+    n: int,
+    region: str,
+    output_path: str,
+    extraction_name: str,
+    total_shards: int,
+    shard_order: ShardOrder,
+    n_out: int,
+) -> dict:
+    files = _input_shard_paths(n, region, extraction_name, total_shards, shard_order)
+    logger.info("Reshape input: %d raw resiliparse shards -> %d output shards", len(files), n_out)
 
-    n_out = NUM_RESHAPE_SHARDS
     template = f"{output_path}/data-{{shard:05d}}-of-{n_out:05d}.jsonl.gz"
     pipeline = (
         Dataset.from_iterable(files).flat_map(_reshape_records).reshard(n_out).write_jsonl(template, skip_existing=True)
@@ -176,8 +217,9 @@ def _apply_fuzzy_dups(
     fuzzy_step_obj: StepSpec,
     output_path: str,
 ) -> dict:
-    norm = Artifact.load(normalize_step_obj, NormalizedData)
-    fuzzy = Artifact.load(fuzzy_step_obj, FuzzyDupsAttrData)
+    # Post-merge artifact API: Artifact.load no longer exists.
+    norm = read_artifact(normalize_step_obj.output_path, NormalizedData)
+    fuzzy = read_artifact(fuzzy_step_obj.output_path, FuzzyDupsAttrData)
 
     if len(fuzzy.sources) != 1:
         raise RuntimeError(f"expected 1 source in FuzzyDupsAttrData, got {len(fuzzy.sources)}")
@@ -209,8 +251,14 @@ def _apply_fuzzy_dups(
         non_canonical_ids: set[str] = set()
         try:
             for r in load_parquet(item["attr_shard"]):
-                attrs = r.get("attributes") or {}
-                if attrs.get("is_cluster_canonical") is False:
+                # Post-merge attrs are FLAT: {id, dup_cluster_id, is_cluster_canonical}. Reading the
+                # old nested "attributes" shape silently matches nothing, so fail loudly instead.
+                if "is_cluster_canonical" not in r:
+                    raise KeyError(
+                        f"{item['attr_shard']}: expected flat fuzzy attrs with 'is_cluster_canonical', "
+                        f"got columns {sorted(r)}"
+                    )
+                if r["is_cluster_canonical"] is False:
                     non_canonical_ids.add(r["id"])
         except FileNotFoundError:
             pass
@@ -264,6 +312,12 @@ def build_steps(
     extraction_name: str = DEFAULT_EXTRACTION_NAME,
     output_name: str = DEFAULT_OUTPUT_NAME,
     total_shards: int = DEFAULT_TOTAL_WARC_SHARDS,
+    *,
+    dedup_rule: DedupRule,
+    cluster_resources: ClusterStageResources,
+    shard_order: ShardOrder = ShardOrder.PREFIX,
+    reshape_shards: int = NUM_RESHAPE_SHARDS,
+    normalize_ram: str = "14g",
 ) -> list[StepSpec]:
     logger.info(
         "Building Marin FUZZY dedup pipeline for resiliparse n=%d region=%s extraction=%s",
@@ -272,13 +326,15 @@ def build_steps(
         extraction_name,
     )
 
-    bucket = f"{_output_prefix(region, output_name)}/{n}warcs"
+    # A random draw never shares a tree with the WARC-order prefix of the same N.
+    suffix = "" if shard_order == ShardOrder.PREFIX else f"_{shard_order}"
+    bucket = f"{_output_prefix(region, output_name)}/{n}warcs{suffix}"
 
     reshape = StepSpec(
         name="reshape",
         override_output_path=f"{bucket}/reshape",
         deps=[],
-        fn=lambda op: _reshape(n, region, op, extraction_name, total_shards),
+        fn=lambda op: _reshape(n, region, op, extraction_name, total_shards, shard_order, reshape_shards),
     )
 
     normalize = normalize_step(
@@ -288,7 +344,9 @@ def build_steps(
         target_partition_bytes=target_partition_bytes,
         # cpu=1/ram=14g fits on e2-highmem-2 ondemand — default
         # (cpu=2/ram=16g) was queueing against scarce us-central2 v4 hosts.
-        worker_resources=ResourceConfig(cpu=1, ram="14g", disk="10g"),
+        # The content-hash reduce concentrates mega-duplicated docs into one "whale" shard whose
+        # size grows with the corpus; fast_curation/dedup.py needed 96g at 154k WARCs.
+        worker_resources=ResourceConfig(cpu=1, ram=normalize_ram, disk="10g"),
         override_output_path=f"{bucket}/normalize",
     )
 
@@ -319,17 +377,34 @@ def build_steps(
         override_output_path=f"{bucket}/fuzzy",
     )
 
-    deduped = StepSpec(
-        name="deduped",
-        override_output_path=f"{bucket}/deduped",
-        deps=[normalize, fuzzy],
-        fn=lambda op: _apply_fuzzy_dups(normalize, fuzzy, op),
-    )
+    # Both rules share every step above, so they judge the same candidate components. They write
+    # separate trees: `deduped/` holds what the paper reports and must never change under it.
+    if dedup_rule == DedupRule.CC_CANONICAL:
+        verification: list[StepSpec] = []
+        deduped = StepSpec(
+            name="deduped",
+            override_output_path=f"{bucket}/deduped",
+            deps=[normalize, fuzzy],
+            fn=lambda op: _apply_fuzzy_dups(normalize, fuzzy, op),
+        )
+        stats_dir = f"{bucket}/stats"
+        rule_params: dict = {"rule": dedup_rule}
+    else:
+        verification = verified_dups_steps(fuzzy=fuzzy, bucket=bucket, resources=cluster_resources)
+        verified = verification[-1]
+        deduped = StepSpec(
+            name="deduped",
+            override_output_path=f"{bucket}/deduped_{dedup_rule}",
+            deps=[normalize, verified],
+            fn=lambda op: apply_verified_dups(normalize, verified, op, lambda record: {"text": record["text"]}),
+        )
+        stats_dir = f"{bucket}/stats_{dedup_rule}"
+        rule_params = {"rule": dedup_rule, "verified_path": verified.output_path, **C075_PARAMS.model_dump(mode="json")}
 
     stats = StepSpec(
         name="stats",
-        override_output_path=f"{bucket}/stats",
-        deps=[reshape, normalize, minhash, fuzzy, deduped],
+        override_output_path=stats_dir,
+        deps=[reshape, normalize, minhash, fuzzy, *verification, deduped],
         fn=lambda op: _write_stats(
             f"{op}/dedup_stats.json",
             {
@@ -352,11 +427,14 @@ def build_steps(
                     "approx_jaccard_threshold": 0.75,
                 },
                 "target_partition_bytes": target_partition_bytes,
+                "shard_order": shard_order,
+                "reshape_shards": reshape_shards,
+                "dedup_rule": rule_params,
             },
         ),
     )
 
-    return [reshape, normalize, minhash, fuzzy, deduped, stats]
+    return [reshape, normalize, minhash, fuzzy, *verification, deduped, stats]
 
 
 def main() -> int:
@@ -396,6 +474,32 @@ def main() -> int:
         default=DEFAULT_TOTAL_WARC_SHARDS,
         help="Shard count in the extraction's data-XXXXX-of-NNNNN filenames " f"(default: {DEFAULT_TOTAL_WARC_SHARDS}).",
     )
+    parser.add_argument(
+        "--shard-order",
+        type=ShardOrder,
+        choices=list(ShardOrder),
+        default=ShardOrder.PREFIX,
+        help="prefix: the first N shards in WARC order (the paper's per-N trees). random: a seeded "
+        "nested draw of N shards, written to a separate {n}warcs_random tree.",
+    )
+    parser.add_argument(
+        "--reshape-shards",
+        type=int,
+        default=NUM_RESHAPE_SHARDS,
+        help="Reshape output shard count. Scale with corpus size: the normalize merge opens one reader "
+        "per shard, so a 400M-document extraction wants ~800.",
+    )
+    parser.add_argument("--normalize-ram", default="14g", help="Normalize worker RAM; the whale shard grows with N.")
+    parser.add_argument(
+        "--dedup-rule",
+        required=True,
+        type=DedupRule,
+        choices=list(DedupRule),
+        help="cc_canonical: drop every non-canonical member of a MinHash component, into deduped/ "
+        "(the paper's rule). c075: drop only documents a longer survivor in the component contains "
+        "at >= 0.75 word 3-gram containment, into deduped_c075/ (the Harrier hero rule).",
+    )
+    add_cluster_stage_arguments(parser)
     args = parser.parse_args()
 
     steps = build_steps(
@@ -405,6 +509,11 @@ def main() -> int:
         extraction_name=args.extraction_name,
         output_name=args.output_name,
         total_shards=args.total_shards,
+        dedup_rule=args.dedup_rule,
+        cluster_resources=cluster_stage_resources(args),
+        shard_order=args.shard_order,
+        reshape_shards=args.reshape_shards,
+        normalize_ram=args.normalize_ram,
     )
     StepRunner().run(steps)
     return 0
