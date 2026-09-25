@@ -131,7 +131,7 @@ def main() -> int:
     parser.add_argument("--max-workers", type=int, required=True, help="Threads, or Zephyr workers.")
     args = parser.parse_args()
     payload = estimate(args.tree, args.sample_shards, args.executor, args.max_workers)
-    path = f"{args.tree.rstrip('/')}/stats_{DedupRule.C075}/{PARTIAL_SURVIVAL_FILENAME}"
+    path = f"{args.tree.rstrip('/')}/survival_{DedupRule.C075}/{PARTIAL_SURVIVAL_FILENAME}"
     with fsspec.open(path, "w") as handle:
         json.dump(payload, handle, indent=2)
     logger.info("Partial survival -> %s\n%s", path, json.dumps(payload, indent=2))

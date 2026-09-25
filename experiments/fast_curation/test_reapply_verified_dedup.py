@@ -139,7 +139,7 @@ def test_counts_output_measures_both_rules_without_writing_a_corpus(tmp_path, mo
 
     StepRunner().run(build_steps(str(tree), ReapplyOutput.COUNTS, RESOURCES))
 
-    survival = json.loads((tree / "stats_c075" / "survival.json").read_text())
+    survival = json.loads((tree / "survival_c075" / "survival.json").read_text())
     assert (survival["docs"], survival["component_members"]) == (7, 6)
     assert (survival["cc_canonical_removed_docs"], survival["c075_removed_docs"]) == (4, 2)
     # The two c075 removals are the 385- and 380-word copies; cc_canonical also takes b_full, x or y.

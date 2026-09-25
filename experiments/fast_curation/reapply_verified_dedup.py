@@ -10,7 +10,7 @@ two steps the rule needs, pins them, and refuses to run if either is not already
 
     {tree}/normalize  {tree}/fuzzy                                   (pinned, never rebuilt)
       -> {tree}/dedup_c075/{large_clusters,cluster_text,verified}
-        -> {tree}/stats_c075/survival.json      (--output counts and tree)
+        -> {tree}/survival_c075/survival.json   (--output counts and tree)
         -> {tree}/deduped_c075/                 (--output tree only)
 
 ``{tree}/deduped/`` (the ``cc_canonical`` output) is never read or written. Because ``fuzzy`` is
@@ -114,9 +114,11 @@ def build_steps(tree: str, output: ReapplyOutput, resources: ClusterStageResourc
     fuzzy = _pinned_step("fuzzy", f"{tree}/fuzzy")
     verification = verified_dups_steps(fuzzy=fuzzy, bucket=tree, resources=resources)
     verified = verification[-1]
+    # Not stats_{rule}: the dedup drivers' own stats step owns that directory and marks it SUCCESS, and
+    # StepRunner would then prune this step as already built.
     survival = StepSpec(
         name="survival",
-        override_output_path=f"{tree}/stats_{DedupRule.C075}",
+        override_output_path=f"{tree}/survival_{DedupRule.C075}",
         deps=[normalize, fuzzy, verified],
         fn=lambda op: _write_survival(tree, normalize, fuzzy, verified, op),
     )
