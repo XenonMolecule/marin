@@ -142,7 +142,7 @@ def main() -> int:
         required=True,
         type=ReapplyOutput,
         choices=list(ReapplyOutput),
-        help="counts: verified markers plus stats_c075/survival.json, which holds documents and characters "
+        help="counts: verified markers plus survival_c075/survival.json, which holds documents and characters "
         "removed under both rules. tree: also write deduped_c075/, a second full copy of the survivors.",
     )
     add_cluster_stage_arguments(parser)
