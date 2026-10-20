@@ -47,8 +47,12 @@ DATA_SCRIPT_RE = re.compile(
     re.IGNORECASE,
 )
 # Attributes that never carry reader-facing text. alt/title/aria-label are KEPT.
+# The leading (?<!\s) anchors each attempt to the START of a whitespace run. Without it a
+# run of N spaces (one page in the wild had 151k) costs O(N^2): every position inside the run
+# re-scans to its end before failing. A match starting inside a run is impossible unless the
+# same match exists from the run's start, so the output is byte-identical.
 NOISY_ATTR_RE = re.compile(
-    r"\s+(?:class|style|id|onclick|onload|target|rel|width|height|srcset|sizes|"
+    r"(?<!\s)\s+(?:class|style|id|onclick|onload|target|rel|width|height|srcset|sizes|"
     r'data-[\w-]+)\s*=\s*(?:"[^"]*"|\'[^\']*\'|[^\s>]+)',
     re.IGNORECASE,
 )

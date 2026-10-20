@@ -7,8 +7,9 @@ Three pieces of glue used by both ``prepare_eval_corpus.py`` (writes the
 corpus) and ``verify_lmh_tasks.py`` (previews the fail set):
 
 * ``trust_remote_code_for_hf`` -- monkey-patch ``datasets.load_dataset`` /
-  ``load_dataset_builder`` to inject ``trust_remote_code=True``. Necessary
-  on ``datasets`` 4.x where the env var and config flag were removed.
+  ``load_dataset_builder`` to inject ``trust_remote_code=True`` (necessary
+  on ``datasets`` 4.x where the env var and config flag were removed) and to
+  resolve legacy no-namespace dataset names to their current Hub repos.
 * ``flatten_task_dict`` -- walk the (possibly nested) result of
   ``lm_eval.tasks.get_task_dict`` and yield only ``(str_name, Task)`` leaf
   pairs. lm-eval-harness returns groups as nested dicts keyed by
@@ -21,6 +22,7 @@ Importing this module pulls only ``datasets`` + stdlib, NOT
 That keeps both callers cheap to import in a torch-less environment.
 """
 
+import functools
 import logging
 import os
 import sys
@@ -28,8 +30,37 @@ from collections.abc import Iterator
 from typing import Any
 
 import datasets
+from huggingface_hub import HfApi
 
 logger = logging.getLogger(__name__)
+
+
+# ``load_dataset`` names that are local builders or paths, never Hub repos.
+_PACKAGED_BUILDERS = frozenset(
+    {"json", "csv", "parquet", "text", "arrow", "pandas", "imagefolder", "audiofolder", "webdataset", "xml", "sql"}
+)
+
+
+@functools.cache
+def canonical_dataset_id(path: str) -> str:
+    """Hub repo id that a legacy no-namespace dataset name now lives at (``gsm8k`` -> ``openai/gsm8k``).
+
+    Canonical datasets moved under organizations; the Hub API still redirects the old names, but
+    ``huggingface_hub`` >= 1.0 rejects a no-namespace ``hf://`` URI before any request is made, so
+    pinned lm-eval task configs naming ``gsm8k``, ``super_glue``, ``truthful_qa``, ``anli``, ...
+    fail to load. Names with a namespace, packaged builders, and local paths pass through.
+    """
+    if "/" in path or path in _PACKAGED_BUILDERS or os.path.exists(path):
+        return path
+    return HfApi().dataset_info(path).id
+
+
+def _with_canonical_path(args: tuple, kwargs: dict) -> tuple[tuple, dict]:
+    if args and isinstance(args[0], str):
+        return (canonical_dataset_id(args[0]), *args[1:]), kwargs
+    if isinstance(kwargs.get("path"), str):
+        return args, {**kwargs, "path": canonical_dataset_id(kwargs["path"])}
+    return args, kwargs
 
 
 def trust_remote_code_for_hf() -> None:
@@ -76,6 +107,7 @@ def trust_remote_code_for_hf() -> None:
         return isinstance(exc, (TypeError, ValueError)) and "trust_remote_code" in str(exc)
 
     def patched_load_dataset(*args, **kwargs):
+        args, kwargs = _with_canonical_path(args, kwargs)
         if "trust_remote_code" in kwargs:
             return original_load(*args, **kwargs)
         try:
@@ -86,6 +118,7 @@ def trust_remote_code_for_hf() -> None:
             raise
 
     def patched_builder(*args, **kwargs):
+        args, kwargs = _with_canonical_path(args, kwargs)
         if "trust_remote_code" in kwargs:
             return original_builder(*args, **kwargs)
         try:

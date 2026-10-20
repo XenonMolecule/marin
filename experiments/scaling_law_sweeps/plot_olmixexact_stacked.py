@@ -46,6 +46,7 @@ def main() -> None:
     ap.add_argument("--relabel", nargs="+", default=[], metavar="METHOD=LABEL")
     ap.add_argument("--legend-size", type=float, default=20.0)
     ap.add_argument("--suffix", default="_stacked")
+    ap.add_argument("--logy", action="store_true", help="Log-scale the y axes (exploratory variant).")
     args = ap.parse_args()
 
     overrides = dict(kv.split("=", 1) for kv in args.relabel)
@@ -68,7 +69,7 @@ def main() -> None:
     plt.rcParams.update(PAPER_RCPARAMS)
     dims = sorted(set(args.dims))
     fig, axes = plt.subplots(
-        2, len(dims), figsize=(7.2 * len(dims), 12.0), squeeze=False, gridspec_kw={"hspace": 0.14, "wspace": 0.13}
+        2, len(dims), figsize=(7.2 * len(dims), 12.0), squeeze=False, gridspec_kw={"hspace": 0.08, "wspace": 0.13}
     )
 
     for col, dim in enumerate(dims):
@@ -108,6 +109,19 @@ def main() -> None:
             ax.grid(True, which="major", linewidth=0.5, alpha=0.35)
         ax_u.set_title(PARAM_LABEL.get(dim, f"d{dim}"))
         ax_b.set_xlabel("Tokens trained")
+    # Align y-limits WITHIN each row (panels share a metric across sizes; the two
+    # rows keep independent scales since the metrics differ).
+    for row in axes:
+        lims = [ax.get_ylim() for ax in row]
+        lo, hi = min(l for l, _ in lims), max(h for _, h in lims)
+        for ax in row:
+            ax.set_ylim(lo, hi)
+            if args.logy:
+                ax.set_yscale("log")
+                ticks = [t / 10 for t in range(int(lo * 10), int(hi * 10) + 1, 2)]
+                ax.yaxis.set_major_locator(mticker.FixedLocator(ticks))
+                ax.yaxis.set_major_formatter(mticker.FormatStrFormatter("%.1f"))
+                ax.yaxis.set_minor_formatter(mticker.NullFormatter())
     axes[0][0].set_ylabel("BPB (Uncheatable Eval)")
     axes[1][0].set_ylabel("BPB (olmix 51-task suite)")
 

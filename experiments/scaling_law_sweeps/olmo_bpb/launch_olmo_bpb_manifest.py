@@ -142,6 +142,7 @@ def submit_one(
     done_marker: str | None,
     tpu_variants: tuple[str, ...],
     hub_offline: bool,
+    child_preemptible: bool = True,
 ) -> str:
     cmd_args = [
         "python",
@@ -194,7 +195,10 @@ def submit_one(
         values=[row.region],
         mode=job_pb2.CONSTRAINT_MODE_REQUIRED,
     )
-    constraints = [preemptible_constraint(True), region_constraint]
+    # child_preemptible=False targets RESERVED pools (tpu_*-reserved_* groups); the default
+    # constraint excludes them, which is why a region whose preemptible 4-chip pool is
+    # exhausted leaves an eval pending for hours while reserved v4-8 slots sit idle.
+    constraints = [preemptible_constraint(child_preemptible), region_constraint]
     if len(set(tpu_variants)) > 1:
         constraints.append(device_variant_constraint(list(tpu_variants)))
     # Multi-host TPU jobs must land every task on ONE physical slice, so libtpu can wire the
@@ -234,6 +238,12 @@ def main():
     ap.add_argument("--skip-existing", action="store_true", default=True, help="Skip runs whose results.json exists.")
     ap.add_argument("--no-skip-existing", dest="skip_existing", action="store_false")
     ap.add_argument("--child-priority", default="batch", choices=sorted(PRIORITY_BAND_MAP))
+    ap.add_argument(
+        "--children-non-preemptible",
+        action="store_true",
+        help="Submit children with preemptible=False so they can land on RESERVED pools. "
+        "Reserve capacity is shared and precious — use only for explicitly prioritized evals.",
+    )
     ap.add_argument("--tasks", default="all", help="'all', 'qa_rc', 'all+qa_rc', or comma-separated dirs.")
     ap.add_argument("--limit", type=int, default=None, help="Cap each task to N docs (smoke test).")
     ap.add_argument("--merge", action="store_true", help="Child merges new tasks into existing results.json.")
@@ -348,6 +358,7 @@ def main():
                 done_marker=args.done_marker,
                 tpu_variants=tuple(v.strip() for v in args.tpu_variants.split(",") if v.strip()),
                 hub_offline=args.hub_offline,
+                child_preemptible=not args.children_non_preemptible,
             )
         except Exception as e:
             logger.error("[%3d] SUBMIT REJECTED for %s (region=%s): %s", i, row.run_name, row.region, e)

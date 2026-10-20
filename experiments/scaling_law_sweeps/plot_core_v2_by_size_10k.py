@@ -123,6 +123,12 @@ OLMIXEXACT_COMPARE_METHODS = {
     "lpv11_10k_mix_olmixexact_lambda0p01",
     # fastpipe_v2's olmixexact mix (fit 2026-09-12).
     "lpv11_fastpipe_v2_10k_mix_olmixexact_lambda0p01",
+    # Extractor ablation: fastpipe_v2's documents and labels with upstream-resiliparse text,
+    # weighted by fastpipe_v2's own fit. 25 of 38 cells trained before the sweep was paused.
+    "lpv11_fastpipe_v2_upstreamrs_10k_mix_olmixexact_lambda0p01",
+    # lpv11's own selected documents re-extracted with the resiliparse-rs fork, weighted by
+    # lpv11's olmixexact fit. Isolates extraction quality with selection held fixed.
+    "lpv11_forkrs_10k_mix_olmixexact_lambda0p01",
     "resiliparse_10k_mix_olmixexact_lambda0p01",
     "nemotron_full_10k_mix_olmixexact_lambda0p01",
     "fineweb_cc_10k_mix_olmixexact_lambda0p01",

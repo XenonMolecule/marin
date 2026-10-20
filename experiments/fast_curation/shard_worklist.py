@@ -114,6 +114,16 @@ def _cc_snapshot_paths(snapshot: str) -> list[str]:
     return [f"s3://commoncrawl/{line.strip()}" for line in lines if line.strip()]
 
 
+def _write_shard(spec: PipelineSpec, s: int, warc_paths: list[str]) -> None:
+    paths = sorted(warc_paths)
+    table = pa.table(
+        {"warc_path": paths, "warc_hash": [_warc_path_hash(w) for w in paths]},
+        schema=pa.schema([("warc_path", pa.string()), ("warc_hash", pa.string())]),
+    )
+    with fsspec.open(shard_path(spec, s), "wb") as fh:
+        pq.write_table(table, fh, compression="zstd")
+
+
 def build(
     spec: PipelineSpec,
     warc_paths: list[str],
@@ -142,18 +152,9 @@ def build(
     random.Random(seed).shuffle(order)
     region_of = {s: regions[i % len(regions)] for i, s in enumerate(order)}
 
-    def _write_shard(s: int) -> None:
-        paths = sorted(by_shard[s])
-        table = pa.table(
-            {"warc_path": paths, "warc_hash": [_warc_path_hash(w) for w in paths]},
-            schema=pa.schema([("warc_path", pa.string()), ("warc_hash", pa.string())]),
-        )
-        with fsspec.open(shard_path(spec, s), "wb") as fh:
-            pq.write_table(table, fh, compression="zstd")
-
     # Fan out the shard writes: an 8M-pool layout is ~32k small parquets, hours sequential.
     with ThreadPoolExecutor(max_workers=32) as ex:
-        list(ex.map(_write_shard, range(n_shards)))
+        list(ex.map(lambda s: _write_shard(spec, s, by_shard[s]), range(n_shards)))
     index = pa.table(
         {
             "shard": list(range(n_shards)),
@@ -176,6 +177,48 @@ def build(
     )
 
 
+def extend(spec: PipelineSpec, warc_paths: list[str], warcs_per_shard: int, regions: list[str]) -> None:
+    """Append new shards after the frozen layout's last shard; existing shards are untouched.
+
+    The new WARCs are dealt round-robin (in sorted order) into ``ceil(n / warcs_per_shard)``
+    shards numbered from the current shard count, so every existing partition key, claim, marker
+    and sentinel keeps its meaning. Refuses WARCs whose hash is already in the layout. The
+    previous index is kept beside the new one as ``_index.before-<first new shard>.parquet``.
+    """
+    index = load_index(spec)
+    first = len(index)
+    if [row["shard"] for row in index] != list(range(first)):
+        raise RuntimeError(f"{index_path(spec)} is not a dense 0..{first - 1} shard index")
+    new_hashes = {_warc_path_hash(w): w for w in warc_paths}
+    if len(new_hashes) != len(warc_paths):
+        raise ValueError("duplicate WARC paths (or hash collisions) in the new list")
+    with ThreadPoolExecutor(max_workers=32) as ex:
+        shards = list(ex.map(lambda s: load_shard(spec, s), range(first)))
+    clash = {h for pairs in shards for _, h in pairs} & new_hashes.keys()
+    if clash:
+        raise ValueError(f"{len(clash)} new WARCs already in the layout, e.g. {sorted(clash)[:3]}")
+    for r in regions:
+        if r not in REGION_TO_BUCKET:
+            raise ValueError(f"unknown region {r!r}; known: {sorted(REGION_TO_BUCKET)}")
+
+    n_new = -(-len(warc_paths) // warcs_per_shard)
+    by_shard: dict[int, list[str]] = {first + i: [] for i in range(n_new)}
+    for i, w in enumerate(sorted(warc_paths)):
+        by_shard[first + i % n_new].append(w)
+    with ThreadPoolExecutor(max_workers=32) as ex:
+        list(ex.map(lambda s: _write_shard(spec, s, by_shard[s]), by_shard))
+
+    fs, idx = fsspec.core.url_to_fs(index_path(spec))
+    fs.copy(idx, idx.replace("_index.parquet", f"_index.before-{first:05d}.parquet"))
+    rows = index + [
+        {"shard": s, "n_warcs": len(by_shard[s]), "region": regions[i % len(regions)]}
+        for i, s in enumerate(sorted(by_shard))
+    ]
+    with fsspec.open(index_path(spec), "wb") as fh:
+        pq.write_table(pa.Table.from_pylist(rows), fh, compression="zstd")
+    logger.info("appended shards %d-%d (%d WARCs) to %s", first, first + n_new - 1, len(warc_paths), shards_root(spec))
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -189,9 +232,17 @@ def main() -> None:
     b.add_argument("--n-shards", type=int, required=True)
     b.add_argument("--regions", nargs="+", required=True, help="Phase-A regions, assigned round-robin.")
     b.add_argument("--seed", type=int, default=0)
+    e = sub.add_parser("extend", help="append new shards for extra WARCs to an existing layout")
+    e.add_argument("--spec", required=True)
+    e.add_argument("--manifest", required=True, help="Flat manifest of the WARCs to add.")
+    e.add_argument("--warcs-per-shard", type=int, required=True)
+    e.add_argument("--regions", nargs="+", required=True, help="Regions recorded for the new shards.")
     args = ap.parse_args()
 
     spec = get_spec(args.spec)
+    if args.command == "extend":
+        extend(spec, _load_manifest(args.manifest), args.warcs_per_shard, args.regions)
+        return
     if spec.storage_version not in (3, 4):
         raise ValueError(f"{spec.spec_id} is not a sharded-worklist (storage_version 3/4) spec")
     if args.manifest:

@@ -43,33 +43,61 @@ logger = logging.getLogger(__name__)
 WANDB_ENTITY = "marin-community"
 WANDB_PROJECT = "marin"
 MACRO_KEY = "eval/uncheatable_eval/macro_bpb"
-NAME_RE = re.compile(r"curation-(?P<method>.+)-expFM_natural-(?P<budget>[0-9eE+.\-]+)-d(?P<dim>\d+)-L\d+-B\d+$")
+# Rescue/retry runs train under `<stem>-<suffix>` (e.g. `-h6f`, see launch_10k_natural
+# --run-suffix) and log to W&B under that name; they count for the canonical cell.
+NAME_RE = re.compile(
+    r"(?P<stem>curation-(?P<method>.+)-expFM_natural-(?P<budget>[0-9eE+.\-]+)-d(?P<dim>\d+)-L\d+-B\d+)"
+    r"(?P<suffix>-[a-z0-9]+)?$"
+)
 PARAM_LABEL = {512: "157M params", 1024: "447M params", 1536: "998M params", 2432: "2.9B params", 3584: "8.1B params"}
 
 TOKENS_PREFIX = "marin-us-central1/metadata/data_curation_10k_natural_results"
 OUT_DIR = Path(__file__).parent.parent.parent / "scratch" / "plots" / "olmo_bpb_10k" / "paper"
 CACHE = OUT_DIR / "wandb_uncheatable_olmixexact_cache.json"
+MIX_NAME_REGEX = "curation-.*olmixexact.*-expFM_natural-"
+
+# --natural: the UNMIXED arms (each corpus sampled at its natural distribution), same
+# palette as their mix counterparts so the two figures read side by side. lpv11 has no
+# flat cache; its natural arm is the grid sampled at natural token shares (2026-09-23).
+NATURAL_DISPLAY: dict[str, tuple[str, str]] = {
+    "dclm_10k": ("DCLM-baseline", "#1f77b4"),
+    "nemotron_10k": ("Nemotron-CC", "#ff7f0e"),
+    "resiliparse_10k": ("Resiliparse", "#9467bd"),
+    "fineweb_cc_10k": ("FineWeb", "#e377c2"),
+    "fineweb_edu_10k": ("FineWeb-Edu", "#17becf"),
+    "lpv11_10k_natural": ("lpv11 (LLM extract)", "#74c476"),
+    "lpv11_fastpipe_v2": ("fastpipe_v2", "#006d2c"),
+}
+NATURAL_NAME_REGEX = "curation-(" + "|".join(NATURAL_DISPLAY) + ")-expFM_natural-"
+CACHE_NATURAL = OUT_DIR / "wandb_uncheatable_natural_cache.json"
 
 
-def _pull_wandb() -> list[dict]:
+def _pull_wandb(name_regex: str = MIX_NAME_REGEX, display: dict | None = None) -> list[dict]:
     import wandb
 
-    api = wandb.Api()
+    display = METHOD_DISPLAY if display is None else display
+    api = wandb.Api(timeout=60)
     runs = api.runs(
         f"{WANDB_ENTITY}/{WANDB_PROJECT}",
-        filters={"display_name": {"$regex": "curation-.*olmixexact.*-expFM_natural-"}},
+        filters={"display_name": {"$regex": name_regex}},
         per_page=500,
     )
-    rows: list[dict] = []
+    # One record per canonical stem: prefer the unsuffixed run; among rescue runs keep the
+    # furthest-trained (a killed early retry must not shadow the run that finished).
+    best: dict[str, tuple[tuple[int, int], dict]] = {}
     for r in runs:
         m = NAME_RE.match(r.name)
-        if not m or m.group("method") not in METHOD_DISPLAY:
+        if not m or m.group("method") not in display:
             continue
         v = r.summary.get(MACRO_KEY)
         if not isinstance(v, (int, float)) or isinstance(v, bool):
             continue
-        rows.append({"stem": r.name, "method": m.group("method"), "dim": int(m.group("dim")), "macro_bpb": float(v)})
-    logger.info("pulled %d runs with uncheatable macro bpb", len(rows))
+        stem = m.group("stem")
+        rank = (0 if m.group("suffix") else 1, int(r.summary.get("_step") or 0))
+        if stem not in best or rank > best[stem][0]:
+            best[stem] = (rank, {"stem": stem, "method": m.group("method"), "dim": int(m.group("dim")), "macro_bpb": float(v)})
+    rows = [rec for _, rec in best.values()]
+    logger.info("pulled %d cells with uncheatable macro bpb", len(rows))
     return rows
 
 
@@ -98,18 +126,23 @@ def main() -> None:
     ap.add_argument("--legend-size", type=float, default=None)
     ap.add_argument("--relabel", nargs="+", default=[], metavar="METHOD=LABEL")
     ap.add_argument("--suffix", default="")
+    ap.add_argument("--fig-height", type=float, default=7.0, help="Figure height in inches (panels are 7.2in wide).")
+    ap.add_argument("--natural", action="store_true", help="Plot the UNMIXED arms (NATURAL_DISPLAY) instead of the mix arms.")
     args = ap.parse_args()
 
-    if not args.refresh and CACHE.exists():
-        records = json.loads(CACHE.read_text())
+    cache = CACHE_NATURAL if args.natural else CACHE
+    base_display = NATURAL_DISPLAY if args.natural else METHOD_DISPLAY
+    name_regex = NATURAL_NAME_REGEX if args.natural else MIX_NAME_REGEX
+    if not args.refresh and cache.exists():
+        records = json.loads(cache.read_text())
     else:
-        records = _join_tokens(_pull_wandb())
-        CACHE.parent.mkdir(parents=True, exist_ok=True)
-        CACHE.write_text(json.dumps(records, indent=0))
+        records = _join_tokens(_pull_wandb(name_regex, base_display))
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        cache.write_text(json.dumps(records, indent=0))
     records = [r for r in records if r["stem"] not in EXCLUDED_RUN_STEMS]
 
     plt.rcParams.update(PAPER_RCPARAMS)
-    display = dict(METHOD_DISPLAY)
+    display = dict(base_display)
     overrides = dict(kv.split("=", 1) for kv in args.relabel)
     display = {m: (overrides.get(m, lbl), c) for m, (lbl, c) in display.items()}
     if args.methods:
@@ -118,7 +151,7 @@ def main() -> None:
     if args.dims:
         records = [r for r in records if r["dim"] in set(args.dims)]
     dims = sorted({r["dim"] for r in records})
-    fig, axes = plt.subplots(1, len(dims), figsize=(7.2 * len(dims), 7.0), sharey=True, squeeze=False)
+    fig, axes = plt.subplots(1, len(dims), figsize=(7.2 * len(dims), args.fig_height), sharey=True, squeeze=False)
     axes = axes[0]
     for ax, dim in zip(axes, dims, strict=True):
         for method, (label, color) in display.items():
@@ -146,7 +179,7 @@ def main() -> None:
         ax.set_title(PARAM_LABEL.get(dim, f"d{dim}"))
         ax.set_xlabel("Tokens trained")
         ax.grid(True, which="major", linewidth=0.5, alpha=0.35)
-    axes[0].set_ylabel("Uncheatable Eval macro bpb (frozen 2025-09 snapshot)")
+    axes[0].set_ylabel("BPB (Uncheatable Eval)")
     handles, labels = axes[0].get_legend_handles_labels()
     for ax in axes[1:]:
         for h, ll in zip(*ax.get_legend_handles_labels(), strict=True):
@@ -159,10 +192,10 @@ def main() -> None:
         labels,
         loc="lower center",
         ncol=ncol,
-        bbox_to_anchor=(0.5, -0.12 if args.legend_size is None else -0.2),
+        bbox_to_anchor=(0.5, (-0.12 if args.legend_size is None else -0.2) * 7.0 / args.fig_height),
         fontsize=args.legend_size,
     )
-    stem = OUT_DIR / f"olmixexact_uncheatable_macro_bpb_by_size{args.suffix}"
+    stem = OUT_DIR / f"{'natural' if args.natural else 'olmixexact'}_uncheatable_macro_bpb_by_size{args.suffix}"
     fig.savefig(stem.with_suffix(".png"), dpi=200, bbox_inches="tight", pad_inches=0.3)
     fig.savefig(stem.with_suffix(".pdf"), bbox_inches="tight", pad_inches=0)
     logger.info("Wrote %s.{png,pdf}", stem)

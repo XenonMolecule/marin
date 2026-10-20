@@ -136,6 +136,13 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "same plan into fresh WandB runs and checkpoint dirs.",
     )
     parser.add_argument(
+        "--no-canonical-summary",
+        action="store_true",
+        help="With --run-suffix: do NOT also write the summary under the unsuffixed run name. "
+        "Sweep points share a run_name_core, so the canonical copy would be whichever point "
+        "finished last; rescue/retry runs want it, sweeps do not.",
+    )
+    parser.add_argument(
         "--results-prefix",
         default=DEFAULT_RESULTS_PREFIX,
         help="GCS prefix where the per-run summary.json is written on training completion.",
@@ -888,6 +895,7 @@ def main(argv: list[str] | None = None) -> None:
         region=region,
         with_uncheatable_eval=True,
         with_paloma=True,
+        batch_size=plan.batch_size,
     )
     _assert_all_components_local(tokenized, region)
     # Simulated epoching semantics:
@@ -1081,7 +1089,7 @@ def main(argv: list[str] | None = None) -> None:
     # When a run-suffix is in play (rescue/retry runs), also write the summary
     # under the canonical (no-suffix) name so the dashboard + plotter pick it
     # up without manual copy. The suffixed copy stays for provenance.
-    if args.run_suffix.strip():
+    if args.run_suffix.strip() and not args.no_canonical_summary:
         _write_summary(summary, args.results_prefix, plan.run_name_core)
 
     # 8. Write a completion marker so the coordinator can skip this run on

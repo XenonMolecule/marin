@@ -29,10 +29,14 @@ ARM_SUBSTRING = "_mix_cultural_clp"  # matches every cultural arm variant (lambd
 # Candidate checkpoint regions per arm prefix (the sweep's --allowed-regions).
 ARM_REGIONS: dict[str, tuple[str, ...]] = {
     "curation-dclm_10k": ("us-east5", "us-central1", "us-central2", "us-west4", "europe-west4"),
-    "curation-lpv11_10k": ("us-east5", "us-east1", "us-central1"),
+    # Keep these in sync with each arm's grid-store copies: a region missing here makes
+    # every cell trained there invisible to eval waves (2026-09-22: resiliparse still
+    # read us-east5-only after its 09-17 us-central2 copy, hiding 13 trained cells).
+    # Extra regions are safe — find_checkpoint still requires the FINAL step export.
+    "curation-lpv11_10k": ("us-east5", "us-east1", "us-central1", "us-central2"),
     "curation-nemotron_full_10k": ("us-east5", "us-central1"),
-    "curation-resiliparse_10k": ("us-east5",),
-    "curation-lpv11_fastpipe_v2_10k": ("us-east5", "us-central1", "us-east1"),
+    "curation-resiliparse_10k": ("us-east5", "us-central2"),
+    "curation-lpv11_fastpipe_v2_10k": ("us-east5", "us-central1", "us-east1", "europe-west4"),
     "curation-fineweb_cc_10k": ("us-east5", "us-central1", "us-central2"),
     "curation-fineweb_edu_10k": ("us-central2", "us-east5", "us-central1", "europe-west4"),
 }
@@ -72,13 +76,20 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--out", required=True)
+    ap.add_argument("--arm-substring", default=ARM_SUBSTRING,
+                    help="Run-name filter; default cultural arms. Use '_mix_mmlu_' for the MMLU sweep.")
+    ap.add_argument("--include-retired", action="store_true",
+                    help="Also include the retired `_clp_lambda0p01` generation (mislabeled-lambda "
+                    "arms killed 2026-09-14). Excluded by default: they are never plotted, so "
+                    "evaluating them wastes eval capacity (user direction 2026-09-19).")
     args = ap.parse_args()
 
     fs = fsspec.filesystem("gcs")
     runs = [
         p.rsplit("/", 1)[-1].removesuffix(".json")
         for p in fs.ls(RESULTS_ROOT, detail=False)
-        if ARM_SUBSTRING in p and p.endswith(".json")
+        if args.arm_substring in p and p.endswith(".json")
+        and (args.include_retired or "_clp_lambda0p01-" not in p)
     ]
     rows, missing = [], []
     for run in sorted(runs):

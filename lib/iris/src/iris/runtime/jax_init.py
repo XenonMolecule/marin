@@ -11,6 +11,7 @@ JAX is imported at call time — iris does not depend on jax.
 
 import atexit
 import enum
+import hashlib
 import logging
 import os
 import time
@@ -259,8 +260,17 @@ def _parse_local_device_ids(raw: str | None) -> list[int] | None:
     return [int(part) for part in raw.split(",") if part]
 
 
-def _attempt_endpoint_name(endpoint_name: str, attempt_id: int) -> str:
-    return f"{endpoint_name}-attempt-{attempt_id}"
+def _attempt_endpoint_name(endpoint_name: str, job_id: object, attempt_id: int) -> str:
+    """Coordinator endpoint name unique to this job AND attempt.
+
+    The endpoint registry is namespaced by the ROOT job, so sibling gangs launched by one
+    coordinator share a namespace; naming the endpoint by attempt alone lets two siblings whose
+    task-0 attempts coincide register the same name and cross-connect their gangs (every task
+    then aborts at the coordination-service init timeout). A job-id digest keeps the name flat
+    (no "/") while making it unique per child job.
+    """
+    job_tag = hashlib.sha1(str(job_id).encode()).hexdigest()[:12]
+    return f"{endpoint_name}-{job_tag}-attempt-{attempt_id}"
 
 
 def _register_coordinator(job_info: JobInfo, port: int | None, endpoint_name: str) -> str:
@@ -383,7 +393,7 @@ def initialize_jax(
 
     job_info = get_job_info()
     if job_info is not None:
-        endpoint_name = _attempt_endpoint_name(endpoint_name, job_info.attempt_id)
+        endpoint_name = _attempt_endpoint_name(endpoint_name, job_info.job_id, job_info.attempt_id)
     _log_jax_bootstrap_inputs(job_info, port=port, endpoint_name=endpoint_name)
 
     # Supervised (multi-process-per-task) mode short-circuits the task-derived

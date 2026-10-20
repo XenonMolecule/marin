@@ -44,7 +44,7 @@ CORPUS_DISPLAY = {
     "lpv11_fastpipe_v2_10k": ("fastpipe_v2", "#006d2c"),
     "resiliparse_10k": ("Resiliparse", "#9467bd"),
     "nemotron_full_10k": ("Nemotron-CC", "#ff7f0e"),
-    "fineweb_cc_10k": ("FineWeb-CC", "#e377c2"),
+    "fineweb_cc_10k": ("FineWeb", "#e377c2"),
     "fineweb_edu_10k": ("FineWeb-Edu (natural)", "#17becf"),
 }
 SIZE_PARAMS = {512: 157e6, 1536: 998e6}

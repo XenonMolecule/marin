@@ -101,38 +101,87 @@ def _register_completed_warc(warc_hash: str, registry_prefix: str) -> None:
 # re-probes long-finished WARCs forever (billions of class-B GETs fleet-wide).
 # We force a fresh listing, throttled per prefix so spinning workers don't turn
 # the registry itself into a LIST hotspot.
+#
+# At 32k registry entries a paged listing is 32 class-A ops; ~200 workers
+# refreshing every 60s is ~$40-50/day of pure bookkeeping. Finishers therefore
+# maintain a single SUMMARY object (the whole done-set as one JSON) inside the
+# registry dir; between full listings, a refresh is one small GET. Entries only
+# ever get added, so results are unioned monotonically — a stale or partial
+# summary can at worst under-report, which the claim system already tolerates.
+# Prefixes with no summary writer (the per-WARC registries of the two-phase
+# pipeline) fall back to the paged listing exactly as before.
 REGISTRY_FRESH_SECONDS = 60.0
-_registry_cache: dict[str, tuple[float, set[str]]] = {}
+REGISTRY_FULL_LIST_SECONDS = 1800.0
+# The summary lives BESIDE the registry directory, never inside it: several consumers
+# (the fused coordinator's finite-work check among them) list the directory and parse
+# every basename as a shard id, and a foreign object inside crashes them.
+REGISTRY_SUMMARY_SUFFIX = "_summary.json"
+_registry_cache: dict[str, tuple[float, float, set[str]]] = {}  # prefix -> (last_refresh, last_full_list, hashes)
+
+
+def _list_registry_hashes(fs, registry_prefix: str) -> set[str]:
+    """One fresh paged listing of the registry directory -> done-hash set."""
+    hashes = set()
+    for p in fs.ls(registry_prefix.replace("gs://", ""), refresh=True):
+        basename = p.rsplit("/", 1)[-1]
+        if basename.startswith("data-"):
+            hashes.add(basename[5:])
+    return hashes
+
+
+def _write_registry_summary(registry_prefix: str) -> None:
+    """Rewrite the registry's summary object from a fresh listing. Best-effort, idempotent.
+
+    Called by shard finishers; readers then refresh via one GET instead of a paged
+    listing. Concurrent writers race benignly: every write is a full fresh listing,
+    and readers union, so the freshest write wins and a lost update only delays
+    visibility of entries the next write (or the reader's slow full listing) restores.
+    """
+    try:
+        fs = fsspec.filesystem("gcs")
+        hashes = _list_registry_hashes(fs, registry_prefix)
+        with fsspec.open(f"{registry_prefix.rstrip('/')}{REGISTRY_SUMMARY_SUFFIX}", "w") as f:
+            json.dump({"written": time.time(), "hashes": sorted(hashes)}, f)
+    except Exception as e:
+        logger.warning("Failed to write registry summary for %s: %s", registry_prefix, e)
 
 
 def _load_completed_registry(registry_prefix: str) -> set[str]:
-    """List the completed registry directory and return set of done hashes.
+    """Return the done-hash set for a registry prefix, cheaply.
 
-    Single list operation against one GCS bucket — much cheaper than scanning
-    6 regional buckets. The listing bypasses gcsfs's process-lifetime dircache
-    (see REGISTRY_FRESH_SECONDS above) but is served from a local cache for
-    REGISTRY_FRESH_SECONDS between real listings. Returns the last good result
+    Serves the in-process cache for REGISTRY_FRESH_SECONDS; then refreshes from the
+    summary object (one GET); a full paged listing runs only every
+    REGISTRY_FULL_LIST_SECONDS, or when no summary exists. All refreshes UNION into
+    the cached set (the registry is append-only). Returns the last good result
     (or empty set) on error — graceful fallback to per-WARC checks.
     """
     now = time.time()
     cached = _registry_cache.get(registry_prefix)
     if cached is not None and now - cached[0] < REGISTRY_FRESH_SECONDS:
-        return cached[1]
+        return cached[2]
+    last_full = cached[1] if cached is not None else 0.0
+    hashes = set(cached[2]) if cached is not None else set()
     fs = fsspec.filesystem("gcs")
-    prefix = registry_prefix.replace("gs://", "")
+    if cached is not None and now - last_full < REGISTRY_FULL_LIST_SECONDS:
+        try:
+            with fsspec.open(f"{registry_prefix.rstrip('/')}{REGISTRY_SUMMARY_SUFFIX}", "r") as f:
+                hashes |= set(json.load(f)["hashes"])
+            _registry_cache[registry_prefix] = (now, last_full, hashes)
+            return hashes
+        except FileNotFoundError:
+            pass  # no summary writer for this prefix: fall through to the full listing
+        except Exception as e:
+            logger.warning("Failed to read registry summary %s: %s (keeping cached set)", registry_prefix, e)
+            _registry_cache[registry_prefix] = (now, last_full, hashes)
+            return hashes
     try:
-        paths = fs.ls(prefix, refresh=True)
-        hashes = set()
-        for p in paths:
-            basename = p.rsplit("/", 1)[-1]
-            if basename.startswith("data-"):
-                hashes.add(basename[5:])
-        logger.info("Loaded completed registry from %s: %d WARCs", registry_prefix, len(hashes))
-        _registry_cache[registry_prefix] = (now, hashes)
+        hashes |= _list_registry_hashes(fs, registry_prefix)
+        logger.info("Loaded completed registry from %s: %d entries (full listing)", registry_prefix, len(hashes))
+        _registry_cache[registry_prefix] = (now, now, hashes)
         return hashes
     except Exception as e:
         logger.warning("Failed to load completed registry %s: %s (falling back to per-WARC checks)", registry_prefix, e)
-        return cached[1] if cached is not None else set()
+        return hashes
 
 
 # ---------------------------------------------------------------------------

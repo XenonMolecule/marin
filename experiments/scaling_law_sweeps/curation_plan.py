@@ -31,8 +31,10 @@ from experiments.scaling_law_sweeps.completed_adamh import (
 from experiments.scaling_law_sweeps.data_curation_math import (
     TOTAL_WARCS_CC,
     CurationMethod,
+    EpochedCurationMethod,
     GridMixCurationMethod,
     ReweightedCurationMethod,
+    StagedCurationMethod,
     implicit_target_exp_a,
     load_d_obs_from_stats,
     slice_tokens_for,
@@ -263,6 +265,19 @@ _D_OBS_DEFAULTS: dict[str, int] = {
     "sysprompt30b_669m_3e19_B-v1": 7723866931,
     "sysprompt30b_669m_3e19_C-v1": 7595137729,
     "sysprompt30b_669m_3e19_D-v1": 7658511785,
+    # 447M @ 9e18 (d1024, B16) — the data-efficient cell for the hp1 sweep
+    "sysprompt30b_447m_9e18_A-v1": 3658826002,
+    "sysprompt30b_447m_9e18_C-v1": 3599978614,
+    "sysprompt30b_447m_9e18_D-v1": 3629444380,
+    # 998M @ 4.8e19 (d1536, B32, ~8B tokens): data-efficient 1B cell
+    "sysprompt30b_998m_4p8e19_A-v1": 7905700747,
+    "sysprompt30b_998m_4p8e19_C-v1": 7775833179,
+    "sysprompt30b_998m_4p8e19_D-v1": 7840834138,
+    # probe1: AM = A's tokens with loss masked on [S] (same total as A); AH/CT = first 80% /
+    # last 20% of the ab shards, conditioned / bare, for the cooldown arm E.
+    "sysprompt30b_447m_9e18_AM-v1": 3658801976,
+    "sysprompt30b_447m_9e18_AH-v1": 2929490568,
+    "sysprompt30b_447m_9e18_CT-v1": 717637526,
     # --- WARC-scaling sweep subsamples (N ∈ {100, 500, 1000, 2000}) ---
     # Read 2026-04-29 from {bucket}/tokenized/{key}/train/.stats.json.
     # dclm: source us-central2; mirrored to us-central1.
@@ -374,6 +389,13 @@ _D_OBS_DEFAULTS: dict[str, int] = {
     # the parent's single-cache component and trains purely on grid cells. d_obs is therefore the
     # grid total from `grid_store`, which IS this corpus under the same tokenizer.
     "llm_pipeline_v1_1_decon_10364warcs-gridonly": 111_324_334_812,
+    # Extractor/selection ablation: lpv11's LLM-SELECTED documents with the text re-extracted by
+    # the resiliparse-rs fork. Like lpv11_10k this is a GRID-ONLY arm -- the tokenized/ path below
+    # is a sentinel that does not exist and is never read; the corpus is consumed as its 24x5 grid
+    # store. Token total from the store artifact (= validate_grid_domains), 80,472,692 docs:
+    # 15.2% fewer tokens than lpv11 at 0.32% fewer documents, i.e. the fork writes ~15% less text
+    # per page (1,173 vs 1,379 tokens/doc).
+    "llm_pipeline_v1_1_forkrs_decon_10364warcs-gridonly": 94_404_061_562,
     # Extractor ablation, arm B: exactly the lpv11_fastpipe_v2 post-decon document set with the
     # text re-extracted by upstream resiliparse (experiments/fast_curation/swap_extractor.py; no
     # dedup/decon of its own). 75,625,394 docs = A's 79,582,522 minus 3,957,128 pages whose
@@ -397,6 +419,7 @@ def _method(
     reproduce_per_region: bool = False,
     skip_stats_read: bool = True,
     pin_region: str | None = None,
+    loss_weights_key: str | None = None,
 ) -> CurationMethod:
     """Build a CurationMethod from a cache hash (the directory under tokenized/)."""
     if cache_hash not in _D_OBS_DEFAULTS:
@@ -426,6 +449,7 @@ def _method(
         sampled_warcs=sampled_warcs,
         reproduce_per_region=reproduce_per_region,
         pin_region=pin_region,
+        loss_weights_key=loss_weights_key,
     )
 
 
@@ -722,6 +746,26 @@ METHODS: dict[str, CurationMethod] = {
         "llm_pipeline_v1_1_decon_10364warcs-gridonly",
         "lpv11_10k",
         mixture_tag="_olmixexact_lambda0p01",
+    ),
+    # Same documents, same labels and the SAME fitted weights as lpv11_10k_mix_olmixexact above;
+    # only the extractor differs (resiliparse-rs fork instead of the LLM). vs lpv11_10k isolates
+    # LLM extraction; vs lpv11_fastpipe_v2_10k isolates LLM selection. Grid store us-east5 (mirror
+    # before launching, as the fastpipe_v2_upstreamrs sweep stalled for want of one).
+    "lpv11_forkrs_10k_mix_olmixexact_lambda0p01": _grid_mix_method(
+        "lpv11_forkrs_10k_mix_olmixexact_lambda0p01",
+        "llm_pipeline_v1_1_forkrs_decon_10364warcs-gridonly",
+        "lpv11_forkrs_10k",
+        mixture_tag="_olmixexact_lambda0p01",
+    ),
+    # lpv11's UNMIXED arm (user 2026-09-23). The corpus exists only as the 24x5 grid store, so
+    # "natural" is the grid sampled at each cell's natural token share -- the training stream
+    # is the corpus itself, on the identical tokens and d_obs the mix arm uses. Weights file =
+    # the `natural` field of the olmixexact solve, vendored as mixtures/lpv11_10k_natural.json.
+    "lpv11_10k_natural": _grid_mix_method(
+        "lpv11_10k_natural",
+        "llm_pipeline_v1_1_decon_10364warcs-gridonly",
+        "lpv11_10k",
+        r_stem="natural",
     ),
     # Nemotron olmixexact arm (fit solved 2026-09-04, 363/363 swarm runs, status=optimal).
     # Grid partitions the nemotron_10k base cache: grid total 10,130,086,891 vs base
@@ -1126,6 +1170,17 @@ METHODS: dict[str, CurationMethod] = {
         "lpv11_fastpipe_v2_10k",
         mixture_tag="_olmixexact_lambda0p01",
     ),
+    # Extractor ablation arm B mix: lpv11_fastpipe_v2's documents and labels with upstream
+    # resiliparse text, weighted by lpv11_fastpipe_v2's OWN olmixexact fit (the mixture file is a
+    # verbatim copy under B's corpus name; cells partition the same documents, so the solve
+    # transfers). Compare against lpv11_fastpipe_v2_10k_mix_olmixexact_lambda0p01 at identical
+    # documents, labels and weights. Grid store in us-east5 ONLY: launch with --allowed-regions.
+    "lpv11_fastpipe_v2_upstreamrs_10k_mix_olmixexact_lambda0p01": _grid_mix_method(
+        "lpv11_fastpipe_v2_upstreamrs_10k_mix_olmixexact_lambda0p01",
+        "lpv11_fastpipe_v2_upstreamrs_decon_10364warcs-41e20bf",
+        "lpv11_fastpipe_v2_upstreamrs_10k",
+        mixture_tag="_olmixexact_lambda0p01",
+    ),
     # fineweb_cc olmixexact arm (fit solved 2026-09-06, 363/363 swarm runs, status=optimal).
     # Grid total 28,004,162,093 vs base d_obs 28,004,233,781 — 72k tokens (2.6e-6 relative)
     # lost at grid materialization; same corpus. Grid store: us-east5/us-central1/us-central2.
@@ -1316,6 +1371,134 @@ METHODS: dict[str, CurationMethod] = {
     "sysprompt30b_669m_3e19_D": _method(
         "sysprompt30b_669m_3e19_D",
         "sysprompt30b_669m_3e19_D-v1",
+        sampled_warcs=EXPC_SAMPLED_WARCS,
+        pin_region="us-central1",
+    ),
+    "sysprompt30b_447m_9e18_A": _method(
+        "sysprompt30b_447m_9e18_A",
+        "sysprompt30b_447m_9e18_A-v1",
+        sampled_warcs=EXPC_SAMPLED_WARCS,
+        pin_region="us-central1",
+    ),
+    "sysprompt30b_447m_9e18_C": _method(
+        "sysprompt30b_447m_9e18_C",
+        "sysprompt30b_447m_9e18_C-v1",
+        sampled_warcs=EXPC_SAMPLED_WARCS,
+        pin_region="us-central1",
+    ),
+    "sysprompt30b_998m_4p8e19_A": _method(
+        "sysprompt30b_998m_4p8e19_A",
+        "sysprompt30b_998m_4p8e19_A-v1",
+        sampled_warcs=EXPC_SAMPLED_WARCS,
+        pin_region="us-central1",
+    ),
+    "sysprompt30b_998m_4p8e19_C": _method(
+        "sysprompt30b_998m_4p8e19_C",
+        "sysprompt30b_998m_4p8e19_C-v1",
+        sampled_warcs=EXPC_SAMPLED_WARCS,
+        pin_region="us-central1",
+    ),
+    "sysprompt30b_998m_4p8e19_D": _method(
+        "sysprompt30b_998m_4p8e19_D",
+        "sysprompt30b_998m_4p8e19_D-v1",
+        sampled_warcs=EXPC_SAMPLED_WARCS,
+        pin_region="us-central1",
+    ),
+    "sysprompt30b_447m_9e18_D": _method(
+        "sysprompt30b_447m_9e18_D",
+        "sysprompt30b_447m_9e18_D-v1",
+        sampled_warcs=EXPC_SAMPLED_WARCS,
+        pin_region="us-central1",
+    ),
+    "sysprompt30b_447m_9e18_AM": _method(
+        "sysprompt30b_447m_9e18_AM",
+        "sysprompt30b_447m_9e18_AM-v1",
+        sampled_warcs=EXPC_SAMPLED_WARCS,
+        pin_region="us-central1",
+        loss_weights_key="loss_weights",
+    ),
+    # 2-, 4- and 8-epoch runs over the 447m_9e18 caches (reshuffled every pass).
+    "sysprompt30b_447m_9e18_A_ep2": EpochedCurationMethod(
+        name="sysprompt30b_447m_9e18_A_ep2",
+        tokenized_rel_path="tokenized/sysprompt30b_447m_9e18_A-v1/",
+        d_obs_tokens=3658826002,
+        epochs=2,
+        sampled_warcs=EXPC_SAMPLED_WARCS,
+        pin_region="us-central1",
+    ),
+    "sysprompt30b_447m_9e18_A_ep4": EpochedCurationMethod(
+        name="sysprompt30b_447m_9e18_A_ep4",
+        tokenized_rel_path="tokenized/sysprompt30b_447m_9e18_A-v1/",
+        d_obs_tokens=3658826002,
+        epochs=4,
+        sampled_warcs=EXPC_SAMPLED_WARCS,
+        pin_region="us-central1",
+    ),
+    "sysprompt30b_447m_9e18_C_ep2": EpochedCurationMethod(
+        name="sysprompt30b_447m_9e18_C_ep2",
+        tokenized_rel_path="tokenized/sysprompt30b_447m_9e18_C-v1/",
+        d_obs_tokens=3599978614,
+        epochs=2,
+        sampled_warcs=EXPC_SAMPLED_WARCS,
+        pin_region="us-central1",
+    ),
+    "sysprompt30b_447m_9e18_C_ep4": EpochedCurationMethod(
+        name="sysprompt30b_447m_9e18_C_ep4",
+        tokenized_rel_path="tokenized/sysprompt30b_447m_9e18_C-v1/",
+        d_obs_tokens=3599978614,
+        epochs=4,
+        sampled_warcs=EXPC_SAMPLED_WARCS,
+        pin_region="us-central1",
+    ),
+    "sysprompt30b_447m_9e18_D_ep2": EpochedCurationMethod(
+        name="sysprompt30b_447m_9e18_D_ep2",
+        tokenized_rel_path="tokenized/sysprompt30b_447m_9e18_D-v1/",
+        d_obs_tokens=3629444380,
+        epochs=2,
+        sampled_warcs=EXPC_SAMPLED_WARCS,
+        pin_region="us-central1",
+    ),
+    "sysprompt30b_447m_9e18_D_ep4": EpochedCurationMethod(
+        name="sysprompt30b_447m_9e18_D_ep4",
+        tokenized_rel_path="tokenized/sysprompt30b_447m_9e18_D-v1/",
+        d_obs_tokens=3629444380,
+        epochs=4,
+        sampled_warcs=EXPC_SAMPLED_WARCS,
+        pin_region="us-central1",
+    ),
+    "sysprompt30b_447m_9e18_A_ep8": EpochedCurationMethod(
+        name="sysprompt30b_447m_9e18_A_ep8",
+        tokenized_rel_path="tokenized/sysprompt30b_447m_9e18_A-v1/",
+        d_obs_tokens=3658826002,
+        epochs=8,
+        sampled_warcs=EXPC_SAMPLED_WARCS,
+        pin_region="us-central1",
+    ),
+    "sysprompt30b_447m_9e18_C_ep8": EpochedCurationMethod(
+        name="sysprompt30b_447m_9e18_C_ep8",
+        tokenized_rel_path="tokenized/sysprompt30b_447m_9e18_C-v1/",
+        d_obs_tokens=3599978614,
+        epochs=8,
+        sampled_warcs=EXPC_SAMPLED_WARCS,
+        pin_region="us-central1",
+    ),
+    "sysprompt30b_447m_9e18_D_ep8": EpochedCurationMethod(
+        name="sysprompt30b_447m_9e18_D_ep8",
+        tokenized_rel_path="tokenized/sysprompt30b_447m_9e18_D-v1/",
+        d_obs_tokens=3629444380,
+        epochs=8,
+        sampled_warcs=EXPC_SAMPLED_WARCS,
+        pin_region="us-central1",
+    ),
+    # E: conditioned head for the first 80% of documents, bare tail for the last 20%,
+    # switched by Levanter's step-scheduled mixture (see StagedCurationMethod).
+    "sysprompt30b_447m_9e18_E": StagedCurationMethod(
+        name="sysprompt30b_447m_9e18_E",
+        tokenized_rel_path="tokenized/sysprompt30b_447m_9e18_AH-v1/",
+        d_obs_tokens=3647128094,
+        tail_rel_path="tokenized/sysprompt30b_447m_9e18_CT-v1/",
+        head_tokens=2929490568,
+        tail_tokens=717637526,
         sampled_warcs=EXPC_SAMPLED_WARCS,
         pin_region="us-central1",
     ),

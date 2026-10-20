@@ -110,6 +110,10 @@ METHOD_NAMES: tuple[str, ...] = (
     # us-east1 + us-central1 only, so launch with those --allowed-regions. This corpus has
     # no natural arm (see curation_plan) -- the mix is trainable but not mix-vs-natural.
     "lpv11_10k_mix_olmixexact_lambda0p01",
+    # lpv11 documents + labels, fork-extracted text. Grid store us-east5 (+ mirrors).
+    "lpv11_forkrs_10k_mix_olmixexact_lambda0p01",
+    # ...until 2026-09-23: the grid sampled at natural token shares IS the unmixed corpus.
+    "lpv11_10k_natural",
     # Cultural-targeted mixes (user 2026-09-13): d512 + d1536 sweeps only.
     "dclm_10k_mix_cultural_clp_lambda0p01",
     "lpv11_10k_mix_cultural_clp_lambda0p01",
@@ -180,6 +184,8 @@ METHOD_NAMES: tuple[str, ...] = (
     # Extractor ablation arm B: lpv11_fastpipe_v2's documents with upstream resiliparse text;
     # cache in us-east5 only.
     "lpv11_fastpipe_v2_upstreamrs",
+    # Its mix arm: lpv11_fastpipe_v2's olmixexact weights applied verbatim; store in us-east5 only.
+    "lpv11_fastpipe_v2_upstreamrs_10k_mix_olmixexact_lambda0p01",
     "fastpipe_v3_100",
     "fastpipe_v3_80",
     "fastpipe_v3_60",
@@ -336,6 +342,36 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "training: the default behaviour re-dispatches every incomplete cell, which duplicates "
         "live runs. Errors if a pattern matches nothing.",
     )
+    p.add_argument(
+        "--force-primary-tpu",
+        default=None,
+        help="Pin every selected cell to this exact TPU shape with NO v4/v5p alternatives "
+        "(e.g. 'v6e-128'). For regions whose only capacity is a family the planner does not "
+        "emit, like eu-west4 v6e; pair with --allowed-regions and --only so the shape "
+        "actually fits the selected cells.",
+    )
+    p.add_argument(
+        "--children-non-preemptible",
+        action="store_true",
+        help="Submit children with preemptible=False so they can land on RESERVED pools "
+        "(tpu_v4-reserved_* in us-central2). Reserve capacity is shared and precious — "
+        "use only for explicitly prioritized cells.",
+    )
+    p.add_argument(
+        "--run-suffix",
+        default="",
+        help="Train under '<stem>-<suffix>' with a suffixed output path — a hedge/rescue "
+        "run that CANNOT collide with the canonical cell. First finisher gets adopted; "
+        "stop the losers.",
+    )
+    p.add_argument(
+        "--child-env",
+        nargs="+",
+        default=[],
+        metavar="KEY=VALUE",
+        help="Extra environment variables for the training children, e.g. PYTHONFAULTHANDLER=1 to get a "
+        "Python stack on a segfault.",
+    )
     p.add_argument("--wandb-project", default="marin")
     p.add_argument("--wandb-entity", default="marin-community")
     p.add_argument("--wandb-group", default=DEFAULT_WANDB_GROUP)
@@ -403,9 +439,11 @@ def main(argv: list[str] | None = None) -> None:
         wandb_entity=args.wandb_entity,
         wandb_group=args.wandb_group,
         allowed_regions=args.allowed_regions,  # None = float all regions; set to constrain (see --allowed-regions)
-        run_suffix="",
+        run_suffix=args.run_suffix,
+        extra_env=dict(kv.split("=", 1) for kv in args.child_env) or None,
         wandb_mode=args.wandb_mode,
-        force_primary_tpu=None,
+        force_primary_tpu=args.force_primary_tpu,
+        child_preemptible=not args.children_non_preemptible,
         results_prefix=args.results_prefix,
     )
     logger.info(

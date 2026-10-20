@@ -382,6 +382,44 @@ def test_prebuilt_cache_with_loss_weights(tmp_path):
     np.testing.assert_array_equal(np.asarray(example.loss_weight), expected_loss_weight)
 
 
+def test_prebuilt_cache_stream_chunks_tokens_and_loss_weights(tmp_path):
+    """stream=True cuts records into seq_len windows like a text cache, weights in lockstep."""
+    records = [
+        {"input_ids": [1, 2, 3], "loss_weights": [0.0, 0.0, 1.0]},
+        {"input_ids": [4, 5, 6, 7, 8], "loss_weights": [1.0, 0.0, 1.0, 1.0, 1.0]},
+    ]
+    data_path = tmp_path / "prebuilt_stream.jsonl"
+    with data_path.open("w") as f:
+        for record in records:
+            f.write(json.dumps(record) + "\n")
+
+    component = DatasetComponent(
+        source=UrlDatasetSourceConfig(train_urls=[str(data_path)], validation_urls=[]),
+        format=PrebuiltLmDatasetFormat(loss_weights_key="loss_weights", stream=True),
+        cache_dir=str(tmp_path),
+    )
+    config = LmDataConfig(components={"prebuilt": component}, tokenizer="passthrough", vocab_size=16)
+
+    cache = config.build_caches("train")["prebuilt"]
+    Pos = hax.Axis("position", 4)
+    ds = dataset_for_component(
+        component,
+        Pos,
+        cache,
+        eos_id=None,
+        block_cross_document_attention=config.block_cross_document_attention,
+    ).as_sync_dataset()
+
+    assert len(ds) == 2  # 8 tokens -> two windows of 4, records split across the boundary
+    first, second = ds[0], ds[1]
+    np.testing.assert_array_equal(np.asarray(first.tokens), np.array([1, 2, 3, 4], dtype=np.int32))
+    np.testing.assert_array_equal(np.asarray(second.tokens), np.array([5, 6, 7, 8], dtype=np.int32))
+    # record weights, cut at the window boundary, then the causal mask zeroes each window's last position
+    dt = np.asarray(first.loss_weight).dtype
+    np.testing.assert_array_equal(np.asarray(first.loss_weight), np.array([0.0, 0.0, 1.0, 0.0], dtype=dt))
+    np.testing.assert_array_equal(np.asarray(second.loss_weight), np.array([0.0, 1.0, 1.0, 0.0], dtype=dt))
+
+
 def test_build_caches_surfaces_component_failure(tmp_path):
     """A component that cannot be classified must raise out of build_caches, not
     be swallowed by the classification thread pool.

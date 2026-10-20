@@ -187,10 +187,19 @@ def _reshape(files: list[str], output_path: str, n_out: int = NUM_RESHAPE_SHARDS
     buckets = [files[i::n_out] for i in range(n_out)]
     template = f"{output_path}/data-{{shard:05d}}-of-{n_out:05d}.jsonl.gz"
     pipeline = Dataset.from_iterable(buckets).flat_map(_reshape_bucket).write_jsonl(template, skip_existing=True)
+    # Preemptible stage coordinator: reshape resumes via skip_existing, so a preempted
+    # coordinator only costs a pipeline retry — and the default no-preemptible actor
+    # cannot seat when the region's tiny on-demand CPU pool is full (us-east1, 2026-09-26:
+    # 59 straight 900s actor-ready timeouts). Stages that cannot resume (normalize) keep
+    # the no-preemptible default.
     ctx = ZephyrContext(
         name="reshape-fastcur",
         max_workers=200,
-        resources=ResourceConfig(cpu=1, ram="14g", disk="10g"),
+        resources=ResourceConfig(cpu=1, ram="14g", disk="10g", regions=["us-east1"]),
+        # The pipeline ships every kept_text path into the coordinator actor (800 buckets x
+        # 2,500 paths at 2M WARCs ≈ hundreds of MB pickled): the default 1g coordinator
+        # OOM-kills before its first log line (2026-09-27, attempts c/d/e).
+        coordinator_resources=ResourceConfig(cpu=0.5, ram="8g", preemptible=False),
     )
     ctx.execute(pipeline)
     return {"success": True, "input_files": len(files), "output_shards": n_out}
@@ -245,7 +254,13 @@ def _apply_fuzzy_dups(normalize_step_obj: StepSpec, fuzzy_step_obj: StepSpec, ou
         .reshard(len(shard_pairs))
         .write_jsonl(f"{output_path}/data-{{shard:05d}}-of-{{total:05d}}.jsonl.gz", skip_existing=True)
     )
-    ctx = ZephyrContext(name="apply-fuzzy-dups", max_workers=200, resources=ResourceConfig(cpu=1, ram="14g", disk="10g"))
+    # Preemptible coordinator: apply resumes via skip_existing (see reshape note).
+    ctx = ZephyrContext(
+        name="apply-fuzzy-dups",
+        max_workers=200,
+        resources=ResourceConfig(cpu=1, ram="14g", disk="10g", regions=["us-east1"]),
+        coordinator_resources=ResourceConfig(cpu=0.5, ram="8g", preemptible=False),
+    )
     ctx.execute(pipeline)
     return {"success": True, "shards": len(shard_pairs)}
 
@@ -294,7 +309,7 @@ def build_steps(
         # other shard passed). The whale needs the headroom; the fleet is fine far below it.
         # The whale grows with corpus size: 96g OOMed at 500k WARCs (2026-09-08), so the ceiling
         # is a CLI knob (--normalize-ram; 192g cleared 500k).
-        worker_resources=ResourceConfig(cpu=1, ram=normalize_ram, disk="10g"),
+        worker_resources=ResourceConfig(cpu=1, ram=normalize_ram, disk="10g", regions=["us-east1"]),
         override_output_path=f"{bucket}/normalize",
     )
     minhash = compute_minhash_attrs_step(
@@ -312,7 +327,7 @@ def build_steps(
         # sampled exceeds 500k chars), which is exactly why it would never have shown up in the
         # results and would instead sit as an unexplained asymmetry.
         text_cap_chars=None,
-        worker_resources=ResourceConfig(cpu=5, ram="32g", disk="5g", preemptible=True),
+        worker_resources=ResourceConfig(cpu=5, ram="32g", disk="5g", preemptible=True, regions=["us-east1"]),
         override_output_path=f"{bucket}/minhash",
     )
     fuzzy = compute_fuzzy_dups_attrs_step(
@@ -322,7 +337,7 @@ def build_steps(
         # 128g: this corpus (~10k WARCs) is larger than the 3k-WARC methods, so bump above the 64g
         # reference default; cc_resume protects progress if it still OOMs and has to be relaunched at
         # 192g. preemptible widens the schedulable pool ~10x.
-        worker_resources=ResourceConfig(cpu=1, ram="128g", disk="10g", preemptible=True),
+        worker_resources=ResourceConfig(cpu=1, ram="128g", disk="10g", preemptible=True, regions=["us-east1"]),
         cc_resume=True,
         override_output_path=f"{bucket}/fuzzy",
     )

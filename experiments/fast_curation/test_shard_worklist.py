@@ -57,6 +57,28 @@ def test_build_layout_and_refuse_rebuild(local_central):
         sw.build(SPEC, WARCS, n_shards=4, regions=["us-east5"], seed=0)
 
 
+def test_extend_appends_shards_and_leaves_existing_ones_untouched(local_central):
+    sw.build(SPEC, WARCS, n_shards=4, regions=["us-east5"], seed=0)
+    before = {s: sw.load_shard(SPEC, s) for s in range(4)}
+    extra = [f"s3://commoncrawl/projects/x/CC-SUPPLEMENTAL-2026-22/warc/{i:05d}.warc.gz" for i in range(5)]
+
+    sw.extend(SPEC, extra, warcs_per_shard=2, regions=["us-central2"])
+
+    index = sw.load_index(SPEC)
+    assert [e["shard"] for e in index] == [0, 1, 2, 3, 4, 5, 6]
+    assert [(e["n_warcs"], e["region"]) for e in index[4:]] == [
+        (2, "us-central2"),
+        (2, "us-central2"),
+        (1, "us-central2"),
+    ]
+    assert {s: sw.load_shard(SPEC, s) for s in range(4)} == before
+    assert sorted(w for s in (4, 5, 6) for w, _ in sw.load_shard(SPEC, s)) == sorted(extra)
+    with fsspec.open(sw.index_path(SPEC).replace("_index.parquet", "_index.before-00004.parquet"), "rb") as fh:
+        assert pq.read_table(fh).num_rows == 4
+    with pytest.raises(ValueError, match="already in the layout"):
+        sw.extend(SPEC, extra[:1], warcs_per_shard=2, regions=["us-central2"])
+
+
 def test_process_warc_v3_tokenizes_from_text_and_writes_kept_v3(tmp_path, monkeypatch):
     """END TO END for the V3 contract: presurvivor carries only text; B must tokenize it, route the
     band, write KEPT_V3 (with n_tokens + both probs), and return a complete catalog row."""

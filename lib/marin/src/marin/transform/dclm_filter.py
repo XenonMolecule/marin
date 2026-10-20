@@ -40,7 +40,9 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
-from zephyr import Dataset, ZephyrContext, load_file
+from zephyr.dataset import Dataset
+from zephyr.execution import ZephyrContext
+from zephyr.readers import load_file
 
 logger = logging.getLogger(__name__)
 
@@ -784,7 +786,7 @@ def _get_or_init_pipeline(config: DclmFilterConfig) -> Callable[[dict], list[dic
 
 def _apply_dclm_pipeline(record: dict) -> list[dict]:
     """Per-record function called by Zephyr. Lazy-inits the pipeline on first call."""
-    from zephyr import zephyr_worker_ctx
+    from zephyr.worker_context import zephyr_worker_ctx
 
     ctx = zephyr_worker_ctx()
     config: DclmFilterConfig = ctx.get_shared("dclm_config")

@@ -49,11 +49,18 @@ METHOD_DISPLAY: dict[str, tuple[str, str]] = {
     # only unclaimed tab10 hue that reads against the locked assignments above.
     "lpv11_10k_mix_olmixexact_lambda0p01": ("lpv11 (LLM extract)", "#74c476"),
     "lpv11_fastpipe_v2_10k_mix_olmixexact_lambda0p01": ("fastpipe_v2", "#006d2c"),
+    # Same corpus and weights as fastpipe_v2, upstream-resiliparse text instead of the fork's.
+    # Locked resiliparse purple: this arm IS upstream resiliparse extraction.
+    "lpv11_fastpipe_v2_upstreamrs_10k_mix_olmixexact_lambda0p01": ("fastpipe_v2 (upstream rslp)", "#9467bd"),
+    # lpv11 documents, fork extraction. Burnt umber, not a third green: it is the only hue left
+    # that clears the colorblind and normal-vision separation floors against every locked color
+    # here, including lpv11's own #74c476 (deutan dE 30.8, normal dE 36.3).
+    "lpv11_forkrs_10k_mix_olmixexact_lambda0p01": ("lpv11 (fork extract)", "#7f3b08"),
     "resiliparse_10k_mix_olmixexact_lambda0p01": ("Resiliparse", "#9467bd"),
     # Locked convention gives nemotron orange; its paper red would collide with lpv11 here.
     "nemotron_full_10k_mix_olmixexact_lambda0p01": ("Nemotron-CC", "#ff7f0e"),
     # Paper pink for fineweb_cc; cyan for fineweb_edu (its paper orange is taken by nemotron here).
-    "fineweb_cc_10k_mix_olmixexact_lambda0p01": ("FineWeb-CC", "#e377c2"),
+    "fineweb_cc_10k_mix_olmixexact_lambda0p01": ("FineWeb", "#e377c2"),
     "fineweb_edu_10k_mix_olmixexact_lambda0p01": ("FineWeb-Edu", "#17becf"),
 }
 
@@ -71,7 +78,9 @@ def _legend_label(method: str, base_label: str) -> str:
 
 
 def _tokens_label(x: float, _pos=None) -> str:
-    """Human token counts for axis ticks: 50M, 500M, 1B, 2B — never scientific notation."""
+    """Human token counts for axis ticks: 0, 50M, 500M, 1B, 2B — never scientific notation."""
+    if x == 0:
+        return "0"
     if x >= 1e9:
         return f"{x / 1e9:g}B"
     return f"{x / 1e6:g}M"
@@ -91,6 +100,8 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--methods", nargs="+", default=None, help="Subset of METHOD_DISPLAY keys (default: all).")
     parser.add_argument("--dims", type=int, nargs="+", default=None, help="Widths to plot (default: all present).")
     parser.add_argument("--legend-size", type=float, default=None, help="Legend font size override.")
+    parser.add_argument("--legend-ncol", type=int, default=None, help="Legend columns (default: auto).")
+    parser.add_argument("--fig-height", type=float, default=7.0, help="Figure height in inches (panels are 7.2in wide).")
     parser.add_argument("--suffix", default="", help="Filename suffix for filtered variants.")
     parser.add_argument(
         "--relabel",
@@ -98,6 +109,35 @@ def main(argv: list[str] | None = None) -> None:
         default=[],
         metavar="METHOD=LABEL",
         help="Override legend labels, e.g. lpv11_fastpipe_v1_10k_mix_olmixexact_lambda0p01='Generative Curation (ours)'.",
+    )
+    parser.add_argument(
+        "--recolor",
+        nargs="+",
+        default=[],
+        metavar="METHOD=COLOR",
+        help="Override line colors, e.g. high_quality_10k_mix_olmixexact_lambda0p01='#7f7f7f'.",
+    )
+    parser.add_argument(
+        "--note",
+        default=None,
+        help="One line drawn above the panels saying what is held fixed, e.g. "
+        "'Held fixed: LLM filter — varying: the extractor'. Keeps a controlled comparison self-describing.",
+    )
+    parser.add_argument(
+        "--marker",
+        nargs="+",
+        default=[],
+        metavar="METHOD=SHAPE",
+        help="Override point markers (matplotlib marker codes, e.g. 's', '^', 'D'). Pairs with a shared "
+        "hue so two runs in the same group read as a group while staying individually distinguishable.",
+    )
+    parser.add_argument(
+        "--linestyle",
+        nargs="+",
+        default=[],
+        metavar="METHOD=STYLE",
+        help="Override line styles (matplotlib style strings, e.g. '--', ':'). Lets a 2x2 design encode "
+        "one factor as hue and the other as dash, so both groupings read at once.",
     )
     args = parser.parse_args(argv)
 
@@ -108,10 +148,15 @@ def main(argv: list[str] | None = None) -> None:
     plt.rcParams.update(PAPER_RCPARAMS)
     display = METHOD_DISPLAY
     overrides = dict(kv.split("=", 1) for kv in args.relabel)
-    unknown_r = [m for m in overrides if m not in METHOD_DISPLAY]
+    color_overrides = dict(kv.split("=", 1) for kv in args.recolor)
+    style_overrides = dict(kv.split("=", 1) for kv in args.linestyle)
+    marker_overrides = dict(kv.split("=", 1) for kv in args.marker)
+    unknown_r = [
+        m for m in {**overrides, **color_overrides, **style_overrides, **marker_overrides} if m not in METHOD_DISPLAY
+    ]
     if unknown_r:
-        raise SystemExit(f"unknown --relabel methods: {unknown_r}")
-    display = {m: (overrides.get(m, lbl), c) for m, (lbl, c) in display.items()}
+        raise SystemExit(f"unknown --relabel/--recolor methods: {unknown_r}")
+    display = {m: (overrides.get(m, lbl), color_overrides.get(m, c)) for m, (lbl, c) in display.items()}
     if args.methods:
         unknown = [m for m in args.methods if m not in METHOD_DISPLAY]
         if unknown:
@@ -122,7 +167,7 @@ def main(argv: list[str] | None = None) -> None:
     if args.dims:
         dims = [d for d in dims if d in set(args.dims)]
         records = [r for r in records if r.hidden_dim in set(dims)]
-    fig, axes = plt.subplots(1, len(dims), figsize=(7.2 * len(dims), 7.0), sharey=True, squeeze=False)
+    fig, axes = plt.subplots(1, len(dims), figsize=(7.2 * len(dims), args.fig_height), sharey=True, squeeze=False)
     axes = axes[0]
 
     for ax, dim in zip(axes, dims):
@@ -132,17 +177,24 @@ def main(argv: list[str] | None = None) -> None:
             if not pts:
                 continue
             x, y = np.array([p[0] for p in pts]), np.array([p[1] for p in pts])
+            mk = marker_overrides.get(method, "o")
+            # marker goes on the line too so the legend handle carries it; it lands exactly under the
+            # scatter below, which is what gives every point its white rim.
             ax.plot(
                 x,
                 y,
-                "-",
+                style_overrides.get(method, "-"),
                 color=color,
                 linewidth=METHOD_LINEWIDTH.get(method, 3.0),
                 alpha=0.95,
+                marker=mk,
+                markersize=9.2,
+                markeredgecolor="white",
+                markeredgewidth=0.8,
                 label=_legend_label(method, label),
                 zorder=3,
             )
-            ax.scatter(x, y, color=color, s=85, edgecolors="white", linewidths=0.8, zorder=4)
+            ax.scatter(x, y, color=color, s=85, marker=mk, edgecolors="white", linewidths=0.8, zorder=4)
         ax.set_xscale("log")
         # 1-2-5 ticks collide once a panel spans more than ~1.6 decades; widen to decades.
         lo, hi = ax.get_xlim()
@@ -154,6 +206,17 @@ def main(argv: list[str] | None = None) -> None:
         ax.set_xlabel("Tokens trained")
         ax.grid(True, which="major", linewidth=0.5, alpha=0.35)
     axes[0].set_ylabel(METRIC_LABEL[args.metric])
+    if args.note:
+        # Sits above the per-panel titles; bbox_inches="tight" grows the canvas to fit it.
+        fig.text(
+            0.5,
+            1.0,
+            args.note,
+            ha="center",
+            va="bottom",
+            fontsize=plt.rcParams.get("axes.titlesize", 16),
+            style="italic",
+        )
 
     handles, labels = axes[0].get_legend_handles_labels()
     for ax in axes[1:]:
@@ -161,13 +224,13 @@ def main(argv: list[str] | None = None) -> None:
             if ll not in labels:
                 handles.append(h)
                 labels.append(ll)
-    ncol = len(labels) if args.legend_size is None else max(1, min(len(labels), 2))
+    ncol = args.legend_ncol or (len(labels) if args.legend_size is None else max(1, min(len(labels), 2)))
     fig.legend(
         handles,
         labels,
         loc="lower center",
         ncol=ncol,
-        bbox_to_anchor=(0.5, -0.12 if args.legend_size is None else -0.22),
+        bbox_to_anchor=(0.5, (-0.12 if args.legend_size is None else -0.22) * 7.0 / args.fig_height),
         fontsize=args.legend_size,
     )
 

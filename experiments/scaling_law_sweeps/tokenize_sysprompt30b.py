@@ -46,7 +46,7 @@ import json
 import logging
 
 import fsspec
-from levanter.data.text.formats import TextLmDatasetFormat
+from levanter.data.text.formats import LmDatasetFormatBase, PrebuiltLmDatasetFormat, TextLmDatasetFormat
 from marin.processing.tokenize.tokenize import TokenizeConfig, tokenize
 from rigging.log_setup import configure_logging
 
@@ -55,17 +55,47 @@ logger = logging.getLogger(__name__)
 BUILD = "gs://marin-us-central1/sysprompt_pretrain/dclm30b/build"
 TOKENIZED = "gs://marin-us-central1/tokenized"
 LLAMA3_TOKENIZER = "meta-llama/Meta-Llama-3.1-8B"  # matches every curation baseline
-ARMS = ("A", "B", "C", "D")
+ARMS = ("A", "B", "C", "D", "AH", "CT", "AM")
+# Cooldown split: the first HEAD_FRACTION of the ab shards (block order) are the
+# conditioned head, the rest the bare tail. Shards are 2000-doc blocks, so this
+# is a doc split to within one block.
+HEAD_FRACTION = 0.8
 
 
-def arm_specs(tag: str) -> dict[str, tuple[str, str]]:
-    """arm -> (input glob, text_key)."""
+def ab_shards(tag: str) -> list[str]:
+    """Every ab-* shard of a scale, in block order."""
+    fs = fsspec.filesystem("gcs")
+    paths = sorted(p for p in fs.ls(f"{BUILD}/{tag}/train") if "/ab-" in p)
+    if not paths:
+        raise FileNotFoundError(f"no ab-* shards under {BUILD}/{tag}/train")
+    return [f"gs://{p}" for p in paths]
+
+
+def arm_specs(tag: str) -> dict[str, tuple[list[str], LmDatasetFormatBase]]:
+    """arm -> (input paths, dataset format)."""
     train = f"{BUILD}/{tag}/train"
+    specs: dict[str, tuple[list[str], LmDatasetFormatBase]] = {
+        "A": ([f"{train}/ab-*.jsonl.gz"], TextLmDatasetFormat(text_key="conditioned_text")),
+        "C": ([f"{train}/ab-*.jsonl.gz"], TextLmDatasetFormat(text_key="text")),
+        "B": ([f"{train}/*.jsonl.gz"], TextLmDatasetFormat(text_key="text")),
+        "D": ([f"{train}/ab-*.jsonl.gz"], TextLmDatasetFormat(text_key="mixed_text")),
+        # AM: written by build_sysprompt30b_masked.py — token ids identical to A,
+        # loss weights 0 on the [S] prefix.
+        "AM": (
+            [f"{BUILD}/{tag}/masked/prebuilt-*.jsonl.gz"],
+            PrebuiltLmDatasetFormat(input_ids_key="input_ids", loss_weights_key="loss_weights"),
+        ),
+    }
+    return specs
+
+
+def cooldown_specs(tag: str) -> dict[str, tuple[list[str], LmDatasetFormatBase]]:
+    """AH (conditioned head) and CT (bare tail) for the cooldown arm; lists the bucket."""
+    shards = ab_shards(tag)
+    split = round(HEAD_FRACTION * len(shards))
     return {
-        "A": (f"{train}/ab-*.jsonl.gz", "conditioned_text"),
-        "C": (f"{train}/ab-*.jsonl.gz", "text"),
-        "B": (f"{train}/*.jsonl.gz", "text"),
-        "D": (f"{train}/ab-*.jsonl.gz", "mixed_text"),
+        "AH": (shards[:split], TextLmDatasetFormat(text_key="conditioned_text")),
+        "CT": (shards[split:], TextLmDatasetFormat(text_key="text")),
     }
 
 
@@ -91,17 +121,19 @@ def main() -> None:
         raise SystemExit(f"unknown arms: {sorted(bad)}")
 
     specs = arm_specs(a.tag)
+    if {"AH", "CT"} & set(arms):
+        specs.update(cooldown_specs(a.tag))
     for arm in arms:
-        glob, key = specs[arm]
+        paths, fmt = specs[arm]
         path = cache_path(a.tag, arm, a.cache_tag)
-        logger.info("ARM %s: %s (text_key=%s) -> %s", arm, glob, key, path)
+        logger.info("ARM %s: %d input path(s), first=%s format=%s -> %s", arm, len(paths), paths[0], fmt, path)
         tokenize(
             TokenizeConfig(
-                train_paths=[glob],
+                train_paths=paths,
                 validation_paths=[],
                 cache_path=path,
                 tokenizer=LLAMA3_TOKENIZER,
-                format=TextLmDatasetFormat(text_key=key),
+                format=fmt,
             )
         )
         with fsspec.open(f"{path}/train/.stats.json", "r") as f:  # dot-prefixed by write_stats_json

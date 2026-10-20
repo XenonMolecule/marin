@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import functools
+import json
 import logging
 import os
 import random
@@ -48,6 +49,7 @@ from experiments.baseline_collection.run_extract_standalone import (
     _load_completed_registry,
     _refresh_claim,
     _register_completed_warc,
+    _write_registry_summary,
 )
 from experiments.fast_curation import batch_format, preprocess, tpu_phase
 from experiments.fast_curation import shard_worklist as sw
@@ -75,6 +77,25 @@ logger = logging.getLogger(__name__)
 # ``_b_marks`` making the resume lossless.
 STALL_EXIT_MINUTES = 25.0
 _LAST_PROGRESS = time.monotonic()
+
+# A WARC whose processing never completes (a download that outlives the stall watchdog, or a
+# wedge mid-WARC) kills every worker that reaches it, so its shard can never close. Each start
+# is counted in GCS BEFORE the work begins, so the count survives the kill; once a WARC has
+# been started this many times without a mark, it is recorded as an explicit failure instead.
+# Observed 2026-10-08: endgame shards at n-1 WARCs reclaimed in 25-min kill loops, ~240
+# failed workers in 4 h on two coordinators alone.
+MAX_WARC_ATTEMPTS = 3
+
+
+def _record_attempt(path: str) -> int:
+    """Increment and return the start count stored at ``path`` (1 on first start)."""
+    fs, root = fsspec.core.url_to_fs(path)
+    n = 0
+    if fs.exists(root):
+        with fs.open(root, "r") as f:
+            n = json.load(f)["attempts"]
+    _write_marker(path, {"attempts": n + 1})
+    return n + 1
 
 
 def _touch_progress() -> None:
@@ -291,6 +312,21 @@ def run_fused_worker(
     ex.shutdown(wait=False, cancel_futures=True)
 
 
+def _failed_timing(reason: str) -> dict:
+    """Phase-A timing row for a WARC recorded as an explicit failure (no documents)."""
+    return {
+        "a_n_in": 0,
+        "a_n_prefilter_dropped": 0,
+        "a_n_extract_empty": 0,
+        "a_n_extract_crashed": 0,
+        "a_decode_s": 0.0,
+        "a_extract_s": 0.0,
+        "a_fasttext_s": 0.0,
+        "a_wall_s": 0.0,
+        "a_download_failed": reason,
+    }
+
+
 def _run_one_shard(spec, s: int, ex, *, bucket, claim_path, queue_depth, **b_kwargs) -> None:
     """Pipeline one claimed shard: A futures windowed at ``queue_depth``, chip consumes FIFO-ish."""
     hb = b_kwargs.pop("hb")
@@ -310,6 +346,8 @@ def _run_one_shard(spec, s: int, ex, *, bucket, claim_path, queue_depth, **b_kwa
     todo = [(w, h) for w, h in pairs if h not in marked]
     logger.info("fused claimed shard %05d: %d WARCs (%d already marked)", s, len(pairs), len(marked))
 
+    attempts_prefix = f"{sw.CENTRAL_BUCKET}/{spec.subdir()}/_b_attempts/shard-{s:05d}"
+
     _touch_progress()
     pending: dict = {}  # future -> (warc_hash, submit_time)
     it = iter(todo)
@@ -320,7 +358,51 @@ def _run_one_shard(spec, s: int, ex, *, bucket, claim_path, queue_depth, **b_kwa
                 w, h = next(it)
             except StopIteration:
                 return
+            attempts = _record_attempt(f"{attempts_prefix}/data-{h}")
+            if attempts > MAX_WARC_ATTEMPTS:
+                reason = f"abandoned: {attempts - 1} starts never completed (stall-watchdog kill loop)"
+                logger.error("WARC %s %s; recording explicit failure", h, reason)
+                _record(h, [], _failed_timing(reason))
+                continue
             pending[ex.submit(a_extract_warc, w, h)] = h
+
+    def _record(h: str, rows: list[dict], a_timing: dict) -> None:
+        table = (
+            pa.Table.from_pylist(rows, schema=batch_format.PRESURVIVOR_V3_SCHEMA)
+            if rows
+            else batch_format.PRESURVIVOR_V3_SCHEMA.empty_table()
+        )
+        row = tpu_phase.process_warc_v3(
+            spec,
+            h,
+            b_kwargs["score_fn"],
+            b_kwargs["model"],
+            b_kwargs["config"],
+            bucket=bucket,
+            batch_size=b_kwargs["batch_size"],
+            bucket_tokens=b_kwargs["bucket_tokens"],
+            tokenize_batch=b_kwargs["tokenize_batch"],
+            pooled=b_kwargs["pooled"],
+            refresh=refresh,
+            table=table,
+        )
+        row.update(a_timing)
+        _write_marker(f"{marks_prefix}/data-{h}", row)
+        marked[h] = row
+        _touch_progress()
+        hb.record_warc(
+            warc_hash=h,
+            docs_in=a_timing["a_n_in"],
+            docs_out=row["n_kept"],
+            wall_seconds=row["wall_s"] + a_timing["a_wall_s"],
+            compute_seconds={
+                "decode": a_timing["a_decode_s"],
+                "extract": a_timing["a_extract_s"],
+                "fasttext": a_timing["a_fasttext_s"],
+                "pooled": row["pooled_s"],
+                "modernbert": row["score_s"],
+            },
+        )
 
     _fill()
     while pending:
@@ -336,59 +418,16 @@ def _run_one_shard(spec, s: int, ex, *, bucket, claim_path, queue_depth, **b_kwa
                 # giants). Record it EXPLICITLY as failed (never silently zero) so the shard can
                 # close; the catalog row carries the reason for later re-audit/re-fetch.
                 logger.error("WARC %s unfetchable, recording explicit failure: %s", h, e)
-                rows = []
-                a_timing = {
-                    "a_n_in": 0,
-                    "a_n_prefilter_dropped": 0,
-                    "a_n_extract_empty": 0,
-                    "a_n_extract_crashed": 0,
-                    "a_decode_s": 0.0,
-                    "a_extract_s": 0.0,
-                    "a_fasttext_s": 0.0,
-                    "a_wall_s": 0.0,
-                    "a_download_failed": str(e)[:300],
-                }
+                rows, a_timing = [], _failed_timing(str(e)[:300])
             _fill()  # keep the producers busy while the chip scores
-            table = (
-                pa.Table.from_pylist(rows, schema=batch_format.PRESURVIVOR_V3_SCHEMA)
-                if rows
-                else batch_format.PRESURVIVOR_V3_SCHEMA.empty_table()
-            )
-            row = tpu_phase.process_warc_v3(
-                spec,
-                h,
-                b_kwargs["score_fn"],
-                b_kwargs["model"],
-                b_kwargs["config"],
-                bucket=bucket,
-                batch_size=b_kwargs["batch_size"],
-                bucket_tokens=b_kwargs["bucket_tokens"],
-                tokenize_batch=b_kwargs["tokenize_batch"],
-                pooled=b_kwargs["pooled"],
-                refresh=refresh,
-                table=table,
-            )
-            row.update(a_timing)
-            _write_marker(f"{marks_prefix}/data-{h}", row)
-            marked[h] = row
-            _touch_progress()
-            hb.record_warc(
-                warc_hash=h,
-                docs_in=a_timing["a_n_in"],
-                docs_out=row["n_kept"],
-                wall_seconds=row["wall_s"] + a_timing["a_wall_s"],
-                compute_seconds={
-                    "decode": a_timing["a_decode_s"],
-                    "extract": a_timing["a_extract_s"],
-                    "fasttext": a_timing["a_fasttext_s"],
-                    "pooled": row["pooled_s"],
-                    "modernbert": row["score_s"],
-                },
-            )
+            _record(h, rows, a_timing)
     catalog = pa.Table.from_pylist([marked[h] for _, h in pairs])
     with fsspec.open(sw.catalog_path(spec, s), "wb") as f:
         pq.write_table(catalog, f, compression="zstd")
     _register_completed_warc(f"{s:05d}", sw.sentinel_prefix(spec, "b"))
+    # Refresh the registry summary so the fleet's readers see this completion via one
+    # GET instead of a 32-page listing (see _load_completed_registry). Best-effort.
+    _write_registry_summary(sw.sentinel_prefix(spec, "b"))
     logger.info("fused shard %05d complete: %d WARCs cataloged", s, len(pairs))
 
 

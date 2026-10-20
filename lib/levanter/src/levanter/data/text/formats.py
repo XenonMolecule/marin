@@ -79,11 +79,16 @@ class PrebuiltLmDatasetFormat(LmDatasetFormatBase):
         input_ids_key: Field name containing token ids.
         loss_weights_key: Optional field name containing loss weights.
         loss_weight_transform: Optional callable to transform loss weights before training.
+        stream: If True, treat the records as one continuous token stream cut into
+            ``seq_len`` windows, exactly like a text cache, with ``loss_weights`` cut in
+            lockstep. Default False: each record is one training example and must already
+            be ``seq_len`` long. ``loss_weight_transform`` is not applied in stream mode.
     """
 
     input_ids_key: str = "input_ids"
     loss_weights_key: str | None = None
     loss_weight_transform: Callable[[np.ndarray], np.ndarray] | None = None
+    stream: bool = False
 
     @property
     def token_data_key(self) -> str:

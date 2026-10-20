@@ -67,3 +67,101 @@ as `sysprompt`, `token-matched`, `doc-matched`, `mix50`.
 Per-run summaries: `gs://marin-us-central1/metadata/sysprompt30b_<tag>_results/`.
 Tokenized caches: `gs://marin-us-central1/tokenized/sysprompt30b_<tag>_<arm>-*/`.
 Design and build details: `.agents/projects/sysprompt30b_998m_three_way.md`.
+
+## hp1: per-arm hyperparameter sweep at the data-efficient 447M cell (launched 2026-09-25)
+
+Question (Nick, via Jared): does a conditioned arm win on bare eval once each arm is tuned in
+the data-efficient regime rather than at the Chinchilla point? Cell = delphi 9e18 / d1024:
+447M, batch 16, 3.67B target tokens, 8.2 tok/param, one epoch. Control is doc-matched C only
+(B and C tied within 0.0017 at every ladder rung, and a fixed-data question wants a fixed-doc
+control). Arms A, C, D; the same frozen block index, so this doc set is an exact prefix of the
+447M ladder set.
+
+| arm | docs | tokens | steps B16 / B32 |
+|---|---|---|---|
+| A | 2,812,816 | 3.659B | 55,829 / 27,914 |
+| C | 2,812,816 | 3.600B | 54,931 / 27,465 |
+| D | 2,812,816 (1,408,556 conditioned) | 3.629B | 55,380 / 27,690 |
+
+Points (`SWEEPS["hp1"]` in `launch_sysprompt30b_ablation.py`), applied to every arm:
+
+- AdamH learning rate x {0.5, 1, 2} at batch {16, 32}. AdamH has no weight decay (the field is
+  inherited and never read; matrices are norm-pinned), so the learning rate is the
+  regularization axis. Batch 32 re-derives `adam_lr`, `epsilon`, `beta2` from the delphi
+  heuristic: B16 lr 2.81e-3 / adam_lr 2.71e-4 / eps 4.48e-8; B32 lr 3.97e-3 / 3.83e-4 / 3.17e-8.
+- beta2 {0.95, 0.999} at the B16 centre. The delphi rule clips beta2 to 0.9999 for every
+  batch <= 64, so the cell value is a ceiling, not a fit.
+- beta1 0.95 at the B16 centre (fixed at 0.9 everywhere in the heuristic).
+
+27 runs, run suffix `sw-lr{m}x[-b1-..][-b2-..]`, e.g.
+`curation-sysprompt30b_447m_9e18_C-expFM_natural-9e+18-d1024-L11-B32-sw-lr2x`.
+Coordinator `/michaelryan/sp30b-447m-9e18-hp1-coord` (keep-alive), children in the batch band on
+v5p-8 in us-central1, 128 GB container RAM. Results
+`gs://marin-us-central1/metadata/sysprompt30b_447m_9e18_results/`, W&B group
+`sysprompt30b-447m_9e18-hp1`. Selection rule: best bare eval/bpb per arm, then a second seed on
+that config before comparing arms; extend one step past any grid edge.
+
+Not in this wave: a loss-masked A (every arm currently trains on the [S] tokens too), a
+conditioned-then-bare cooldown arm, second seeds, and scoring A/D with a generated [S] prepended.
+
+### hp1 results (all 27 complete 2026-09-25, bare eval/bpb, one seed, same data order across arms)
+
+| point | A | C | D | A − C | D − C |
+|---|---|---|---|---|---|
+| B16 lr 0.5x | 1.1401 | 1.1121 | 1.1142 | +0.028 | +0.002 |
+| B16 lr 1x (delphi) | 1.1297 | **1.1021** | 1.1051 | +0.028 | +0.003 |
+| B16 lr 2x | 1.1461 | 1.1224 | 1.1226 | +0.024 | +0.000 |
+| B32 lr 0.5x | 1.1331 | 1.1108 | 1.1137 | +0.022 | +0.003 |
+| B32 lr 1x | **1.1227** | 1.1023 | 1.1044 | +0.020 | +0.002 |
+| B32 lr 2x | 1.1412 | 1.1227 | 1.1242 | +0.019 | +0.002 |
+| B16 lr 1x, beta2 0.95 | 1.1924 | 1.1635 | 1.1655 | +0.029 | +0.002 |
+| B16 lr 1x, beta2 0.999 | 1.1289 | 1.1025 | **1.1044** | +0.026 | +0.002 |
+| B16 lr 1x, beta1 0.95 | 1.1305 | 1.1088 | 1.1089 | +0.022 | +0.000 |
+
+Same ordering C < D < A on lima, paloma and uncheatable at every point. Reading:
+
+- No setting makes a conditioned arm win. Best-of-grid A trails best-of-grid C by 0.021 bpb;
+  D trails C by 0.002. The A gap at this data-efficient cell (0.019–0.029) is smaller than at
+  the Chinchilla-side 447M cell (0.039) but never closes.
+- The delphi learning rate is the optimum for every arm at both batch sizes; 0.5x and 2x lose
+  0.01–0.02. beta2 0.95 loses 0.06; 0.999 matches 0.9999 within 0.001. beta1 0.95 costs C 0.007.
+  No arm sits on a grid edge, so no extension is needed.
+- A alone prefers batch 32 (−0.007 vs batch 16); C and D are flat across batch.
+- Matched-config noise looks below 0.001 (C at B16 vs B32 lr 1x: 0.0002; beta2 0.999 vs 0.9999:
+  0.0004), so the D − C gap of +0.002–0.003 is a real, small penalty, as on the ladder.
+
+Result JSONs: `gs://marin-us-central1/metadata/sysprompt30b_447m_9e18_results/<run_name>.json`.
+
+### probe1: loss-masked A and a data cooldown arm (launched 2026-09-26)
+
+Two follow-ups to hp1, both at hp1's best A point (batch 32, delphi values), compared against
+that point's A 1.1227 / C 1.1023 / D 1.1044.
+
+| arm | data | notes |
+|---|---|---|
+| AM | A's token stream, loss weight 0 through `<|eot_id|>` | exactly p(D \| S); the prefix is 1.6% of A's tokens (58.8M of 3.659B). Built as a prebuilt cache with `loss_weights` (`build_sysprompt30b_masked.py`); ids match a straight llama3 encode, A's cache differs by 24k tokens on long documents because marin's tokenizer chunks texts over 10k characters. |
+| AM relaunch note: the first AM child crashed at data load (prebuilt format = one record per example); fixed with `PrebuiltLmDatasetFormat.stream=True` (chunk like text caches) and relaunched under `-probe1am-coord`. |
+| E | conditioned head (first 80% of ab shards, 2.253M docs, 2.929B tok) then bare tail (last 20%, 560k docs, 0.718B tok) | Levanter step-scheduled mixture (`StagedCurationMethod`): switch at step 22,336 of 27,811, i.e. the bare phase is the last 19.7% of steps and coincides with the 20% learning-rate decay. Run twice: beta2 0.9999 (delphi) and 0.999. |
+
+Runs: `curation-sysprompt30b_447m_9e18_{AM,E}-expFM_natural-9e+18-d1024-L11-B32-sw-lr1x` and
+`..._E-...-B32-sw-lr1x-b2-0p999`; coordinators `/michaelryan/sp30b-447m-9e18-probe1-coord` and
+`-probe1b-coord`. Sweep children now pass `--no-canonical-summary`, so no unsuffixed result copies.
+
+### probe1 results (complete 2026-09-27, bare eval/bpb, batch 32, delphi lr, one seed)
+
+| arm | eval/bpb | lima | paloma | uncheatable | vs C |
+|---|---|---|---|---|---|
+| C doc-matched (hp1) | **1.1023** | 0.9483 | 1.1062 | 1.0847 | |
+| D mix50 (hp1) | 1.1044 | 0.9532 | 1.1081 | 1.0893 | +0.002 |
+| E cooldown, beta2 0.999 | 1.1052 | 0.9498 | 1.1090 | 1.0884 | +0.003 |
+| E cooldown, beta2 0.9999 | 1.1070 | 0.9517 | 1.1106 | 1.0917 | +0.005 |
+| AM masked A | 1.1165 | 0.9635 | 1.1207 | 1.0966 | +0.014 |
+| A sysprompt (hp1) | 1.1227 | 0.9652 | 1.1276 | 1.0973 | +0.020 |
+
+- Masking the prompt tokens recovers 0.006 of A's 0.020 gap. A's remaining 0.014 penalty is
+  therefore mostly train/eval mismatch, not capacity spent generating prompts.
+- The cooldown arm recovers 0.016 of the gap and lands at mix50's level; the short beta2
+  half-life helps it by 0.002, as expected for a mid-run distribution change. It edges mix50 on
+  lima and uncheatable but not on the headline bpb.
+- No conditioned arm beats the doc-matched control. The best conditioned variants (mix50, cooldown)
+  sit 0.002–0.003 above C, against a matched-config noise floor under 0.001.

@@ -57,6 +57,7 @@ SINGLE_HOST_TYPES = {"v6e-4", "v6e-8", "v5litepod-4", "v5litepod-8", "v5p-8", "v
 MULTIHOST_TYPES = {"v5litepod-16", "v5litepod-32", "v5p-16", "v5p-32", "v5p-64", "v6e-16", "v6e-32"}
 MULTIHOST_ENV = {"TPU_PROCESS_BOUNDS": "1,1,1", "TPU_CHIPS_PER_PROCESS_BOUNDS": "2,2,1"}
 BACKOFF_CAP_SECONDS = 1800
+SUBMIT_CAP_MULTIPLIER = 50  # lifetime submits per --max-count slot; see run()
 
 
 def _child_command(args: argparse.Namespace, seed: int) -> list[str]:
@@ -164,20 +165,27 @@ def _count_child_states(client: IrisClient, job_ids: list[str]) -> tuple[int, in
     return running, pending, failed
 
 
-def region_work_done(spec, region: str, max_shard: int | None) -> bool:
-    """True when every one of this region's ladder shards has a ``_b_done`` sentinel."""
+def region_work_done(spec, region: str | None, max_shard: int | None) -> bool:
+    """True when every ladder shard this coordinator's children can claim has a ``_b_done`` sentinel.
+
+    ``region=None`` means the children drain the GLOBAL queue (fused ``--any-region``), so
+    completion must be global too: judging by the home region alone made coordinators in
+    regions the frozen index barely covers (us-central1) exit on their first check while
+    thousands of shards remained elsewhere (2026-09-26, both v5p coordinators).
+    """
     fs = fsspec.filesystem("gcs")
     mine = {
         e["shard"]
         for e in sw.load_index(spec)
-        if e["region"] == region and (max_shard is None or e["shard"] < max_shard)
+        if (region is None or e["region"] == region) and (max_shard is None or e["shard"] < max_shard)
     }
     if not mine:
         return True
     try:
         done = {
-            int(p.split("/")[-1].replace("data-", ""))
+            int(name.removeprefix("data-"))
             for p in fs.ls(sw.sentinel_prefix(spec, "b").removeprefix("gs://"), refresh=True)
+            if (name := p.split("/")[-1]).removeprefix("data-").isdigit()  # skip e.g. the registry summary
         }
     except FileNotFoundError:
         return False
@@ -200,7 +208,11 @@ def run(client: IrisClient, args: argparse.Namespace) -> None:
     stall_count = 0
     backoff_multiplier = 1
     all_job_ids: list[str] = []
-    submit_cap = args.max_count * 3  # runaway backstop, as in launch_adaptive
+    # Runaway backstop. 3x (as in launch_adaptive) exhausted within days on spot pools: every
+    # preemption costs a resubmit, and 2026-10-08 the v4-8 coordinators had all stopped asking
+    # while the pool sat available with zero demand. Pending children already throttle a dead
+    # pool, so the cap only needs to stop a submit loop.
+    submit_cap = args.max_count * SUBMIT_CAP_MULTIPLIER
 
     def _submit(count: int) -> None:
         nonlocal total_submitted, seed_counter
@@ -212,8 +224,9 @@ def run(client: IrisClient, args: argparse.Namespace) -> None:
     _submit(min(args.initial_batch, args.max_count))
     while True:
         time.sleep(args.check_interval)
-        if region_work_done(spec, args.region, args.max_shard):
-            logger.info("all region shards B-complete; coordinator exiting (children idle-exit).")
+        work_region = None if args.mode == "fused" else args.region  # fused children use --any-region
+        if region_work_done(spec, work_region, args.max_shard):
+            logger.info("all claimable shards B-complete; coordinator exiting (children idle-exit).")
             return
         if total_submitted >= submit_cap:
             logger.warning("lifetime submit cap %d reached — pool looks structurally broken; holding.", submit_cap)

@@ -106,6 +106,12 @@ def main():
         "task": task.name,
         "num_fewshot": task.num_fewshot,
     }
+    # Sideline any prior attempt's results BEFORE the sidecar lands, so results.json
+    # always postdates the sidecar that describes it (verify_eval_integrity's invariant;
+    # a preemption between sidecar and results otherwise leaves a mismatched pair).
+    prior = f"{args.output_dir.rstrip('/')}/results.json"
+    if marin_filesystem("gcs").exists(prior):
+        marin_filesystem("gcs").mv(prior, f"{args.output_dir.rstrip('/')}/results.superseded.json")
     with marin_filesystem("gcs").open(f"{args.output_dir.rstrip('/')}/provenance.json", "w") as f:
         json.dump(provenance, f)
 

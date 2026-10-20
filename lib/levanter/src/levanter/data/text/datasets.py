@@ -539,6 +539,17 @@ def dataset_for_component(
             block_cross_document_attention=block_cross_document_attention,
         )  # type: ignore
     elif isinstance(fmt, PrebuiltLmDatasetFormat):
+        if fmt.stream:
+            if fmt.loss_weight_transform is not None:
+                raise ValueError("PrebuiltLmDatasetFormat.loss_weight_transform is not supported with stream=True")
+            if fmt.input_ids_key != "input_ids":
+                raise ValueError("PrebuiltLmDatasetFormat stream mode requires input_ids_key='input_ids'")
+            return CausalLmDataset(
+                TokenSeqDataset(cache, Pos.size, loss_weights_key=fmt.loss_weights_key),
+                Pos,
+                eos_id=eos_id,
+                block_cross_document_attention=block_cross_document_attention,
+            )
         return PrebuiltLmDataset(
             cache,
             Pos,

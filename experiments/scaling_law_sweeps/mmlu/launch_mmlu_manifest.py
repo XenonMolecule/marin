@@ -145,6 +145,7 @@ def submit_one(
     name_suffix: str,
     memory_gb: int,
     tpu_variants: tuple[str, ...] = DEFAULT_TPU_VARIANTS,
+    child_preemptible: bool = True,
 ) -> str:
     cmd_args = [
         "python",
@@ -182,7 +183,9 @@ def submit_one(
         values=[row.region],
         mode=job_pb2.CONSTRAINT_MODE_REQUIRED,
     )
-    constraints = [preemptible_constraint(True), region_constraint]
+    # child_preemptible=False targets RESERVED pools (tpu_v4-reserved_* in us-central2), which the
+    # default True constraint excludes; use when the preemptible pool is saturated.
+    constraints = [preemptible_constraint(child_preemptible), region_constraint]
     if len(set(tpu_variants)) > 1:
         constraints.append(device_variant_constraint(list(tpu_variants)))
 
@@ -220,6 +223,11 @@ def main(suite: EvalSuite = MMLU_SUITE):
     ap.add_argument("--name-suffix", default="", help="Suffix on child job names to dodge JobAlreadyExists.")
     ap.add_argument("--max-count", type=int, default=None, help="Only submit the first N not-yet-done child jobs.")
     ap.add_argument("--memory-gb", type=int, default=64, help="Child worker memory.")
+    ap.add_argument(
+        "--children-non-preemptible",
+        action="store_true",
+        help="Submit children with preemptible=False so they can land on RESERVED pools.",
+    )
     ap.add_argument(
         "--tpu-variants",
         default=",".join(DEFAULT_TPU_VARIANTS),
@@ -301,6 +309,7 @@ def main(suite: EvalSuite = MMLU_SUITE):
                     limit=args.limit,
                     name_suffix=args.name_suffix,
                     memory_gb=args.memory_gb,
+                    child_preemptible=not args.children_non_preemptible,
                     tpu_variants=tuple(args.tpu_variants.split(",")),
                 )
             except Exception as e:

@@ -46,7 +46,7 @@ CORPUS_DISPLAY = {
     "lpv11_fastpipe_v2_10k": ("fastpipe_v2", "#006d2c"),
     "resiliparse_10k": ("Resiliparse", "#9467bd"),
     "nemotron_full_10k": ("Nemotron-CC", "#ff7f0e"),
-    "fineweb_cc_10k": ("FineWeb-CC", "#e377c2"),
+    "fineweb_cc_10k": ("FineWeb", "#e377c2"),
     "fineweb_edu_10k": ("FineWeb-Edu (natural)", "#17becf"),
 }
 SIZE_PARAMS = {512: 157e6, 1536: 998e6}
@@ -86,6 +86,12 @@ def _category_means(doc: dict) -> dict[str, float]:
 # Raw results.json files embed per-sample logs (~228 MB each); NEVER read them from a
 # laptop. `consolidate_model_evals` rolls them up on-cluster to this small CSV.
 ROLLUP = "marin-us-central1/metadata/mmlu_target_models/rollup.csv"
+# The domain-target sweep was run to 3e+20 for every arm. Two stray 9e+20-d1536 STEM cells
+# (lpv11, resiliparse) also exist; showing them would compare 2/6 arms at a budget the others
+# never got, so they are HIDDEN from the MMLU line plots, the comparison table and the bar
+# charts — not deleted. The evals stay in the rollup and on GCS. If the other arms are ever
+# run at 9e+20, raise this cap (or set it to None) and every figure picks them back up.
+MAX_DOMAIN_BUDGET: float | None = 3e20
 
 
 def load_records(refresh: bool = True) -> list[Record]:
@@ -126,6 +132,16 @@ def load_records(refresh: bool = True) -> list[Record]:
             records.append(
                 Record(corpus, gen, target, float(m.group("budget")), int(m.group("dim")), tuple(sorted(cats.items())))
             )
+    if MAX_DOMAIN_BUDGET is not None:
+        hidden = [r for r in records if r.target != "all" and r.budget > MAX_DOMAIN_BUDGET]
+        if hidden:
+            logger.info(
+                "hiding %d domain-target cells above %.0e (kept on GCS; raise MAX_DOMAIN_BUDGET to restore): %s",
+                len(hidden),
+                MAX_DOMAIN_BUDGET,
+                sorted(f"{r.corpus}/{r.target}/{r.budget:.0e}-d{r.hidden_dim}" for r in hidden),
+            )
+            records = [r for r in records if not (r.target != "all" and r.budget > MAX_DOMAIN_BUDGET)]
     return records
 
 

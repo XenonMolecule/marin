@@ -1,0 +1,2 @@
+run_name,region,output_path
+curation-resiliparse_10k_mix_olmixexact_lambda0p01-expFM_natural-9e+20-d1536-L16-B1024,us-central2,gs://marin-us-central2/checkpoints/isoflop-curation/curation-resiliparse_10k_mix_olmixexact_lambda0p01-expFM_natural-9e+20-d1536-L16-B1024-h6f

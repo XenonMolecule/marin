@@ -1,0 +1,2 @@
+run_name,region,output_path
+curation-nemotron_full_10k_mix_mmlu_humanities_clp_r100k20_lambda0p05-expFM_natural-3e+20-d512-L6-B2048,us-central2,gs://marin-us-central2/checkpoints/isoflop-curation/curation-nemotron_full_10k_mix_mmlu_humanities_clp_r100k20_lambda0p05-expFM_natural-3e+20-d512-L6-B2048

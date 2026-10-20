@@ -103,6 +103,8 @@ def submit_one(
     force_primary_tpu: str | None = None,
     results_prefix: str | None = None,
     seed: int = 0,
+    child_preemptible: bool = True,
+    canonical_summary: bool = True,
 ) -> str:
     """Submit one PlannedRun as an iris TPU job. Returns the iris job id.
 
@@ -159,6 +161,7 @@ def submit_one(
         wandb_mode,
         *(("--run-suffix", run_suffix) if run_suffix else ()),
         *(("--seed", str(seed)) if seed else ()),
+        *(() if canonical_summary else ("--no-canonical-summary",)),
         "--wandb-project",
         wandb_project,
         "--wandb-entity",
@@ -226,8 +229,12 @@ def submit_one(
             mode=1,  # CONSTRAINT_MODE_PREFERRED (soft)
         )
 
+    # child_preemptible=False targets RESERVED pools (e.g. tpu_v4-reserved_* in
+    # us-central2): those workers are non-preemptible, and the default True
+    # constraint excludes them — which is why reserved pools show zero demand
+    # from this fleet. Reserve capacity is precious; force it only deliberately.
     constraints = [
-        preemptible_constraint(True),
+        preemptible_constraint(child_preemptible),
         region_constraint,
     ]
     # If the v4 and v5p TPU types differ (the common case), add a constraint

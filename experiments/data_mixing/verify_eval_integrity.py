@@ -148,10 +148,14 @@ def verify_run(fs, ns: str, subdir: str, expected_tasks: int, has_provenance: bo
 
     # A provenance.json sidecar (written by run_mmlu_eval / run_cultural_eval since
     # 2026-09-17, before scoring starts) names the exact checkpoint scored — hard proof.
-    # Only trust it when the results POSTDATE it: an older sidecar cannot describe them,
-    # and a newer one belongs to an in-flight re-eval.
+    # Only trust it when the results land INSIDE the sidecar's window: after it (an older
+    # sidecar cannot describe them) but within 12h (a later write is another eval —
+    # e.g. a pre-sidecar wave's straggler overwriting the redo — that the sidecar does
+    # not describe; observed 2026-09-18 with mmlumodels-eval-w5 zombies).
+    SIDECAR_WINDOW_SECONDS = 12 * 3600
     sidecar = f"{found}/{subdir}/{run}/provenance.json"
-    if not has_provenance and fs.exists(sidecar) and _mtime(fs, path) >= _mtime(fs, sidecar):
+    if (not has_provenance and fs.exists(sidecar)
+            and 0 <= _mtime(fs, path) - _mtime(fs, sidecar) <= SIDECAR_WINDOW_SECONDS):
         m = STEP_RE.search(json.load(fs.open(sidecar)).get("checkpoint", ""))
         if m:
             evaled = int(m.group(1))

@@ -19,6 +19,7 @@ from levanter.data.text.datasets import (
     TextLmDatasetFormat,
     UrlDatasetSourceConfig,
 )
+from levanter.data.text.formats import PrebuiltLmDatasetFormat
 
 TOTAL_WARCS_CC: int = 7_925_398
 """Total WARC files across all Common Crawl snapshots.
@@ -144,6 +145,21 @@ class CurationMethod:
     SOFT region preference in the launcher (see launch_curation_sweep.py).
     """
 
+    loss_weights_key: str | None = None
+    """Field in a prebuilt cache holding per-token loss weights (weight[i] gates the
+    prediction of token i+1). None = plain text cache, loss on every token."""
+
+    def _train_format(self):
+        if self.loss_weights_key is None:
+            return TextLmDatasetFormat()
+        # stream=True: chunk the records into seq_len windows exactly like the text caches,
+        # so a weighted arm sees the same packing as its unweighted twin.
+        return PrebuiltLmDatasetFormat(input_ids_key="input_ids", loss_weights_key=self.loss_weights_key, stream=True)
+
+    def train_steps_for(self, batch_size: int, seq_len: int) -> int:
+        """Steps for exactly one pass over the cache (floor, so nothing is repeated)."""
+        return self.d_obs_tokens // (batch_size * seq_len)
+
     def __post_init__(self) -> None:
         if self.tokenized_rel_path.startswith(("gs://", "mirror://", "http://", "https://", "/")):
             raise ValueError(
@@ -188,6 +204,7 @@ class CurationMethod:
         with_uncheatable_eval: bool = True,
         with_paloma: bool = True,
         with_lima: bool = True,
+        batch_size: int | None = None,
     ) -> LMMixtureDatasetConfig:
         # Capture the local region's bucket once — used for both the training
         # component and all validation components. See `local_cache_dir` for
@@ -210,18 +227,19 @@ class CurationMethod:
         stream. Marin convention `missing_weights_are_validation=True`.
         """
         cache_str = self.local_cache_dir(region)
+        train_format = self._train_format()
         source = UrlDatasetSourceConfig(
             cache_dir=cache_str,
             train_urls=[],
             validation_urls=[],
-            format=TextLmDatasetFormat(),
+            format=train_format,
             tags=[self.name],
         )
         components: dict = {
             self.name: DatasetComponent(
                 source=source,
                 cache_dir=cache_str,
-                format=TextLmDatasetFormat(),
+                format=train_format,
                 tags=[self.name],
             ),
         }
@@ -317,10 +335,11 @@ class ReweightedCurationMethod(CurationMethod):
         with_uncheatable_eval: bool = True,
         with_paloma: bool = True,
         with_lima: bool = True,
+        batch_size: int | None = None,
     ) -> LMMixtureDatasetConfig:
         from experiments.scaling_law_sweeps.region_tracker import REGION_TO_BUCKET
 
-        base = super().as_lm_mixture_config(region, with_uncheatable_eval, with_paloma, with_lima)
+        base = super().as_lm_mixture_config(region, with_uncheatable_eval, with_paloma, with_lima, batch_size)
         dense_cache = f"{REGION_TO_BUCKET[region]}/{self.dense_rel_path}"
         dense_key = f"{self.name}__dense"
         dense_component = DatasetComponent(
@@ -342,6 +361,133 @@ class ReweightedCurationMethod(CurationMethod):
         train_weights[self.name] = 1.0 - self.dense_weight
         train_weights[dense_key] = self.dense_weight
         return replace(base, components=components, train_weights=train_weights)
+
+
+MIXTURE_BLOCK_SIZE = 2048  # Levanter's block-deterministic mixture granularity (sequences)
+
+
+def block_aligned_steps(tokens: int, batch_size: int, seq_len: int) -> int:
+    """Steps that consume ``tokens`` once, floored to a mixture-block boundary.
+
+    Levanter's step-scheduled mixtures require every stage to start on a multiple of
+    ``MIXTURE_BLOCK_SIZE`` sequences, so a stage boundary placed here drops at most one
+    block (< 2048 sequences) of the stage's data.
+    """
+    if MIXTURE_BLOCK_SIZE % batch_size:
+        raise ValueError(f"batch {batch_size} must divide the mixture block size {MIXTURE_BLOCK_SIZE}")
+    steps_per_block = MIXTURE_BLOCK_SIZE // batch_size
+    return tokens // (batch_size * seq_len) // steps_per_block * steps_per_block
+
+
+@dataclass(frozen=True)
+class EpochedCurationMethod(CurationMethod):
+    """``epochs`` passes over one cache, reshuffled every pass.
+
+    Levanter shuffles a dataset once with a fixed permutation and restarts it in the same
+    order, so a plain multi-epoch run replays identical batches. Here each epoch is its own
+    mixture component over the same cache; Levanter shuffles every component with its own
+    key, and a step schedule switches components at block-aligned epoch boundaries.
+    """
+
+    epochs: int = 1
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if self.epochs < 2:
+            raise ValueError(f"{self.name}: EpochedCurationMethod needs epochs >= 2, got {self.epochs}")
+
+    def epoch_steps(self, batch_size: int, seq_len: int) -> int:
+        return block_aligned_steps(self.d_obs_tokens, batch_size, seq_len)
+
+    def train_steps_for(self, batch_size: int, seq_len: int) -> int:
+        return self.epochs * self.epoch_steps(batch_size, seq_len)
+
+    def as_lm_mixture_config(
+        self,
+        region: str,
+        with_uncheatable_eval: bool = True,
+        with_paloma: bool = True,
+        with_lima: bool = True,
+        batch_size: int | None = None,
+        seq_len: int = 4096,
+    ) -> LMMixtureDatasetConfig:
+        if batch_size is None:
+            raise ValueError(f"{self.name}: an epoched method needs batch_size to place the epoch boundaries")
+        base = super().as_lm_mixture_config(region, with_uncheatable_eval, with_paloma, with_lima, batch_size)
+        first = base.components[self.name]
+        epoch_keys = [f"{self.name}__ep{k}" for k in range(1, self.epochs + 1)]
+        components = {k: v for k, v in base.components.items() if k != self.name}
+        components.update({key: replace(first, tags=[key]) for key in epoch_keys})
+        zeros = {k: 0.0 for k in components}
+        step = self.epoch_steps(batch_size, seq_len)
+        schedule = [(k * step, {**zeros, key: 1.0}) for k, key in enumerate(epoch_keys)]
+        return replace(base, components=components, train_weights=schedule, mixture_block_size=MIXTURE_BLOCK_SIZE)
+
+
+@dataclass(frozen=True)
+class StagedCurationMethod(CurationMethod):
+    """Two caches trained back to back: the parent's ``tokenized_rel_path`` first, then
+    ``tail_rel_path`` for the rest of the run (a data cooldown).
+
+    Levanter's mixture schedule is keyed on training steps and every stage must start on
+    a mixture-block boundary, so the switch step is ``head_tokens / (batch * seq_len)``
+    rounded DOWN to a multiple of ``MIXTURE_BLOCK_SIZE / batch``. Use ``train_steps_for``
+    for the run length so neither cache is repeated or truncated by more than a block.
+    Each component is shuffled on its own, so the switch is exact at block granularity.
+    """
+
+    tail_rel_path: str = ""
+    head_tokens: int = 0
+    tail_tokens: int = 0
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if not self.tail_rel_path or self.head_tokens <= 0 or self.tail_tokens <= 0:
+            raise ValueError(f"{self.name}: StagedCurationMethod needs tail_rel_path, head_tokens and tail_tokens")
+        if self.tail_rel_path.startswith(("gs://", "mirror://", "http://", "https://", "/")):
+            raise ValueError(f"tail_rel_path must be a bare relative path, got {self.tail_rel_path!r}")
+
+    def switch_step(self, batch_size: int, seq_len: int) -> int:
+        return block_aligned_steps(self.head_tokens, batch_size, seq_len)
+
+    def train_steps_for(self, batch_size: int, seq_len: int) -> int:
+        """Steps that consume the head once (to the block boundary) and the tail once."""
+        return self.switch_step(batch_size, seq_len) + self.tail_tokens // (batch_size * seq_len)
+
+    def as_lm_mixture_config(
+        self,
+        region: str,
+        with_uncheatable_eval: bool = True,
+        with_paloma: bool = True,
+        with_lima: bool = True,
+        batch_size: int | None = None,
+        seq_len: int = 4096,
+    ) -> LMMixtureDatasetConfig:
+        from experiments.scaling_law_sweeps.region_tracker import REGION_TO_BUCKET  # noqa: PLC0415
+
+        if batch_size is None:
+            raise ValueError(f"{self.name}: a staged method needs batch_size to place the switch step")
+        base = super().as_lm_mixture_config(region, with_uncheatable_eval, with_paloma, with_lima, batch_size)
+        tail_cache = f"{REGION_TO_BUCKET[region]}/{self.tail_rel_path.rstrip('/')}/"
+        tail_key = f"{self.name}__tail"
+        tail_component = DatasetComponent(
+            source=UrlDatasetSourceConfig(
+                cache_dir=tail_cache,
+                train_urls=[],
+                validation_urls=[],
+                format=TextLmDatasetFormat(),
+                tags=[tail_key],
+            ),
+            cache_dir=tail_cache,
+            format=TextLmDatasetFormat(),
+            tags=[tail_key],
+        )
+        components = {**base.components, tail_key: tail_component}
+        zeros = {k: 0.0 for k in components}
+        stage_head = {**zeros, self.name: 1.0}
+        stage_tail = {**zeros, tail_key: 1.0}
+        schedule = [(0, stage_head), (self.switch_step(batch_size, seq_len), stage_tail)]
+        return replace(base, components=components, train_weights=schedule, mixture_block_size=MIXTURE_BLOCK_SIZE)
 
 
 def t_exp_ceiling(method: CurationMethod, t_target: float, *, allow_data_rich: bool = False) -> float:
@@ -468,10 +614,11 @@ class GridMixCurationMethod(CurationMethod):
         with_uncheatable_eval: bool = True,
         with_paloma: bool = True,
         with_lima: bool = True,
+        batch_size: int | None = None,
     ) -> LMMixtureDatasetConfig:
         from experiments.data_mixing.olmix_domains import load_grid_domains
 
-        base = super().as_lm_mixture_config(region, with_uncheatable_eval, with_paloma, with_lima)
+        base = super().as_lm_mixture_config(region, with_uncheatable_eval, with_paloma, with_lima, batch_size)
         cache_dirs = {d.name: d.cache_dir for d in load_grid_domains(self.grid_corpus, region)}
         weights = self.load_weights()
 

@@ -298,6 +298,12 @@ class ZephyrContext:
             self.no_workers_timeout = 6 * 60 * 60
 
         if self.chunk_storage_prefix is None:
+            # ZEPHYR_CHUNK_STORAGE_PREFIX pins scratch to an explicit location — needed when the
+            # driver runs outside the data region (its VM metadata would otherwise pick its own
+            # region's temp bucket and route the whole shuffle cross-region).
+            if env_prefix := os.environ.get("ZEPHYR_CHUNK_STORAGE_PREFIX"):
+                self.chunk_storage_prefix = env_prefix
+        if self.chunk_storage_prefix is None:
             # ZEPHYR_CHUNK_TTL_DAYS guards long pipelines whose shuffle intermediates outlive the
             # 1-day default: the bucket lifecycle rule deletes tmp/ttl=1d/ scratch mid-run when a
             # stage's map+reduce spans more than a day (observed 2026-09-10, 500k-WARC normalize).
@@ -534,7 +540,14 @@ class ZephyrContext:
                 self.stage_runner_factory,
                 ZephyrTaskResources.from_resource_config(self.resources),
                 self.resources,
-                ActorConfig(max_concurrency=100, max_task_retries=10),
+                # Cumulative gang budget: preemptible workers under churn burn one per
+                # preemption, and a single fleet-wide wave can eat dozens at once — 10
+                # killed multi-day stages in minutes (2026-09-27). 200 matches the
+                # intent of the earlier budget raise; override for churny regions.
+                ActorConfig(
+                    max_concurrency=100,
+                    max_task_retries=int(os.environ.get("ZEPHYR_WORKER_MAX_TASK_RETRIES", "200")),
+                ),
             ).result()
             ready_wait = float(os.environ.get("ZEPHYR_WORKERS_READY_WAIT") or 12 * 60 * 60)
             coordinator.worker_handles.remote(1, ready_wait).result(timeout=ready_wait)

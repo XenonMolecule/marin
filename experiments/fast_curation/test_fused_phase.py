@@ -183,3 +183,55 @@ def test_run_one_shard_resumes_from_marks(tmp_path, monkeypatch):
         cat = {r["warc_hash"]: r for r in pq.read_table(f).to_pylist()}
     assert set(cat) == {h for _, h in pairs}
     assert cat[pre_h]["n_kept"] == 7, "pre-preemption marker row survives into the catalog"
+
+
+def test_run_one_shard_abandons_warc_whose_starts_never_complete(tmp_path, monkeypatch):
+    """A WARC started MAX_WARC_ATTEMPTS times without ever being marked (each start killed by
+    the stall watchdog) must be recorded as an explicit failure, not started again, so the
+    shard closes instead of looping."""
+    monkeypatch.setattr(sw, "CENTRAL_BUCKET", str(tmp_path / "central"))
+    (tmp_path / "central").mkdir()
+    bucket = str(tmp_path / "region")
+    sw.build(SPEC, WARCS, n_shards=1, regions=["us-east5"], seed=0)
+    pairs = sw.load_shard(SPEC, 0)
+    poison_h = pairs[0][1]
+    attempts_prefix = f"{sw.CENTRAL_BUCKET}/{SPEC.subdir()}/_b_attempts/shard-00000"
+    tpu_phase._write_marker(f"{attempts_prefix}/data-{poison_h}", {"attempts": fused_phase.MAX_WARC_ATTEMPTS})
+
+    seen = []
+
+    def fake_a(warc_path, warc_hash):
+        seen.append(warc_hash)
+        return [], fused_phase._failed_timing("unused") | {"a_download_failed": None}
+
+    monkeypatch.setattr(fused_phase, "a_extract_warc", fake_a)
+    monkeypatch.setattr(tpu_phase, "score_survivors", lambda *a, **k: np.array([], dtype=np.float32))
+    monkeypatch.setattr(tpu_phase, "_device_kind", lambda: "TPU test")
+    monkeypatch.setattr(tpu_phase, "_device_count", lambda: 8)
+    tokenizer = preprocess.load_tokenizer("answerdotai/ModernBERT-base")
+    hb = type(
+        "H", (), {"record_warc": lambda *a, **k: None, "tick": lambda *a, **k: None, "close": lambda *a, **k: None}
+    )()
+    fused_phase._run_one_shard(
+        SPEC,
+        0,
+        _InlineExecutor(),
+        bucket=bucket,
+        claim_path=f"{sw.claim_prefix(SPEC, 'b')}/shard-00000",
+        queue_depth=2,
+        batch_size=8,
+        bucket_tokens=True,
+        tokenize_batch=functools.partial(preprocess.tokenize_trunc_batch_arrow, tokenizer, max_length=64),
+        score_fn=None,
+        model=None,
+        config=None,
+        pooled=(None, None),
+        hb=hb,
+    )
+    assert poison_h not in seen, "an exhausted WARC must not be started again"
+    assert set(seen) == {h for _, h in pairs} - {poison_h}, "every other WARC still runs"
+    with fsspec.open(sw.catalog_path(SPEC, 0), "rb") as f:
+        cat = {r["warc_hash"]: r for r in pq.read_table(f).to_pylist()}
+    assert set(cat) == {h for _, h in pairs}, "the shard closes with a row for every WARC"
+    assert cat[poison_h]["n_kept"] == 0
+    assert cat[poison_h]["a_download_failed"].startswith("abandoned:")

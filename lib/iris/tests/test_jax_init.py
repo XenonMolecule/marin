@@ -26,8 +26,11 @@ from iris.runtime.jax_init import configure_jax_compilation_cache, initialize_ja
 
 EXPECTED_JAX_INITIALIZATION_TIMEOUT = 1800
 EXPECTED_JAX_HEARTBEAT_TIMEOUT = 100
-INITIAL_ATTEMPT_ENDPOINT_NAME = "jax_coordinator-attempt-0"
-RETRY_ATTEMPT_ENDPOINT_NAME = "jax_coordinator-attempt-3"
+# _make_job_info() builds tasks of job /testuser/testjob; the endpoint name carries a digest
+# of that job id so sibling jobs under one coordinator never share a coordinator name.
+_TEST_JOB_ID = JobName.from_string("/testuser/testjob")
+INITIAL_ATTEMPT_ENDPOINT_NAME = jax_init_module._attempt_endpoint_name("jax_coordinator", _TEST_JOB_ID, 0)
+RETRY_ATTEMPT_ENDPOINT_NAME = jax_init_module._attempt_endpoint_name("jax_coordinator", _TEST_JOB_ID, 3)
 
 
 @dataclass

@@ -98,7 +98,7 @@ METHOD_DISPLAY: dict[str, tuple[str, str]] = {
     # Canonical "Resiliparse" line for the paper is the deduped variant.
     "resiliparse_dedup": ("Resiliparse", "#9467bd"),
     "fineweb_edu": ("FineWeb-Edu", "#ff7f0e"),
-    "fineweb_cc": ("FineWeb-CC", "#e377c2"),
+    "fineweb_cc": ("FineWeb", "#e377c2"),
     "llm_curated": ("LLM-Curated", "#8c564b"),
     "llm_curated_bos_fixed": ("LLM-Curated", "#8c564b"),
     "high_quality_3000": ("Spec-Driven Extraction (ours)", "#2ca02c"),
@@ -408,6 +408,17 @@ PAPER_RCPARAMS = {
     "legend.frameon": False,
     "figure.dpi": 120,
 }
+
+
+def crop_pdf_to_ink(path: Path) -> None:
+    """Crop a PDF in place to its inked bounding box with ``pdfcrop --margins 0``.
+
+    ``bbox_inches="tight"`` still leaves a few points of blank space from legend and tick-label
+    extents; paper figures must have none.
+    """
+    cropped = path.with_suffix(".cropped.pdf")
+    subprocess.run(["pdfcrop", "--margins", "0", str(path), str(cropped)], check=True, capture_output=True)
+    cropped.replace(path)
 
 
 def plot_method(ax, pts: list[Point], color: str, label: str, is_ours: bool) -> float | None:

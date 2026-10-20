@@ -86,3 +86,15 @@ def test_check_content_length_ignores_encoded_transfers():
     dwc._check_content_length(resp, 3, WARC_PATH)  # no raise
     with pytest.raises(requests.exceptions.RequestException):
         dwc._check_content_length(_Response(b"abc", 999), 3, WARC_PATH)
+
+
+@pytest.mark.parametrize(
+    "warc_path, snapshot",
+    [
+        ("s3://commoncrawl/crawl-data/CC-MAIN-2024-10/segments/1/warc/a.warc.gz", "CC-MAIN-2024-10"),
+        ("s3://commoncrawl/projects/x/CC-SUPPLEMENTAL-2026-22/warc/a.warc.gz", "CC-SUPPLEMENTAL-2026-22"),
+        ("s3://commoncrawl/crawl-data/CC-NEWS/2024/06/CC-NEWS-20240601001620-04355.warc.gz", "CC-NEWS-2024-06"),
+    ],
+)
+def test_snapshot_names_every_crawl_family(warc_path, snapshot):
+    assert dwc._snapshot_of(warc_path) == snapshot

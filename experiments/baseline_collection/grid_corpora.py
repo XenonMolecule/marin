@@ -216,6 +216,17 @@ GRID_CORPORA: dict[str, GridCorpus] = {
     # re-extracted by upstream resiliparse (experiments/fast_curation/swap_extractor.py). Its topic
     # and quality tables are copied from lpv11_fastpipe_v2_10k by doc_id at extraction time, so
     # NEVER run `grid_label label` on it -- only merge/tokenize/store.
+    # Extractor/selection ablation: lpv11's LLM-SELECTED documents with their text re-extracted by
+    # the resiliparse-rs fork (experiments/fast_curation/lpv11_fork_extractor.py). Its topic and
+    # quality tables are copied from lpv11_10k by warc_record_id at attach time, so NEVER run
+    # `grid_label label` on it -- only merge/tokenize/store.
+    "lpv11_forkrs_10k": GridCorpus(
+        "gs://marin-us-east5/documents/baseline_lpv11_forkrs_decon_deduped/10364warcs/deduped",
+        "us-east5",
+        Format.JSONL_GZ,
+        native_id_field="warc_record_id",
+        post_decon=True,
+    ),
     "lpv11_fastpipe_v2_upstreamrs_10k": GridCorpus(
         "gs://marin-us-east5/documents/baseline_lpv11_fastpipe_v2_upstreamrs_decon_deduped/10364warcs/deduped",
         "us-east5",

@@ -36,12 +36,14 @@ ROWS = (
     ("Resiliparse", "resiliparse_10k", False),
     ("DCLM", "dclm_10k", False),
     ("Nemotron", "nemotron_full_10k", False),
-    ("FineWeb CC", "fineweb_cc_10k", False),
-    ("Generative Curation (Ours)", "lpv11_10k", True),
+    ("FineWeb", "fineweb_cc_10k", False),
+    ("GC LLM (Ours)", "lpv11_10k", True),
     ("GC Cascade (Ours)", "lpv11_fastpipe_v2_10k", True),
 )
 DASH = r"\textcolor{red}{\textemdash}"
 OUT_MD = Path(__file__).parent.parent.parent / "scratch" / "tables" / "domain_comparison.md"
+# Bare LaTeX for \input{} in the paper (same content as the fenced block in OUT_MD).
+OUT_TEX = OUT_MD.with_suffix(".tex")
 
 HEADER = r"""\begin{table*}[t]
 \centering
@@ -153,7 +155,8 @@ def main() -> None:
         "Red dashes = no verified datapoint yet; they fill as training/eval waves land.\n\n"
         "## LaTeX (copy from here — requires xcolor)\n\n```latex\n" + latex + "\n```\n"
     )
-    logger.info("wrote %s", OUT_MD)
+    OUT_TEX.write_text(latex + "\n")
+    logger.info("wrote %s and %s", OUT_MD, OUT_TEX)
     print(latex)
 
 

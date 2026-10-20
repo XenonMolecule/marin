@@ -357,3 +357,187 @@ Code uncommitted in the working tree (new: upstream_resiliparse, swap_extractor,
 build_swap_allowlist, attach_swap_labels, launch_swap, swap_status, swap_canary_check,
 verify_swap_shards, sample_swap_pairs, swap_diff_scan + tests; edits: decode_warcs_clean,
 grid_corpora, curation_plan, launch_10k_natural).
+
+## Training launch (2026-09-26 08:55Z)
+
+State found on return: A's olmixexact fit landed 2026-09-12 (363/363, TV 0.49); A's natural arm
+(21 results) and A's mix arm (147 results across tags) already running under the other thread.
+B had nothing. Done this session:
+- Vendored `experiments/data_mixing/mixtures/lpv11_fastpipe_v2_upstreamrs_10k_R3e10_k20_olmixexact_lambda0p01.json`
+  = A's file with `corpus` renamed and `source` noting the copy; asserted weights AND natural
+  keys == B's 120 cells.json names before writing (weights sum 1.0).
+- Registered `lpv11_fastpipe_v2_upstreamrs_10k_mix_olmixexact_lambda0p01` (curation_plan
+  `_grid_mix_method` on B's cache hash + `launch_10k_natural.METHOD_NAMES`). Lint + pyrefly clean.
+- Dry-run: 76 cells (38 natural + 38 mix, 9e20 cap). LAUNCHED as `/michaelryan/10k-natural-upstreamrs`
+  (interactive parent, --no-preemptible, children batch, --allowed-regions us-east5 because B's
+  cache and store exist only there). Results land in
+  `gs://marin-us-central1/metadata/data_curation_10k_natural_results/curation-lpv11_fastpipe_v2_upstreamrs*`.
+  NEVER stop this coordinator (orphan-kills children).
+- Comparison pairs: natural A `lpv11_fastpipe_v2` vs B `lpv11_fastpipe_v2_upstreamrs`; mix A
+  `lpv11_fastpipe_v2_10k_mix_olmixexact_lambda0p01` vs B `..._upstreamrs_10k_mix_olmixexact_lambda0p01`.
+- 09:00Z (user): NO natural arm for B, mix arm only. Stopped `/michaelryan/10k-natural-upstreamrs`
+  (my job, 8 first-wave children, one running for ~3 min) and relaunched as
+  `/michaelryan/10k-mix-upstreamrs` with `--methods lpv11_fastpipe_v2_upstreamrs_10k_mix_olmixexact_lambda0p01`
+  only (38 cells, same flags). The natural method stays registered but is not to be launched.
+  NEVER stop this coordinator.
+- 23:10Z: coordinator task PREEMPTED (despite --no-preemptible) -> all 27 unfinished children
+  killed ("Parent task preempted"); 11 cells had succeeded. Coordinator restarted itself
+  (setup re-running); skip-if-done should resubmit the 27. Verifying via the monitor, not
+  relaunching (a second coordinator would duplicate writers).
+- 2026-09-27 13:53Z: coordinator preempted a THIRD time (summary: preemptions=3, still
+  --no-preemptible); each time it restarts, kills the in-flight children ("Parent task
+  preempted") and resubmits the unfinished cells in waves of 8 (skip-if-done keeps the finished
+  ones: 14/38 done). Progress is lost only for runs without a checkpoint. Not relaunching.
+  Worth raising with the user: the us-east5 non-preemptible CPU pool is evidently not immune.
+
+## First result (2026-09-29): A vs B on 21 matched cells
+
+Figure: https://claude.ai/code/artifact/d2812259-dab7-4ec6-9b9f-e809801bab94
+(built by scratch scripts prep.py/build.py; source data = the two arms' result JSONs under
+`gs://marin-us-central1/metadata/data_curation_10k_natural_results/`).
+
+B (upstream resiliparse) is **consistently but marginally BETTER** than A (fork, markdown) at
+matched documents/labels/weights. Aggregate `eval/bpb`: mean -0.0026, median -0.0022, paired
+t = -5.6, B better in 19/21. Uncheatable macro -0.0049 (t -5.9, 19/21); Paloma macro -0.0014
+(t -3.2, 15/21).
+
+Per domain (mean B-A, negative = upstream better):
+Wikipedia -0.0161 (**21/21**, t -26.1) | GitHub C++ -0.0094 | GitHub Python -0.0055 |
+S2ORC -0.0014 | C4 -0.0015 | arXiv physics -0.0007 | arXiv CS +0.0002 (tie, t 0.6) |
+LIMA +0.0021 (t +4.0, fork wins 17/21 — the ONLY domain the fork wins).
+
+Read: the fork's markdown formatting does not pay for itself on encyclopedic or code text and
+slightly hurts; it helps only on instruction-style prose (LIMA).
+
+CAVEATS: (1) coverage — B has 22/38 cells, nothing at or above 2e20, so this covers 1e17..9e19
+only; the large-model end is untested. (2) One A cell (`2e+19-d512-L6-B128`) is excluded: the
+lpv11 thread wrote a `.badmodel` copy and the 09-17 rerun reproduced identical metrics
+(bpb 1.4189 vs ~1.11 for its neighbours). Including it would swing the mean to -0.016 and is
+wrong. (3) Effect sizes are ~0.2% relative — consistent in sign, small in magnitude.
+
+### Paper-format figure (2026-09-29)
+
+`experiments/scaling_law_sweeps/plot_extractor_ablation_by_size.py` renders the ablation in the
+same visual language as `plot_olmixexact_bpb_by_size` (PAPER_RCPARAMS, one panel per model size,
+log tokens x-axis, white-edged markers, shared bottom legend with each corpus's d_obs, PNG+PDF,
+no title). Colours follow the locked convention: fork = `#006d2c` (its registered "GC Cascade"
+green), upstream = `#9467bd` (the registered resiliparse purple — this arm IS upstream
+resiliparse). The fork draws at the locked 4.2 linewidth with upstream at 2.4 ON TOP, because the
+curves coincide to ~0.002 BPB and a single width would hide one arm entirely.
+
+    uv run python -m experiments.scaling_law_sweeps.plot_extractor_ablation_by_size --difference
+    uv run python -m experiments.scaling_law_sweeps.plot_extractor_ablation_by_size --dims 512 1536 2432 --suffix _3panel
+
+Outputs in `scratch/plots/extractor_ablation/`: `extractor_ablation_bpb_by_size{,_3panel}.{png,pdf}`
+and `extractor_ablation_bpb_difference.{png,pdf}`. The `_3panel` variant reproduces the reference
+figure's 157M / 998M / 2.9B layout exactly.
+
+Metric caveat baked into the axis label: the upstream arm has no olmo_bpb eval wave, so this plots
+the BPB the training runs log inline (Paloma + uncheatable), NOT the olmix 51-task suite. Getting
+this arm onto the 51-task axis needs an eval wave over its checkpoints. The flagged fork cell
+(2e+19, d512) is dropped by `EXCLUDED_CELLS`.
+
+### 2026-09-30 00:10Z — us-east5 can no longer run the remaining cells
+
+All 16 unfinished cells now report `Scheduler: No workers match constraints` (previously several
+were `Coscheduling: need N workers`, an ordinary capacity wait). The us-east5 accelerator pools
+explain it: EVERY v5p pool there has 0 ready slices, and v5p-8/32/64/256 are all in autoscaler
+backoff at health 0.03-0.06. v4 does not exist in us-east5 at all. The sweep's cells request v4
+and v5p shapes only, so nothing in the region can host them. Coordinator is on its 4th preemption
+but is healthy; 22/38 cells done and 0 training.
+
+Waiting is now futile rather than slow. Capacity in the candidate mirror regions at that moment:
+
+* **us-central1 (v5p)** — HEALTHY: v5p-8 32 ready, v5p-16 8 ready, v5p-32 4 ready + 1 booting,
+  v5p-64 4 ready (backoff, health 0.15), v5p-256 1 ready. The earlier quota_exceeded has cleared.
+* us-central2 (v4) — thin: v4-8 4 ready (backoff), v4-64 2 ready + 3 booting (backoff), reserved
+  pools mostly 0. Would also serve the cells' v4 alternative.
+* us-east1 — v6e only, no v5p/v4, so useless for this grid.
+
+RECOMMENDATION unchanged but now required: mirror B's 884 GB grid store
+`gs://marin-us-east5/datakit/store/lpv11_fastpipe_v2_upstreamrs_10k_gridv1` to **us-central1**
+(~$18 same-continent egress, needs user approval: cross-region + over the $10 bar), then relaunch
+the coordinator with `--allowed-regions us-east5 us-central1`. Do NOT stop the existing
+coordinator first without checking whether relaunching duplicates writers — skip-if-done covers
+the 22 finished cells, and the running set is currently empty, so a clean stop + relaunch is safe
+here. Only the store needs mirroring, not the base tokenized cache (arm A's mix ran in regions
+that never held its base cache).
+
+### 2026-09-30 18:43Z — CORRECTION: us-east5 recovered; the arm is training again
+
+Yesterday's "waiting is now futile" call was WRONG. us-east5 v5p capacity came back on its own and
+5 cells are training with verified step advancement:
+`2e+20-d512-L6-B1024` 54.1k/61.6k steps (~3h left), `9e+19-d1024-L11-B256` 17.9k/35.0k (~5h),
+`2e+20-d2432-L24-B64` 595/37.3k (~15h), plus `9e+19-d2432-L24-B32` and `2e+20-d1536-L16-B128`.
+
+Two lessons for this sweep:
+1. The "No workers match constraints" state is TRANSIENT in us-east5 — it reflects pools sitting at
+   zero ready slices under autoscaler backoff, not a permanent shape mismatch. Read it as a deep
+   capacity trough, not a dead end.
+2. Preempted children RESUME FROM CHECKPOINT: `2e+20-d512` was at 52.7k steps when preempted on
+   09-27 and picked up at ~54k, not from zero. The repeated coordinator preemptions have cost far
+   less wall time than they appeared to.
+
+Mirroring the store to us-central1 is therefore a FALLBACK, not a requirement — worth doing only
+if the arm stalls at zero running for a sustained stretch again. Still 22/38 done; the 9e+20
+d3584 cell (16-worker gang) remains the hardest to place.
+
+### 2026-10-01 — sweep paused by user; olmix 60-task eval wave launched
+
+User: "We can pause the extractor vs extractor comparison here (no more need for training runs)"
+-> STOPPED `/michaelryan/10k-mix-upstreamrs` (25 cells succeeded and banked, 14 killed).
+Relaunching later would skip the 25 via skip-if-done.
+
+User then asked to evaluate the finished models on the olmix suite. Manifest
+`experiments/core_eval_manifests/olmix_bpb_upstreamrs.txt` (25 rows, all us-east5, every
+checkpoint has an `hf/` export). Launched `/michaelryan/olmix-bpb-upstreamrs`:
+
+    TASKS = resolve_tasks('all+qa_rc') (56) + the 4 mmlu_*/rc_5shot categories = 60 tasks
+    launch_olmo_bpb_manifest --manifest ... --tasks "$TASKS" --launch
+      --child-priority interactive --keepalive-timeout 172800
+
+Deliberately uses the DEFAULT `--results-subpath metadata/olmo_bpb_results/{run_name}/`, because
+that is what `plot_olmo_bpb_by_size_10k._load_records` (and hence `plot_olmixexact_bpb_by_size`)
+reads — so once this lands, arm B can be plotted on the real `olmix51_bpb` axis next to every
+other corpus, instead of the inline Paloma+uncheatable proxy.
+
+`--keepalive-timeout 172800` is mandatory: the 12h default exits the parent as "finished" with no
+error and silently kills pending children (it dropped 120/363 lpv11 evals once). Judge completion
+by the GCS result count, never by parent state.
+
+After 25/25: rerun `plot_extractor_ablation_by_size` against olmix51_bpb (needs a metric wired to
+the olmo_bpb records rather than the inline eval dict), or simply add arm B to
+`plot_olmixexact_bpb_by_size`'s METHOD_DISPLAY for a direct multi-corpus comparison.
+
+### 2026-10-02 — olmix 60-task evals DONE, and they CHANGE the conclusion
+
+`/michaelryan/olmix-bpb-upstreamrs` finished: 25/25 results, every one with exactly 60 tasks,
+under the default `metadata/olmo_bpb_results/` path so the paper plotting machinery reads them.
+Arm B is now registered in `plot_core_v2_by_size_10k.OLMIXEXACT_COMPARE_METHODS` and in
+`plot_olmixexact_bpb_by_size.METHOD_DISPLAY` as ("fastpipe_v2 (upstream rslp)", "#9467bd").
+
+Figure (paper style, real axis):
+`scratch/plots/olmo_bpb_10k/paper/olmixexact_olmix51_bpb_by_size_extractor_ablation.{png,pdf}`
+
+    uv run python -m experiments.scaling_law_sweeps.plot_olmixexact_bpb_by_size \
+      --methods lpv11_fastpipe_v2_10k_mix_olmixexact_lambda0p01 \
+                lpv11_fastpipe_v2_upstreamrs_10k_mix_olmixexact_lambda0p01 \
+      --dims 512 1536 2432 --suffix _extractor_ablation
+
+**On `olmix51_bpb` (24 matched cells) the extractor difference is NOT significant:**
+
+| metric | mean B-A | median | paired t | upstream better |
+|---|---|---|---|---|
+| olmix51_bpb (the mixtures' own objective) | -0.0042 | -0.0083 | **-1.13** | 14/24 |
+| eval/bpb inline (Paloma + uncheatable) | -0.0026 | -0.0022 | -5.56 | 21/24 |
+
+Both are true and they measure different things. The inline metric is bits-per-byte over two
+large fluent-text corpora — low variance, so a ~0.002 systematic shift is resolvable. olmix51 is
+51 downstream tasks, many small, with much higher per-cell variance; at n=24 it cannot resolve an
+effect this size. The mean still leans upstream on both.
+
+**Reporting rule: lead with olmix51 (no measurable difference on the objective the mixtures were
+solved against) and offer the inline-metric result as the sharper, narrower fluency probe.** Do
+not quote the t=-5.6 figure without saying which metric it is from — it is the easiest number
+here to mislead with.
+

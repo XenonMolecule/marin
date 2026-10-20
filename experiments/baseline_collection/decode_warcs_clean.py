@@ -70,7 +70,9 @@ REPLACEMENT = "�"  # U+FFFD; must NEVER appear in correctly-decoded output
 
 _HTTP_CHARSET_RE = re.compile(r"charset\s*=\s*[\"']?([a-zA-Z0-9_\-:.]+)", re.IGNORECASE)
 _META_CHARSET_RE = re.compile(rb"""<meta[^>]+charset[\s"'=]*([a-zA-Z0-9_\-:.]+)""", re.IGNORECASE)
-_SNAPSHOT_RE = re.compile(r"CC-MAIN-\d{4}-\d{2}")
+_SNAPSHOT_RE = re.compile(r"CC-(?:MAIN|SUPPLEMENTAL)-\d{4}-\d{2}")
+# CC-NEWS is released daily under crawl-data/CC-NEWS/yyyy/mm/; its snapshot is the month.
+_NEWS_SNAPSHOT_RE = re.compile(r"CC-NEWS/(\d{4})/(\d{2})/")
 
 # WHATWG maps the latin-1/ascii family to windows-1252 for HTML: a page that declares
 # iso-8859-1 but uses the cp1252 punctuation range (0x80-0x9F: curly quotes, em-dash…)
@@ -140,6 +142,8 @@ def _warc_path_hash(warc_path: str) -> str:
 
 
 def _snapshot_of(warc_path: str) -> str:
+    if m := _NEWS_SNAPSHOT_RE.search(warc_path):
+        return f"CC-NEWS-{m.group(1)}-{m.group(2)}"
     m = _SNAPSHOT_RE.search(warc_path)
     return m.group(0) if m else ""
 
